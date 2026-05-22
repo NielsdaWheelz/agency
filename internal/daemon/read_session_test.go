@@ -16,9 +16,8 @@ import (
 
 func TestHandleGetInvocationSession_LiveHeaded(t *testing.T) {
 	t.Parallel()
-	env := setupReadTestEnv(t)
 	fakeTmux := testutil.NewFakeTmuxClient()
-	env.Server.TmuxClient = fakeTmux
+	env := setupReadTestEnv(t, fakeTmux)
 
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusRunning
@@ -56,9 +55,8 @@ func TestHandleGetInvocationSession_LiveHeaded(t *testing.T) {
 
 func TestHandleGetInvocationSession_MissingHeaded_RecreateAvailable(t *testing.T) {
 	t.Parallel()
-	env := setupReadTestEnv(t)
 	fakeTmux := testutil.NewFakeTmuxClient()
-	env.Server.TmuxClient = fakeTmux
+	env := setupReadTestEnv(t, fakeTmux)
 
 	sandboxDir := t.TempDir()
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
@@ -84,9 +82,8 @@ func TestHandleGetInvocationSession_MissingHeaded_RecreateAvailable(t *testing.T
 
 func TestHandleGetInvocationSession_MissingHeaded_RecreateUnavailableWhenLanded(t *testing.T) {
 	t.Parallel()
-	env := setupReadTestEnv(t)
 	fakeTmux := testutil.NewFakeTmuxClient()
-	env.Server.TmuxClient = fakeTmux
+	env := setupReadTestEnv(t, fakeTmux)
 
 	resp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-2/session?repo_id="+env.RepoID))
 	require.True(t, resp.OK)
@@ -114,10 +111,9 @@ func TestHandleGetInvocationSession_HeadlessRejected(t *testing.T) {
 
 func TestHandleGetInvocationSession_TmuxFailure(t *testing.T) {
 	t.Parallel()
-	env := setupReadTestEnv(t)
 	fakeTmux := testutil.NewFakeTmuxClient()
 	fakeTmux.ListClientsErr = stderrors.New("connection refused")
-	env.Server.TmuxClient = fakeTmux
+	env := setupReadTestEnv(t, fakeTmux)
 
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusRunning
@@ -135,4 +131,23 @@ func TestHandleGetInvocationSession_TmuxFailure(t *testing.T) {
 	assert.False(t, resp.OK)
 	assert.Equal(t, string(errors.ETmuxFailed), resp.ErrorCode)
 	assert.Contains(t, resp.Message, "failed to inspect tmux clients")
+}
+
+func TestHandleGetInvocationSession_MissingPersistedSessionRejected(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t, testutil.NewFakeTmuxClient())
+
+	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusRunning
+		meta.FinishedAt = ""
+		meta.LandingStatus = ""
+		meta.TmuxSession = ""
+	}))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-2/session?repo_id="+env.RepoID)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.ETmuxSessionMissing), resp.ErrorCode)
 }

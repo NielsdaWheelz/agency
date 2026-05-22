@@ -39,9 +39,9 @@ func (s *Server) handleHeadedHook(w http.ResponseWriter, r *http.Request, invoca
 		return
 	}
 
-	meta, err := s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
+	meta, err := s.store.ReadInvocationMeta(record.RepoID, record.InvocationID)
 	if err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "", nil)
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to read invocation meta: "+err.Error(), "", nil)
 		return
 	}
 	if meta.Mode != store.RunnerModeHeaded {
@@ -70,28 +70,28 @@ func (s *Server) handleHeadedHook(w http.ResponseWriter, r *http.Request, invoca
 	s.headedHookMu.Lock()
 	defer s.headedHookMu.Unlock()
 
-	hooksPath, err := s.prepareWritableInvocationLogPath(record.RepoID, record.InvocationID, "hooks")
+	hooksPath, err := s.prepareWritableInvocationLogPath(record.RepoID, record.InvocationID, InvocationLogKindHooks)
 	if err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", err.Error(), "", nil)
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), err.Error(), "", nil)
 		return
 	}
 	hooksFile, err := os.OpenFile(hooksPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", "failed to append headed hook log: "+err.Error(), "", nil)
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to append headed hook log: "+err.Error(), "", nil)
 		return
 	}
 	if _, err := hooksFile.Write(compact.Bytes()); err != nil {
 		_ = hooksFile.Close()
-		s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", "failed to append headed hook log: "+err.Error(), "", nil)
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to append headed hook log: "+err.Error(), "", nil)
 		return
 	}
 	if _, err := hooksFile.Write([]byte("\n")); err != nil {
 		_ = hooksFile.Close()
-		s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", "failed to append headed hook log: "+err.Error(), "", nil)
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to append headed hook log: "+err.Error(), "", nil)
 		return
 	}
 	if err := hooksFile.Close(); err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", "failed to append headed hook log: "+err.Error(), "", nil)
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to append headed hook log: "+err.Error(), "", nil)
 		return
 	}
 
@@ -170,9 +170,9 @@ func (s *Server) importHeadedTranscript(repoID, invocationID, runner, transcript
 			transcriptPath = home
 		}
 	}
-	if strings.HasPrefix(transcriptPath, "~/") {
+	if transcriptTail, ok := strings.CutPrefix(transcriptPath, "~/"); ok {
 		if home, err := os.UserHomeDir(); err == nil {
-			transcriptPath = filepath.Join(home, strings.TrimPrefix(transcriptPath, "~/"))
+			transcriptPath = filepath.Join(home, transcriptTail)
 		}
 	}
 	if !filepath.IsAbs(transcriptPath) {
@@ -247,11 +247,11 @@ func (s *Server) importHeadedSyntheticStop(repoID, invocationID, runner string, 
 }
 
 func (s *Server) parseHeadedReader(repoID, invocationID, runner string, reader io.Reader) (int64, error) {
-	rawPath, err := s.prepareWritableInvocationLogPath(repoID, invocationID, "raw")
+	rawPath, err := s.prepareWritableInvocationLogPath(repoID, invocationID, InvocationLogKindRaw)
 	if err != nil {
 		return 0, err
 	}
-	streamPath, err := s.prepareWritableInvocationLogPath(repoID, invocationID, "stream")
+	streamPath, err := s.prepareWritableInvocationLogPath(repoID, invocationID, InvocationLogKindStream)
 	if err != nil {
 		return 0, err
 	}
@@ -271,15 +271,15 @@ func (s *Server) parseHeadedReader(repoID, invocationID, runner string, reader i
 	proc := s.processes[invocationID]
 	s.mu.RUnlock()
 	var parser *stream.Parser
-	if proc != nil && proc.Parser != nil {
-		parser = proc.Parser
+	if proc != nil && proc.parser != nil {
+		parser = proc.parser
 	} else {
-		parser = stream.NewParser(invocationID, runner, s.Clock)
+		parser = stream.NewParser(invocationID, runner, s.clock)
 		parser.SetInitialSeq(loadMaxStreamSeq(streamPath))
 	}
 	if proc != nil {
-		proc.ParserMu.Lock()
-		defer proc.ParserMu.Unlock()
+		proc.parserMu.Lock()
+		defer proc.parserMu.Unlock()
 	}
 
 	startInfo, _ := rawFile.Stat()
@@ -319,16 +319,16 @@ func (s *Server) readHeadedTranscriptState(repoID, invocationID string) (headedT
 }
 
 func (s *Server) writeHeadedTranscriptState(repoID, invocationID string, state headedTranscriptState) error {
-	if _, err := s.Store.EnsureInvocationLogsDir(repoID, invocationID); err != nil {
+	if _, err := s.store.EnsureInvocationLogsDir(repoID, invocationID); err != nil {
 		return err
 	}
 	state.SchemaVersion = headedTranscriptStateSchema
 	if state.Offsets == nil {
 		state.Offsets = map[string]int64{}
 	}
-	return agencyfs.WriteJSONAtomic(s.headedTranscriptStatePath(repoID, invocationID), state, 0o600)
+	return agencyfs.WriteJSONAtomic(s.fsys, s.headedTranscriptStatePath(repoID, invocationID), state, 0o600)
 }
 
 func (s *Server) headedTranscriptStatePath(repoID, invocationID string) string {
-	return filepath.Join(s.Store.InvocationLogsDir(repoID, invocationID), "headed_transcripts.json")
+	return filepath.Join(s.store.InvocationLogsDir(repoID, invocationID), "headed_transcripts.json")
 }

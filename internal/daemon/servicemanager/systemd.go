@@ -49,14 +49,14 @@ func (m *SystemdManager) IsInstalled(cfg ServiceConfig) bool {
 	return err == nil
 }
 
-// GenerateSystemdUnit returns the rendered systemd unit file content.
-func GenerateSystemdUnit(cfg ServiceConfig) (string, error) {
+// generateSystemdUnit returns the rendered systemd unit file content.
+func generateSystemdUnit(cfg ServiceConfig) (string, error) {
 	data := struct {
 		ExePath string
 		LogPath string
 	}{
 		ExePath: cfg.ExePath,
-		LogPath: filepath.Join(cfg.DataDir, "agencyd.log"),
+		LogPath: daemonLogPath(cfg),
 	}
 	var buf bytes.Buffer
 	if err := systemdUnitTmpl.Execute(&buf, data); err != nil {
@@ -73,7 +73,7 @@ func (m *SystemdManager) Install(ctx context.Context, cfg ServiceConfig) error {
 			fmt.Sprintf("service already installed at %s", unitPath))
 	}
 
-	content, err := GenerateSystemdUnit(cfg)
+	content, err := generateSystemdUnit(cfg)
 	if err != nil {
 		return errors.Wrap(errors.EDaemonServiceInstallFailed, "failed to generate unit file", err)
 	}

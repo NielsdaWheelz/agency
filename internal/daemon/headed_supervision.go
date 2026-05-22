@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
-	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
@@ -36,7 +36,7 @@ func (s *Server) restoreExistingHeadedSupervision(ctx context.Context, repoID, i
 		return fmt.Errorf("install headed runner hooks: %w", err)
 	}
 
-	terminalLogPath, err := s.prepareWritableInvocationLogPath(repoID, invocationID, "terminal")
+	terminalLogPath, err := s.prepareWritableInvocationLogPath(repoID, invocationID, InvocationLogKindTerminal)
 	if err != nil {
 		return fmt.Errorf("prepare terminal log: %w", err)
 	}
@@ -47,7 +47,7 @@ func (s *Server) restoreExistingHeadedSupervision(ctx context.Context, repoID, i
 	_ = terminalFile.Close()
 
 	target := sessionName + ":0.0"
-	if scrollback, err := s.TmuxClient.CaptureScrollback(ctx, target); err != nil {
+	if scrollback, err := s.tmuxClient.CaptureScrollback(ctx, target); err != nil {
 		s.recordInvocationWarning(repoID, invocationID, "restore_headed_tmux_capture_failed", err.Error(), map[string]any{
 			"target": target,
 		})
@@ -65,27 +65,23 @@ func (s *Server) restoreExistingHeadedSupervision(ctx context.Context, repoID, i
 			return fmt.Errorf("close terminal log: %w", closeErr)
 		}
 	}
-	if err := s.TmuxClient.PipePane(ctx, target, terminalLogPath); err != nil {
+	if err := s.tmuxClient.PipePane(ctx, target, terminalLogPath); err != nil {
 		return fmt.Errorf("pipe tmux pane output: %w", err)
 	}
 
-	runnerArgs := append([]string(nil), meta.RunnerArgs...)
-	if err := s.claimHeadedInvocation(repoID, invocationID, canonicalRunner, sessionName, runnerArgs, append([]string(nil), meta.CustomEnvKeys...)); err != nil {
+	runnerArgs := slices.Clone(meta.RunnerArgs)
+	if err := s.claimHeadedInvocation(repoID, invocationID, canonicalRunner, sessionName, runnerArgs, slices.Clone(meta.CustomEnvKeys)); err != nil {
 		return fmt.Errorf("update invocation meta: %w", err)
 	}
 
-	streamLogPath := s.Store.InvocationStreamLogPath(repoID, invocationID)
-	parser := stream.NewParser(invocationID, canonicalRunner, s.Clock)
+	streamLogPath := s.store.InvocationStreamLogPath(repoID, invocationID)
+	parser := stream.NewParser(invocationID, canonicalRunner, s.clock)
 	parser.SetInitialSeq(loadMaxStreamSeq(streamLogPath))
-	checkpointsDir := s.Store.InvocationDir(repoID, invocationID)
-	eventsPath := s.Store.InvocationEventsPath(repoID, invocationID)
+	checkpointsDir := s.store.InvocationDir(repoID, invocationID)
+	eventsPath := s.store.InvocationEventsPath(repoID, invocationID)
 	cpConfig := checkpoint.DefaultConfig()
 	cpConfig.IncludeUntracked = meta.CheckpointIncludeUntracked
 	cpConfig.Env = env
-	if s.CheckpointDebounceOverride != nil {
-		cpConfig.DebounceInterval = *s.CheckpointDebounceOverride
-		cpConfig.DriftInterval = *s.CheckpointDebounceOverride
-	}
 	cpEngine := checkpoint.NewEngineWithWriter(
 		invocationID,
 		repoID,
@@ -94,62 +90,35 @@ func (s *Server) restoreExistingHeadedSupervision(ctx context.Context, repoID, i
 		checkpointsDir,
 		eventsPath,
 		cpConfig,
-		s.Runner,
-		s.FS,
-		s.Clock,
-		s.InvocationEvents,
+		s.runner,
+		s.fsys,
+		s.clock,
+		s.invocationEvents,
 	)
-	cpEngine.SetGitIgnoredDirs(checkpoint.ReadGitIgnoredDirs(meta.SandboxPath))
-	triggerCh := make(chan checkpoint.TriggerEvent, 32)
-	cpEngine.SetTriggerChannel(triggerCh)
-
-	proc := &SupervisedProcess{
-		InvocationID:          invocationID,
-		RepoID:                repoID,
-		IntegrationWorktreeID: meta.IntegrationWorktreeID,
-		Mode:                  "headed",
-		TmuxSession:           sessionName,
-		SandboxPath:           meta.SandboxPath,
-		StreamLogFile:         streamLogPath,
-		Runner:                canonicalRunner,
-		RepoRoot:              repoRoot,
-		RunnerArgs:            runnerArgs,
-		NoIncludeUntracked:    !meta.CheckpointIncludeUntracked,
-		Parser:                parser,
-		CheckpointEngine:      cpEngine,
+	s.configureCheckpointIgnoredDirs(daemonOwnedContext(ctx), repoID, invocationID, cpEngine, meta.SandboxPath, cpConfig.Env)
+	proc := &supervisedProcess{
+		invocationID:          invocationID,
+		repoID:                repoID,
+		integrationWorktreeID: meta.IntegrationWorktreeID,
+		mode:                  "headed",
+		tmuxSession:           sessionName,
+		sandboxPath:           meta.SandboxPath,
+		runner:                canonicalRunner,
+		repoRoot:              repoRoot,
+		runnerArgs:            runnerArgs,
+		noIncludeUntracked:    !meta.CheckpointIncludeUntracked,
+		parser:                parser,
+		checkpointEngine:      cpEngine,
 		done:                  make(chan struct{}),
 	}
-	parser.SetCheckpointNotify(func(n stream.CheckpointNotification) {
-		trigger := checkpoint.TriggerEvent{
-			Kind:      checkpoint.TriggerToolEnd,
-			ToolName:  n.ToolName,
-			ToolNames: n.ToolNames,
-			Seq:       n.Seq,
-		}
-		select {
-		case triggerCh <- trigger:
-			return
-		default:
-		}
-
-		timer := time.NewTimer(250 * time.Millisecond)
-		defer timer.Stop()
-		select {
-		case triggerCh <- trigger:
-		case <-timer.C:
-			s.recordInvocationWarning(repoID, invocationID, "checkpoint_trigger_dropped", "checkpoint trigger queue full; dropped semantic trigger", map[string]any{
-				"seq":       n.Seq,
-				"tool_name": n.ToolName,
-			})
-		}
-	})
+	s.attachCheckpointTriggers(repoID, invocationID, parser, cpEngine)
 	parser.SetFinalNotify(func(n stream.FinalNotification) {
 		s.handleSuccessfulFinalNotification(proc, n)
 	})
 	parser.SetSessionStartNotify(func(n stream.SessionStartNotification) {
-		proc.SetResumeSessionID(n.SessionID)
+		proc.setResumeSessionID(n.SessionID)
 	})
-	if _, err := s.InvocationEvents.Append(eventsPath, invocationID, eventKind, map[string]any{
+	if _, err := s.invocationEvents.Append(eventsPath, invocationID, eventKind, map[string]any{
 		"tmux_session": sessionName,
 	}, eventlog.AppendOptions{}); err != nil {
 		return fmt.Errorf("append supervision event: %w", err)
@@ -163,7 +132,7 @@ func (s *Server) restoreExistingHeadedSupervision(ctx context.Context, repoID, i
 }
 
 func (s *Server) resolveHeadedSupervisionRepoRoot(repoID string) (string, error) {
-	rec, exists, err := s.Store.LoadRepoRecord(repoID)
+	rec, exists, err := s.store.LoadRepoRecord(repoID)
 	if err != nil {
 		return "", err
 	}

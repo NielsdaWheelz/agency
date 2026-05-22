@@ -2,10 +2,10 @@ package watch
 
 import (
 	"context"
-	"encoding/base64"
 	"strconv"
 	"strings"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 )
@@ -20,31 +20,15 @@ func loadInvocationLogs(ctx context.Context, client *daemonclient.Client, invoca
 		return "", errors.New(errors.EInvalidArgument, "logs page requires an invocation and repo")
 	}
 	if strings.TrimSpace(kind) == "" {
-		kind = "raw"
+		kind = daemon.InvocationLogKindRaw
 	}
 
 	var builder strings.Builder
-	offset := int64(0)
-	for {
-		result, err := client.GetInvocationLogsOffset(ctx, invocationID, repoID, daemonclient.GetInvocationLogsOffsetOpts{
-			Kind:   kind,
-			Offset: offset,
-			Limit:  logReadLimit,
-		})
-		if err != nil {
-			return "", err
-		}
-		if strings.TrimSpace(result.Data.DataB64) != "" {
-			chunk, err := base64.StdEncoding.DecodeString(result.Data.DataB64)
-			if err != nil {
-				return "", errors.Wrap(errors.EInternal, "failed to decode invocation logs", err)
-			}
-			builder.Write(chunk)
-		}
-		if result.Data.NextOffset <= offset || result.Data.NextOffset >= result.Data.TotalBytes {
-			break
-		}
-		offset = result.Data.NextOffset
+	if _, err := client.DrainInvocationLogs(ctx, invocationID, repoID, daemon.GetLogsParams{
+		Kind:  kind,
+		Limit: logReadLimit,
+	}, &builder); err != nil {
+		return "", err
 	}
 
 	return builder.String(), nil
@@ -102,15 +86,19 @@ func (m model) renderLogs() string {
 }
 
 func logLines(content string) []string {
+	return contentLines(content, "(no log output yet)")
+}
+
+func contentLines(content, emptyMessage string) []string {
 	if strings.TrimSpace(content) == "" {
-		return []string{"(no log output yet)"}
+		return []string{emptyMessage}
 	}
 	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
 	if len(lines) > 0 && lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
 	}
 	if len(lines) == 0 {
-		return []string{"(no log output yet)"}
+		return []string{emptyMessage}
 	}
 	return lines
 }
@@ -121,7 +109,7 @@ func (m model) currentLogsKind() string {
 	}
 	selected, ok := m.selectedInvocation()
 	if ok && strings.TrimSpace(selected.Mode) == "headed" {
-		return "terminal"
+		return daemon.InvocationLogKindTerminal
 	}
-	return "raw"
+	return daemon.InvocationLogKindRaw
 }

@@ -3,9 +3,10 @@
 package store
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 )
 
 // InvocationRecord represents a discovered invocation with its parsed metadata.
@@ -44,8 +45,8 @@ type InvocationRecord struct {
 // Returns records sorted by started_at descending (newest first), then invocation_id.
 // Missing directories result in empty slice (not error).
 // Corrupt meta.json results in an InvocationRecord with Broken=true.
-func ScanInvocationsForRepo(dataDir, repoID string) ([]InvocationRecord, error) {
-	invocationsDir := filepath.Join(dataDir, "repos", repoID, "invocations")
+func (s *Store) ScanInvocationsForRepo(repoID string) ([]InvocationRecord, error) {
+	invocationsDir := s.InvocationsDir(repoID)
 
 	entries, err := os.ReadDir(invocationsDir)
 	if err != nil {
@@ -110,22 +111,25 @@ func ScanInvocationsForRepo(dataDir, repoID string) ([]InvocationRecord, error) 
 	}
 
 	// Sort by started_at descending (newest first), then invocation_id
-	sort.Slice(records, func(i, j int) bool {
+	slices.SortFunc(records, func(a, b InvocationRecord) int {
 		// Broken records sort last
-		if records[i].Broken != records[j].Broken {
-			return !records[i].Broken // non-broken first
+		if a.Broken != b.Broken {
+			if a.Broken {
+				return 1
+			}
+			return -1
 		}
-		if records[i].Broken && records[j].Broken {
-			return records[i].InvocationID > records[j].InvocationID
+		if a.Broken && b.Broken {
+			return cmp.Compare(b.InvocationID, a.InvocationID)
 		}
 
 		// Sort by started_at descending (newest first)
-		if records[i].Meta.StartedAt != records[j].Meta.StartedAt {
-			return records[i].Meta.StartedAt > records[j].Meta.StartedAt
+		if a.Meta.StartedAt != b.Meta.StartedAt {
+			return cmp.Compare(b.Meta.StartedAt, a.Meta.StartedAt)
 		}
 
 		// Tie-breaker: invocation_id descending
-		return records[i].InvocationID > records[j].InvocationID
+		return cmp.Compare(b.InvocationID, a.InvocationID)
 	})
 
 	return records, nil

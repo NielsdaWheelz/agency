@@ -1,9 +1,10 @@
 package daemon
 
 import (
+	"cmp"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -32,7 +33,7 @@ func (s *Server) handleListWorktrees(w http.ResponseWriter, r *http.Request) {
 	var allWorktrees []WorktreeDTO
 	for _, repoID := range repoIDs {
 		repoName := s.repoName(repoID)
-		records, err := store.ScanIntegrationWorktreesForRepo(s.Store.DataDir, repoID)
+		records, err := s.store.ScanIntegrationWorktreesForRepo(repoID)
 		if err != nil {
 			continue
 		}
@@ -43,18 +44,21 @@ func (s *Server) handleListWorktrees(w http.ResponseWriter, r *http.Request) {
 			if !matchesWorktreeState(r.Meta.State, params.State) {
 				continue
 			}
-			mergeMeta, _ := s.Store.ReadIntegrationWorktreeMerge(r.Meta.RepoID, r.Meta.WorktreeID)
-			dto := WorktreeMetaToDTO(r.Meta, mergeMeta)
+			mergeMeta, ok := s.readOptionalWorktreeMergeForReadResponse(w, requestID, r.Meta.RepoID, r.Meta.WorktreeID)
+			if !ok {
+				return
+			}
+			dto := worktreeMetaToDTO(r.Meta, mergeMeta)
 			dto.RepoName = repoName
 			allWorktrees = append(allWorktrees, dto)
 		}
 	}
 
-	sort.Slice(allWorktrees, func(i, j int) bool {
-		if allWorktrees[i].LastUsedAt != allWorktrees[j].LastUsedAt {
-			return allWorktrees[i].LastUsedAt > allWorktrees[j].LastUsedAt
+	slices.SortFunc(allWorktrees, func(a, b WorktreeDTO) int {
+		if a.LastUsedAt != b.LastUsedAt {
+			return cmp.Compare(b.LastUsedAt, a.LastUsedAt)
 		}
-		return allWorktrees[i].WorktreeID < allWorktrees[j].WorktreeID
+		return cmp.Compare(a.WorktreeID, b.WorktreeID)
 	})
 
 	worktrees, nextCursor := paginateWorktrees(allWorktrees, params.Cursor, params.Limit)
@@ -81,8 +85,11 @@ func (s *Server) handleGetWorktree(w http.ResponseWriter, r *http.Request, workt
 		return
 	}
 
-	mergeMeta, _ := s.Store.ReadIntegrationWorktreeMerge(record.Meta.RepoID, record.Meta.WorktreeID)
-	dto := WorktreeMetaToDTO(record.Meta, mergeMeta)
+	mergeMeta, ok := s.readOptionalWorktreeMergeForReadResponse(w, requestID, record.Meta.RepoID, record.Meta.WorktreeID)
+	if !ok {
+		return
+	}
+	dto := worktreeMetaToDTO(record.Meta, mergeMeta)
 	dto.RepoName = s.repoName(record.Meta.RepoID)
 	s.writeAPIResponse(w, requestID, dto)
 }
@@ -107,10 +114,8 @@ func (s *Server) handleGetWorktreeMerge(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	mergeMeta, err := s.Store.ReadIntegrationWorktreeMerge(record.Meta.RepoID, record.Meta.WorktreeID)
-	if err != nil {
-		code := errors.CodeOr(err, errors.EStoreCorrupt)
-		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(code), err.Error(), "", nil)
+	mergeMeta, ok := s.readOptionalWorktreeMergeForReadResponse(w, requestID, record.Meta.RepoID, record.Meta.WorktreeID)
+	if !ok {
 		return
 	}
 	if mergeMeta == nil {
@@ -118,12 +123,22 @@ func (s *Server) handleGetWorktreeMerge(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	s.writeAPIResponse(w, requestID, WorktreeMergeMetaToDTO(mergeMeta))
+	s.writeAPIResponse(w, requestID, worktreeMergeMetaToDTO(mergeMeta))
+}
+
+func (s *Server) readOptionalWorktreeMergeForReadResponse(w http.ResponseWriter, requestID, repoID, worktreeID string) (*store.IntegrationWorktreeMergeMeta, bool) {
+	mergeMeta, err := s.store.ReadIntegrationWorktreeMerge(repoID, worktreeID)
+	if err != nil {
+		code := errors.CodeOr(err, errors.EStoreCorrupt)
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(code), err.Error(), "", nil)
+		return nil, false
+	}
+	return mergeMeta, true
 }
 
 // resolveWorktreeRefForRepo resolves a worktree reference within a specific repo.
 func (s *Server) resolveWorktreeRefForRepo(ref string, repoID string) (*store.IntegrationWorktreeRecord, error) {
-	records, err := store.ScanIntegrationWorktreesForRepo(s.Store.DataDir, repoID)
+	records, err := s.store.ScanIntegrationWorktreesForRepo(repoID)
 	if err != nil {
 		return nil, err
 	}

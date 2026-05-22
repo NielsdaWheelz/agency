@@ -173,6 +173,7 @@ func TestAgentLand_CleanupModeHumanOutputDoesNotRequireHeads(t *testing.T) {
 		meta.LandingStatus = store.LandingStatusLanded
 		meta.FinishedAt = "2026-03-02T17:19:00Z"
 	}))
+	stubInvocationCleanupCommands(cr, repoDir, dataDir, repoID, invocationID)
 
 	var stdout, stderr bytes.Buffer
 	err := AgentLand(context.Background(), cr, fsys, repoDir, AgentLandOpts{
@@ -190,10 +191,11 @@ func TestAgentLand_CleanupModeHumanOutputDoesNotRequireHeads(t *testing.T) {
 }
 
 func TestAgentDiscard_JSONSuccessEnvelope(t *testing.T) {
-	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "discard-json")
+	repoDir, dataDir, repoID, worktreeID, daemonRunner, fsys := setupAgentTestEnvShort(t, "discard-json")
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	invocationID := "20260302172000-dsc1"
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFailed)
+	stubInvocationCleanupCommands(daemonRunner, repoDir, dataDir, repoID, invocationID)
 
 	cr := testutil.NewFakeCommandRunner()
 	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}

@@ -19,51 +19,53 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
+type tmuxClient interface {
+	HasSession(ctx context.Context, name string) (bool, error)
+	NewSession(ctx context.Context, name, cwd string, argv []string, env map[string]string) error
+	KillSession(ctx context.Context, name string) error
+	InterruptSession(ctx context.Context, name string) error
+	CaptureScrollback(ctx context.Context, target string) (string, error)
+	PipePane(ctx context.Context, target, logPath string) error
+	ListAttachedClients(ctx context.Context, name string) ([]tmux.AttachedClient, error)
+}
+
 // Server is the daemon HTTP server that supervises invocations (headless and headed).
 type Server struct {
-	// Store provides access to agency data.
-	Store *store.Store
+	// store provides access to agency data.
+	store *store.Store
 
-	// Runner is the interface for spawning processes (injectable for testing).
-	Runner exec.CommandRunner
+	// runner spawns external commands for daemon-owned workflows.
+	runner exec.CommandRunner
 
-	// FS is the filesystem interface (injectable for testing).
-	FS fs.FS
+	// fsys performs daemon filesystem operations.
+	fsys fs.FS
 
-	// TmuxClient is the tmux client interface (injectable for testing).
-	TmuxClient tmux.Client
+	// tmuxClient manages headed tmux sessions.
+	tmuxClient tmuxClient
 
-	// Clock returns the current time (injectable for testing).
-	Clock func() time.Time
+	// clock returns the current time.
+	clock func() time.Time
 
-	// InvocationEvents appends invocation-scoped events with shared sequencing.
-	InvocationEvents *eventlog.Writer
+	// invocationEvents appends invocation-scoped events with shared sequencing.
+	invocationEvents *eventlog.Writer
 
-	// WorktreeEvents appends worktree-scoped events with shared sequencing.
-	WorktreeEvents *eventlog.Writer
+	// worktreeEvents appends worktree-scoped events with shared sequencing.
+	worktreeEvents *eventlog.Writer
 
-	// TaskEvents appends task-scoped events with shared sequencing.
-	TaskEvents *eventlog.Writer
+	// taskEvents appends task-scoped events with shared sequencing.
+	taskEvents *eventlog.Writer
 
-	// RepoEvents appends repo-scoped events with shared sequencing.
-	RepoEvents eventlog.Appender
+	// repoEvents appends repo-scoped events with shared sequencing.
+	repoEvents eventlog.Appender
 
-	// PIDChecker checks if a PID is alive (injectable for testing).
-	PIDChecker func(int) bool
+	// pidChecker checks if a PID is alive.
+	pidChecker func(int) bool
 
-	// CheckpointDebounceOverride, if set, overrides the default checkpoint debounce interval.
-	// Used in tests to avoid long waits.
-	CheckpointDebounceOverride *time.Duration
+	// configDir is the path to the config directory.
+	configDir string
 
-	// HeadedReconcileIntervalOverride, if set, overrides the default headed reconcile interval.
-	// Used in tests to speed up reconciliation.
-	HeadedReconcileIntervalOverride *time.Duration
-
-	// ConfigDir is the path to the config directory.
-	ConfigDir string
-
-	// InstanceID is the unique ID for this daemon instance, generated at startup.
-	InstanceID string
+	// instanceID is the unique ID for this daemon instance, generated at startup.
+	instanceID string
 
 	// startedAt is when the daemon started.
 	startedAt time.Time
@@ -72,24 +74,24 @@ type Server struct {
 	mu sync.RWMutex
 
 	// processes maps invocation_id -> supervised process state (headless and headed).
-	processes map[string]*SupervisedProcess
+	processes map[string]*supervisedProcess
 
 	// activeMerges maps "<repo_id>/<worktree_id>" -> accepted worktree merge attempt.
-	activeMerges map[string]*WorktreeMergeProcess
+	activeMerges map[string]*worktreeMergeProcess
 
 	// idempotencyMu protects the idempotency map.
 	idempotencyMu sync.RWMutex
 
-	// idempotency maps (repo_id, client_request_id) -> IdempotencyEntry.
+	// idempotency maps (repo_id, client_request_id) -> idempotencyEntry.
 	// Used to prevent duplicate headless invocations from retried requests.
-	idempotency map[string]IdempotencyEntry
+	idempotency map[string]idempotencyEntry
 
 	// headedIdempotencyMu protects the headed idempotency map.
 	headedIdempotencyMu sync.RWMutex
 
-	// headedIdempotency maps (repo_id, client_request_id) -> HeadedIdempotencyEntry.
+	// headedIdempotency maps (repo_id, client_request_id) -> headedIdempotencyEntry.
 	// Used to prevent duplicate headed invocations from retried requests.
-	headedIdempotency map[string]HeadedIdempotencyEntry
+	headedIdempotency map[string]headedIdempotencyEntry
 
 	// headedHookMu serializes headed hook imports so transcript offsets and parser
 	// state advance in the same order as writes to raw.jsonl and stream.jsonl.
@@ -98,9 +100,9 @@ type Server struct {
 	// worktreeIdempotencyMu protects the worktree idempotency map.
 	worktreeIdempotencyMu sync.RWMutex
 
-	// worktreeIdempotency maps (repo_id, idempotency_key) -> WorktreeIdempotencyEntry.
+	// worktreeIdempotency maps (repo_id, idempotency_key) -> worktreeIdempotencyEntry.
 	// Used to prevent duplicate worktree creation from retried requests.
-	worktreeIdempotency map[string]WorktreeIdempotencyEntry
+	worktreeIdempotency map[string]worktreeIdempotencyEntry
 
 	// headedStartingFirstSeen tracks when a "starting" headed invocation was first
 	// observed without a tmux session. Used for grace window before marking failed.
@@ -144,37 +146,42 @@ type Server struct {
 func NewServer(st *store.Store, runner exec.CommandRunner, fsys fs.FS, configDir string) *Server {
 	repoLock := lock.NewRepoLock(st.DataDir)
 	server := &Server{
-		Store:                   st,
-		Runner:                  runner,
-		FS:                      fsys,
-		TmuxClient:              tmux.NewExecClient(runner),
-		ConfigDir:               configDir,
-		Clock:                   time.Now,
-		PIDChecker:              IsPIDAlive,
-		InstanceID:              uuid.New().String(),
-		processes:               make(map[string]*SupervisedProcess),
-		activeMerges:            make(map[string]*WorktreeMergeProcess),
-		idempotency:             make(map[string]IdempotencyEntry),
-		headedIdempotency:       make(map[string]HeadedIdempotencyEntry),
-		worktreeIdempotency:     make(map[string]WorktreeIdempotencyEntry),
+		store:                   st,
+		runner:                  runner,
+		fsys:                    fsys,
+		tmuxClient:              tmux.NewExecClient(runner),
+		configDir:               configDir,
+		clock:                   time.Now,
+		pidChecker:              IsPIDAlive,
+		instanceID:              uuid.New().String(),
+		processes:               make(map[string]*supervisedProcess),
+		activeMerges:            make(map[string]*worktreeMergeProcess),
+		idempotency:             make(map[string]idempotencyEntry),
+		headedIdempotency:       make(map[string]headedIdempotencyEntry),
+		worktreeIdempotency:     make(map[string]worktreeIdempotencyEntry),
 		headedStartingTickCount: make(map[string]int),
 		repoLock:                &repoLock,
 		shutdownCh:              make(chan struct{}),
 		reconcileLoopDone:       make(chan struct{}),
 	}
-	server.InvocationEvents = eventlog.NewWriter("invocation_id", func() time.Time {
-		return server.Clock()
+	server.invocationEvents = eventlog.NewWriter("invocation_id", func() time.Time {
+		return server.clock()
 	})
-	server.WorktreeEvents = eventlog.NewWriter("worktree_id", func() time.Time {
-		return server.Clock()
+	server.worktreeEvents = eventlog.NewWriter("worktree_id", func() time.Time {
+		return server.clock()
 	})
-	server.TaskEvents = eventlog.NewWriter("task_id", func() time.Time {
-		return server.Clock()
+	server.taskEvents = eventlog.NewWriter("task_id", func() time.Time {
+		return server.clock()
 	})
-	server.RepoEvents = eventlog.NewWriter("repo_id", func() time.Time {
-		return server.Clock()
+	server.repoEvents = eventlog.NewWriter("repo_id", func() time.Time {
+		return server.clock()
 	})
 	return server
+}
+
+// InstanceID returns the unique ID for this daemon instance.
+func (s *Server) InstanceID() string {
+	return s.instanceID
 }
 
 // IsPIDAlive checks if a process with the given PID is alive.
@@ -190,7 +197,7 @@ func IsPIDAlive(pid int) bool {
 // Serve starts the HTTP server on the given listener.
 // This blocks until the server shuts down.
 func (s *Server) Serve(listener net.Listener) error {
-	s.startedAt = s.Clock()
+	s.startedAt = s.clock()
 
 	s.server = &http.Server{
 		Handler: s.newHTTPHandler(),
@@ -254,7 +261,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // writing files.
 func (s *Server) drainSupervisedProcesses(ctx context.Context) {
 	s.mu.RLock()
-	procs := make([]*SupervisedProcess, 0, len(s.processes))
+	procs := make([]*supervisedProcess, 0, len(s.processes))
 	for _, proc := range s.processes {
 		procs = append(procs, proc)
 	}
@@ -277,7 +284,7 @@ func (s *Server) drainSupervisedProcesses(ctx context.Context) {
 	// Persist the final output offsets and drop the drained processes.
 	for _, proc := range procs {
 		s.flushLastOutputAt(proc)
-		s.clearInvocationProcess(proc.InvocationID)
+		s.clearInvocationProcess(proc.invocationID)
 	}
 }
 
@@ -290,32 +297,32 @@ func (s *Server) drainSupervisedProcesses(ctx context.Context) {
 // the output-flush and checkpoint loops unwind even if the runner is
 // wedged. It does not wait for goroutines here; drainSupervisedProcesses
 // does that after every process is signalled.
-func (s *Server) terminateSupervisedProcess(ctx context.Context, proc *SupervisedProcess) {
+func (s *Server) terminateSupervisedProcess(ctx context.Context, proc *supervisedProcess) {
 	proc.exitReason.Store(store.ExitReasonKilled)
 	proc.failureReason.Store("killed")
 
-	if proc.Mode == "headed" {
-		if proc.TmuxSession != "" {
-			_ = s.TmuxClient.KillSession(ctx, proc.TmuxSession)
+	if proc.mode == "headed" {
+		if proc.tmuxSession != "" {
+			_ = s.tmuxClient.KillSession(ctx, proc.tmuxSession)
 		}
-		s.failInvocationKilled(proc.RepoID, proc.InvocationID)
-		proc.CloseDone()
+		s.failInvocationKilled(proc.repoID, proc.invocationID)
+		proc.closeDone()
 		return
 	}
 
-	if proc.PGID > 0 {
-		if err := syscall.Kill(-proc.PGID, syscall.SIGINT); err != syscall.ESRCH {
+	if proc.pgid > 0 {
+		if err := syscall.Kill(-proc.pgid, syscall.SIGINT); err != syscall.ESRCH {
 			select {
 			case <-proc.done:
 			case <-time.After(2 * time.Second):
-				_ = syscall.Kill(-proc.PGID, syscall.SIGKILL)
+				_ = syscall.Kill(-proc.pgid, syscall.SIGKILL)
 			case <-ctx.Done():
-				_ = syscall.Kill(-proc.PGID, syscall.SIGKILL)
+				_ = syscall.Kill(-proc.pgid, syscall.SIGKILL)
 			}
 		}
 	}
 	// Close done unconditionally so the checkpoint and output-flush loops
 	// terminate even when the runner exited on its own (waitForExit closes
 	// done too, but CloseDone is idempotent).
-	proc.CloseDone()
+	proc.closeDone()
 }

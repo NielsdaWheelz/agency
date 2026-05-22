@@ -4,49 +4,46 @@ package stream
 
 import "encoding/json"
 
-// SchemaVersion is the current schema version for normalized events.
-const SchemaVersion = "1.0"
+// schemaVersion is the current schema version for normalized events.
+const schemaVersion = "1.0"
 
-// EventKind represents the type of normalized event.
-type EventKind string
+// eventKind represents the type of normalized event.
+type eventKind string
 
 const (
-	// EventKindSessionStart indicates the start of a runner session.
-	EventKindSessionStart EventKind = "session_start"
+	// eventKindSessionStart indicates the start of a runner session.
+	eventKindSessionStart eventKind = "session_start"
 
-	// EventKindToolStart indicates the start of a tool/command execution.
-	EventKindToolStart EventKind = "tool_start"
+	// eventKindToolStart indicates the start of a tool/command execution.
+	eventKindToolStart eventKind = "tool_start"
 
-	// EventKindToolEnd indicates the end of a tool/command execution.
-	EventKindToolEnd EventKind = "tool_end"
+	// eventKindToolEnd indicates the end of a tool/command execution.
+	eventKindToolEnd eventKind = "tool_end"
 
-	// EventKindMessage indicates an assistant or user message.
-	EventKindMessage EventKind = "message"
+	// eventKindMessage indicates an assistant or user message.
+	eventKindMessage eventKind = "message"
 
-	// EventKindFinal indicates the final result/outcome of the session.
-	EventKindFinal EventKind = "final"
+	// eventKindFinal indicates the final result/outcome of the session.
+	eventKindFinal eventKind = "final"
 
-	// EventKindError indicates an error during the session.
-	EventKindError EventKind = "error"
+	// eventKindError indicates an error during the session.
+	eventKindError eventKind = "error"
 
-	// EventKindUsage indicates token usage information.
-	EventKindUsage EventKind = "usage"
+	// eventKindUsage indicates token usage information.
+	eventKindUsage eventKind = "usage"
 
-	// EventKindStatus indicates a status update (derived from runner signals).
-	EventKindStatus EventKind = "status"
+	// eventKindParseError indicates a parsing error for a raw line.
+	eventKindParseError eventKind = "parse_error"
 
-	// EventKindParseError indicates a parsing error for a raw line.
-	EventKindParseError EventKind = "parse_error"
-
-	// EventKindUnknown is a parser diagnostic for a provider event shape we
+	// eventKindUnknown is a parser diagnostic for a provider event shape we
 	// could not classify. The raw bytes remain in raw.jsonl, while data carries
 	// the provider type, reason, and a raw JSON preview.
-	EventKindUnknown EventKind = "unknown"
+	eventKindUnknown eventKind = "unknown"
 )
 
-// NormalizedEvent represents a normalized event written to stream.jsonl.
+// normalizedEvent represents a normalized event written to stream.jsonl.
 // All events from different runners are normalized to this schema.
-type NormalizedEvent struct {
+type normalizedEvent struct {
 	// SchemaVersion is the schema version string (e.g., "1.0").
 	SchemaVersion string `json:"schema_version"`
 
@@ -64,27 +61,20 @@ type NormalizedEvent struct {
 	Runner string `json:"runner"`
 
 	// Kind is the event type.
-	Kind EventKind `json:"kind"`
+	Kind eventKind `json:"kind"`
 
 	// Data contains runner-specific payload.
 	Data map[string]interface{} `json:"data"`
 }
 
 // Marshal serializes the event to JSON bytes with newline.
-func (e *NormalizedEvent) Marshal() ([]byte, error) {
+func (e *normalizedEvent) Marshal() ([]byte, error) {
 	data, err := json.Marshal(e)
 	if err != nil {
 		return nil, err
 	}
 	// Append newline for JSONL format
 	return append(data, '\n'), nil
-}
-
-// SessionStartData contains data for session_start events.
-type SessionStartData struct {
-	CWD       string `json:"cwd,omitempty"`
-	Model     string `json:"model,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
 }
 
 // SessionStartNotification is emitted by the parser when a session_start event
@@ -102,58 +92,6 @@ type SessionStartNotification struct {
 type FinalNotification struct {
 	Success bool
 	Seq     uint64
-}
-
-// MessageData contains data for message events.
-// ContentBlocks, when present, preserves the full structure of content blocks
-// (text, tool_use, tool_result) with their complete fields.
-type MessageData struct {
-	HasToolUse    bool                     `json:"has_tool_use"`
-	ToolNames     []string                 `json:"tool_names,omitempty"`
-	Text          string                   `json:"text,omitempty"`
-	Role          string                   `json:"role,omitempty"`
-	ContentBlocks []map[string]interface{} `json:"content_blocks,omitempty"`
-}
-
-// ToolStartData contains data for tool_start events.
-type ToolStartData struct {
-	Command string `json:"command,omitempty"`
-	ToolID  string `json:"tool_id,omitempty"`
-	Name    string `json:"name,omitempty"`
-}
-
-// ToolEndData contains data for tool_end events.
-type ToolEndData struct {
-	Command  string `json:"command,omitempty"`
-	ExitCode *int   `json:"exit_code,omitempty"`
-	ToolID   string `json:"tool_id,omitempty"`
-	Name     string `json:"name,omitempty"`
-}
-
-// FinalData contains data for final events.
-type FinalData struct {
-	DurationMS *int64           `json:"duration_ms,omitempty"`
-	CostUSD    *float64         `json:"cost_usd,omitempty"`
-	Usage      map[string]int64 `json:"usage,omitempty"`
-	Success    bool             `json:"success"`
-}
-
-// ErrorData contains data for error events.
-type ErrorData struct {
-	Message string `json:"message"`
-	Code    string `json:"code,omitempty"`
-}
-
-// UsageData contains data for usage events.
-type UsageData struct {
-	InputTokens  int64 `json:"input_tokens,omitempty"`
-	OutputTokens int64 `json:"output_tokens,omitempty"`
-}
-
-// ParseErrorData contains data for parse_error events.
-type ParseErrorData struct {
-	ParseErrorCount int    `json:"parse_error_count"`
-	Reason          string `json:"reason,omitempty"`
 }
 
 // CheckpointNotification is emitted by the parser when a mutating tool completes.

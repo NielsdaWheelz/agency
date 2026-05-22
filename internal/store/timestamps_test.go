@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,7 +22,6 @@ func TestValidateCanonicalStoreTimestamp(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -33,7 +31,9 @@ func TestValidateCanonicalStoreTimestamp(t *testing.T) {
 				return
 			}
 			require.Error(t, err)
-			assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+			if got := errors.GetCode(err); got != errors.EStoreCorrupt {
+				t.Fatalf("error code = %s, want %s", got, errors.EStoreCorrupt)
+			}
 		})
 	}
 }

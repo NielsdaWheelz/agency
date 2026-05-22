@@ -2,7 +2,6 @@ package cobra
 
 import (
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -39,59 +38,35 @@ integration worktree and one primary agent invocation through a daemon-owned
 mutation.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			switch {
-			case len(args) == 0:
+			if len(args) == 0 {
 				_ = cmd.Help()
-				return errors.New(errors.EUsage, "specify 'start', 'ls', or a task ref")
-			default:
-				taskRef := args[0]
-				switch {
-				case len(args) == 1:
-					if err := validateTaskTargetFlags(cmd, "<task-ref>", "json"); err != nil {
-						return err
-					}
-					return runTaskShow(cmd, taskRef, repoRef, jsonOut)
-				case len(args) == 2:
-					switch args[1] {
-					case "archive":
-						if err := validateTaskTargetFlags(cmd, "archive", "json"); err != nil {
-							return err
-						}
-						return runTaskArchive(cmd, taskRef, repoRef, jsonOut)
-					case "watch":
-						if err := validateTaskTargetFlags(cmd, "watch"); err != nil {
-							return err
-						}
-						return runTaskWatch(cmd, taskRef, repoRef)
-					case "retry":
-						if err := validateTaskTargetFlags(cmd, "retry", "json", "mode", "runner", "name", "detached", "prompt", "prompt-file", "agency-config", "execution-profile", "runner-arg", "model", "effort", "permission-mode", "no-include-untracked"); err != nil {
-							return err
-						}
-						return runTaskRetry(cmd, commands.TaskRetryOpts{
-							TaskRef:            taskRef,
-							RepoRef:            repoRef,
-							Mode:               mode,
-							Runner:             runner,
-							InvocationName:     invocationName,
-							Detached:           detached,
-							Prompt:             prompt,
-							PromptFile:         promptFile,
-							AgencyConfigPath:   agencyConfigPath,
-							ExecutionProfile:   executionProfile,
-							RunnerArgs:         runnerArgs,
-							Model:              model,
-							Effort:             effort,
-							PermissionMode:     permissionMode,
-							JSON:               jsonOut,
-							NoIncludeUntracked: noIncludeUntracked,
-						})
-					default:
-						return errors.New(errors.EUsage, "unknown command \""+args[1]+"\" for \"agency task\"")
-					}
-				default:
-					return errors.New(errors.EUsage, "unknown command \""+args[1]+"\" for \"agency task\"")
-				}
 			}
+
+			if err := validateTaskTargetFlags(cmd, args); err != nil {
+				return err
+			}
+			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
+			if err != nil {
+				return err
+			}
+			return commands.TaskTarget(ctx, cr, fsys, cwd, commands.TaskTargetOpts{
+				Args:               args,
+				RepoRef:            repoRef,
+				JSON:               jsonOut,
+				Mode:               mode,
+				Runner:             runner,
+				InvocationName:     invocationName,
+				Detached:           detached,
+				Prompt:             prompt,
+				PromptFile:         promptFile,
+				AgencyConfigPath:   agencyConfigPath,
+				ExecutionProfile:   executionProfile,
+				RunnerArgs:         runnerArgs,
+				Model:              model,
+				Effort:             effort,
+				PermissionMode:     permissionMode,
+				NoIncludeUntracked: noIncludeUntracked,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
@@ -136,22 +111,9 @@ mutation.`,
 		switch len(args) {
 		case 0:
 			values := []string{"start", "ls"}
-			candidates := make([]string, 0, len(values))
-			for _, value := range values {
-				if toComplete == "" || strings.HasPrefix(value, toComplete) {
-					candidates = append(candidates, value)
-				}
-			}
-			return candidates, cobra.ShellCompDirectiveNoFileComp
+			return completeStaticValues(values, toComplete), cobra.ShellCompDirectiveNoFileComp
 		case 1:
-			values := []string{"archive", "watch", "retry"}
-			candidates := make([]string, 0, len(values))
-			for _, value := range values {
-				if toComplete == "" || strings.HasPrefix(value, toComplete) {
-					candidates = append(candidates, value)
-				}
-			}
-			return candidates, cobra.ShellCompDirectiveNoFileComp
+			return completeStaticValues(taskTargetActionCompletions(), toComplete), cobra.ShellCompDirectiveNoFileComp
 		default:
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
@@ -159,15 +121,18 @@ mutation.`,
 	return cmd
 }
 
-func validateTaskTargetFlags(cmd *cobra.Command, action string, allowed ...string) error {
-	allowedFlags := make(map[string]bool, len(allowed))
-	for _, flag := range allowed {
-		allowedFlags[flag] = true
+func taskTargetActionCompletions() []string {
+	return []string{
+		commands.TaskTargetActionArchive,
+		commands.TaskTargetActionWatch,
+		commands.TaskTargetActionRetry,
 	}
-	for _, flag := range []string{"json", "mode", "runner", "name", "detached", "prompt", "prompt-file", "agency-config", "execution-profile", "runner-arg", "model", "effort", "permission-mode", "no-include-untracked"} {
-		if cmd.Flags().Changed(flag) && !allowedFlags[flag] {
-			return errors.New(errors.EUsage, "--"+flag+" is not valid for agency task "+action)
-		}
+}
+
+func validateTaskTargetFlags(cmd *cobra.Command, args []string) error {
+	targetFlags := []string{"json", "mode", "runner", "name", "detached", "prompt", "prompt-file", "agency-config", "execution-profile", "runner-arg", "model", "effort", "permission-mode", "no-include-untracked"}
+	if policy, ok := commands.TaskTargetFlagPolicy(args); ok {
+		return validateChangedTargetFlags(cmd, "task", policy.Action, targetFlags, policy.AllowedFlags...)
 	}
 	return nil
 }
@@ -256,17 +221,6 @@ func newTaskStartCmd() *cobra.Command {
 	return cmd
 }
 
-func completeRunnerModes(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	values := []string{"headless", "headed"}
-	candidates := make([]string, 0, len(values))
-	for _, value := range values {
-		if toComplete == "" || strings.HasPrefix(value, toComplete) {
-			candidates = append(candidates, value)
-		}
-	}
-	return candidates, cobra.ShellCompDirectiveNoFileComp
-}
-
 func newTaskLSCmd() *cobra.Command {
 	var allRepos bool
 	var all bool
@@ -305,48 +259,4 @@ func newTaskLSCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&all, "all", false, "Include archived tasks")
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Write JSON instead of human output")
 	return cmd
-}
-
-func runTaskShow(cmd *cobra.Command, taskRef, repoRef string, jsonOut bool) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-	return commands.TaskShow(ctx, cr, fsys, cwd, commands.TaskShowOpts{
-		TaskRef: taskRef,
-		RepoRef: repoRef,
-		JSON:    jsonOut,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func runTaskArchive(cmd *cobra.Command, taskRef, repoRef string, jsonOut bool) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-	return commands.TaskArchive(ctx, cr, fsys, cwd, commands.TaskArchiveOpts{
-		TaskRef: taskRef,
-		RepoRef: repoRef,
-		JSON:    jsonOut,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func runTaskRetry(cmd *cobra.Command, opts commands.TaskRetryOpts) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-	return commands.TaskRetry(ctx, cr, fsys, cwd, opts, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func runTaskWatch(cmd *cobra.Command, taskRef, repoRef string) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-	return commands.TaskWatch(ctx, cr, fsys, cwd, commands.TaskWatchOpts{
-		TaskRef:  taskRef,
-		RepoRef:  repoRef,
-		Interval: (2 * time.Second).String(),
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }

@@ -30,11 +30,11 @@ func TestDaemonRecoveryOrphanedInvocation(t *testing.T) {
 
 	dataDir := t.TempDir()
 
-	// Plant a fake repo and invocation with status=running but a dead PID.
+	// Plant a fake repo and invocation with status=running but an invalid PID.
 	repoID := "fake-repo-id"
 	invocationID := "20260101120000-abcd"
-	deadPID := 99999
-	deadPGID := 99999
+	deadPID := -1
+	deadPGID := -1
 
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
 
@@ -78,8 +78,6 @@ func TestDaemonRecoveryOrphanedInvocation(t *testing.T) {
 	configDir := filepath.Join(dataDir, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755), "mkdir config")
 	srv := daemon.NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
-	// Override PIDChecker to report PID 99999 as dead.
-	srv.PIDChecker = func(pid int) bool { return false }
 
 	// Unix sockets on macOS have a ~104 byte path limit.
 	// Use a short temp dir for the socket to avoid exceeding it.

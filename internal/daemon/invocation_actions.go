@@ -39,13 +39,13 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 		return
 	}
 
-	meta, err := s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
+	meta, err := s.store.ReadInvocationMeta(record.RepoID, record.InvocationID)
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
 			s.writeErrorWithRequestID(w, http.StatusNotFound, requestID, string(errors.EInvocationNotFound), "invocation not found", "")
 			return
 		}
-		s.writeErrorWithRequestID(w, http.StatusInternalServerError, requestID, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "")
+		s.writeErrorWithRequestID(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to read invocation meta: "+err.Error(), "")
 		return
 	}
 	if meta.Status == store.InvocationStatusFinished || meta.Status == store.InvocationStatusFailed {
@@ -56,7 +56,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 	s.mu.RLock()
 	completionProc, completionSupervised := s.processes[record.InvocationID]
 	s.mu.RUnlock()
-	if completionSupervised && completionProc != nil && completionProc.SuccessfulCompletionObserved() {
+	if completionSupervised && completionProc != nil && completionProc.successfulCompletionObserved() {
 		s.scheduleStdinCompletionFinalize(completionProc)
 		s.writeInvocationActionSuccess(w, requestID, record.InvocationID)
 		return
@@ -65,12 +65,15 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 	if meta.Mode == store.RunnerModeHeaded {
 		s.requestInvocationStop(record.RepoID, record.InvocationID)
 
-		sessionName := meta.TmuxSession
-		if sessionName == "" {
-			sessionName = tmux.SessionName(record.InvocationID)
+		sessionName, ok := headedInvocationSessionName(meta)
+		if !ok {
+			s.failInvocationStart(record.RepoID, record.InvocationID, "tmux_session_missing", false)
+			s.clearInvocationProcess(record.InvocationID)
+			s.writeErrorWithRequestID(w, http.StatusInternalServerError, requestID, string(errors.ETmuxSessionMissing), "headed invocation is missing tmux_session", "recreate the headed session or inspect invocation metadata")
+			return
 		}
 
-		exists, err := s.TmuxClient.HasSession(ctx, sessionName)
+		exists, err := s.tmuxClient.HasSession(ctx, sessionName)
 		if err != nil {
 			s.recordInvocationWarning(record.RepoID, record.InvocationID, "stop_tmux_has_session_failed", err.Error(), map[string]any{
 				"session_name": sessionName,
@@ -83,14 +86,14 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 			return
 		}
 
-		if err := s.TmuxClient.SendKeys(ctx, sessionName, []tmux.Key{tmux.KeyCtrlC}); err != nil {
-			s.recordInvocationWarning(record.RepoID, record.InvocationID, "stop_tmux_send_ctrl_c_failed", err.Error(), map[string]any{
+		if err := s.tmuxClient.InterruptSession(ctx, sessionName); err != nil {
+			s.recordInvocationWarning(record.RepoID, record.InvocationID, "stop_tmux_interrupt_failed", err.Error(), map[string]any{
 				"session_name": sessionName,
 			})
 
-			exists, checkErr := s.TmuxClient.HasSession(ctx, sessionName)
+			exists, checkErr := s.tmuxClient.HasSession(ctx, sessionName)
 			if checkErr != nil {
-				s.recordInvocationWarning(record.RepoID, record.InvocationID, "stop_tmux_has_session_failed_after_send", checkErr.Error(), map[string]any{
+				s.recordInvocationWarning(record.RepoID, record.InvocationID, "stop_tmux_has_session_failed_after_interrupt", checkErr.Error(), map[string]any{
 					"session_name": sessionName,
 				})
 			}
@@ -123,8 +126,8 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 	s.writeInvocationActionSuccess(w, requestID, record.InvocationID)
 }
 
-func (s *Server) stopEscalation(repoID, invocationID string, pgid int, supervised bool, proc *SupervisedProcess) {
-	if supervised && proc != nil && proc.SuccessfulCompletionObserved() {
+func (s *Server) stopEscalation(repoID, invocationID string, pgid int, supervised bool, proc *supervisedProcess) {
+	if supervised && proc != nil && proc.successfulCompletionObserved() {
 		s.scheduleStdinCompletionFinalize(proc)
 		return
 	}
@@ -195,26 +198,26 @@ const (
 	stdinCompletionKillDelay   = 2 * time.Second
 )
 
-func (s *Server) handleSuccessfulFinalNotification(proc *SupervisedProcess, notification stream.FinalNotification) {
+func (s *Server) handleSuccessfulFinalNotification(proc *supervisedProcess, notification stream.FinalNotification) {
 	if proc == nil || !notification.Success {
 		return
 	}
-	_, _, completionSatisfied := proc.RecordSuccessfulFinalTurn()
+	_, _, completionSatisfied := proc.recordSuccessfulFinalTurn()
 	if completionSatisfied {
 		s.scheduleStdinCompletionFinalize(proc)
 	}
 }
 
-func (s *Server) scheduleStdinCompletionFinalize(proc *SupervisedProcess) {
-	if proc == nil || proc.Relay == nil || proc.Relay.Mode() != relay.ModeStdin {
+func (s *Server) scheduleStdinCompletionFinalize(proc *supervisedProcess) {
+	if proc == nil || proc.relay == nil || proc.relay.Mode() != relay.ModeStdin {
 		return
 	}
-	if !proc.TryBeginCompletionFinalize() {
+	if !proc.tryBeginCompletionFinalize() {
 		return
 	}
 
 	go func() {
-		defer proc.EndCompletionFinalize()
+		defer proc.endCompletionFinalize()
 
 		timer := time.NewTimer(stdinCompletionSettleDelay)
 		defer timer.Stop()
@@ -226,11 +229,11 @@ func (s *Server) scheduleStdinCompletionFinalize(proc *SupervisedProcess) {
 			return
 		case <-timer.C:
 		}
-		if !proc.SuccessfulCompletionObserved() {
+		if !proc.successfulCompletionObserved() {
 			return
 		}
 
-		_ = proc.Relay.Close()
+		_ = proc.relay.Close()
 
 		select {
 		case <-proc.done:
@@ -239,11 +242,11 @@ func (s *Server) scheduleStdinCompletionFinalize(proc *SupervisedProcess) {
 			return
 		case <-time.After(stdinCompletionStopDelay):
 		}
-		if !proc.SuccessfulCompletionObserved() {
+		if !proc.successfulCompletionObserved() {
 			return
 		}
-		if proc.PGID > 0 {
-			_ = syscall.Kill(-proc.PGID, syscall.SIGTERM)
+		if proc.pgid > 0 {
+			_ = syscall.Kill(-proc.pgid, syscall.SIGTERM)
 		}
 
 		select {
@@ -253,11 +256,11 @@ func (s *Server) scheduleStdinCompletionFinalize(proc *SupervisedProcess) {
 			return
 		case <-time.After(stdinCompletionKillDelay):
 		}
-		if !proc.SuccessfulCompletionObserved() {
+		if !proc.successfulCompletionObserved() {
 			return
 		}
-		if proc.PGID > 0 {
-			_ = syscall.Kill(-proc.PGID, syscall.SIGKILL)
+		if proc.pgid > 0 {
+			_ = syscall.Kill(-proc.pgid, syscall.SIGKILL)
 		}
 	}()
 }
@@ -292,22 +295,25 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 		return
 	}
 
-	meta, err := s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
+	meta, err := s.store.ReadInvocationMeta(record.RepoID, record.InvocationID)
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
 			writeKillError(http.StatusNotFound, string(errors.EInvocationNotFound), "invocation not found", "")
 			return
 		}
-		writeKillError(http.StatusInternalServerError, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "")
+		writeKillError(http.StatusInternalServerError, string(errors.EInternal), "failed to read invocation meta: "+err.Error(), "")
 		return
 	}
 
 	if meta.Mode == store.RunnerModeHeaded {
-		sessionName := meta.TmuxSession
-		if sessionName == "" {
-			sessionName = tmux.SessionName(record.InvocationID)
+		sessionName, ok := headedInvocationSessionName(meta)
+		if !ok {
+			s.failInvocationStart(record.RepoID, record.InvocationID, "tmux_session_missing", false)
+			s.clearInvocationProcess(record.InvocationID)
+			writeKillError(http.StatusInternalServerError, string(errors.ETmuxSessionMissing), "headed invocation is missing tmux_session", "recreate the headed session or inspect invocation metadata")
+			return
 		}
-		if err := s.TmuxClient.KillSession(ctx, sessionName); err != nil && !tmux.IsNoSessionErr(err) {
+		if err := s.tmuxClient.KillSession(ctx, sessionName); err != nil && !tmux.IsNoSessionErr(err) {
 			s.recordInvocationWarning(record.RepoID, record.InvocationID, "kill_tmux_session_failed", err.Error(), map[string]any{
 				"session_name": sessionName,
 			})
@@ -342,7 +348,7 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 	s.writeInvocationActionSuccess(w, requestID, record.InvocationID)
 }
 
-func (s *Server) runOutputFlushLoop(proc *SupervisedProcess) {
+func (s *Server) runOutputFlushLoop(proc *supervisedProcess) {
 	defer s.supervisionWg.Done()
 
 	ticker := time.NewTicker(500 * time.Millisecond)

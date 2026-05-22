@@ -2,9 +2,10 @@ package store
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -32,7 +33,7 @@ type RepoIndexEntry struct {
 func (s *Store) LoadRepoIndex() (RepoIndex, error) {
 	path := s.RepoIndexPath()
 
-	data, err := s.FS.ReadFile(path)
+	data, err := s.fsys.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Return empty index for missing file
@@ -61,7 +62,7 @@ func (s *Store) LoadRepoIndex() (RepoIndex, error) {
 // absPath is normalized via filepath.Clean.
 // Paths are de-duplicated case-sensitively and kept sorted for stable diffs.
 func (s *Store) UpsertRepoIndexEntry(idx RepoIndex, repoKey, repoID, absPath string) RepoIndex {
-	now := s.Now().UTC().Format("2006-01-02T15:04:05Z")
+	now := s.nowTime().UTC().Format("2006-01-02T15:04:05Z")
 	absPath = filepath.Clean(absPath)
 
 	entry, exists := idx.Repos[repoKey]
@@ -84,11 +85,7 @@ func (s *Store) UpsertRepoIndexEntry(idx RepoIndex, repoKey, repoID, absPath str
 	for _, p := range entry.Paths {
 		pathSet[p] = true
 	}
-	newPaths := make([]string, 0, len(pathSet))
-	for p := range pathSet {
-		newPaths = append(newPaths, p)
-	}
-	sort.Strings(newPaths)
+	newPaths := slices.Sorted(maps.Keys(pathSet))
 	entry.Paths = newPaths
 
 	idx.Repos[repoKey] = entry
@@ -99,10 +96,10 @@ func (s *Store) UpsertRepoIndexEntry(idx RepoIndex, repoKey, repoID, absPath str
 // Creates the data directory if it doesn't exist.
 func (s *Store) SaveRepoIndex(idx RepoIndex) error {
 	// Ensure data directory exists
-	if err := s.FS.MkdirAll(s.DataDir, 0o700); err != nil {
+	if err := s.fsys.MkdirAll(s.DataDir, 0o700); err != nil {
 		return errors.Wrap(errors.EStoreCorrupt, "failed to create data directory", err)
 	}
-	if err := s.FS.Chmod(s.DataDir, 0o700); err != nil {
+	if err := s.fsys.Chmod(s.DataDir, 0o700); err != nil {
 		return errors.Wrap(errors.EStoreCorrupt, "failed to enforce data directory permissions", err)
 	}
 
@@ -116,7 +113,7 @@ func (s *Store) SaveRepoIndex(idx RepoIndex) error {
 	data = append(data, '\n')
 
 	path := s.RepoIndexPath()
-	if err := fs.WriteFileAtomic(s.FS, path, data, 0o600); err != nil {
+	if err := fs.WriteFileAtomic(s.fsys, path, data, 0o600); err != nil {
 		return errors.Wrap(errors.EStoreCorrupt, "failed to write repo_index.json", err)
 	}
 

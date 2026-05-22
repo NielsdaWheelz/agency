@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -36,7 +37,7 @@ func TestWorktreePRMerge_NonInteractiveRequiresYes(t *testing.T) {
 		RepoRef:         repoID,
 		DataDirOverride: dataDir,
 		IsInteractive:   func() bool { return false },
-	}, ioDiscard{}, ioDiscard{})
+	}, io.Discard, io.Discard)
 	require.Error(t, err)
 	assert.Equal(t, errors.EConfirmationRequired, errors.GetCode(err))
 }
@@ -57,7 +58,7 @@ func TestWorktreePRMerge_InteractiveConfirmationRejected(t *testing.T) {
 			DataDirOverride: dataDir,
 			IsInteractive:   func() bool { return true },
 			ConfirmationIn:  confirmIn,
-		}, ioDiscard{}, ioDiscard{})
+		}, io.Discard, io.Discard)
 	})
 	require.Error(t, err)
 	assert.Equal(t, errors.EAborted, errors.GetCode(err))
@@ -76,9 +77,23 @@ func TestWorktreePRMerge_InteractiveConfirmationTooLarge(t *testing.T) {
 		DataDirOverride: dataDir,
 		IsInteractive:   func() bool { return true },
 		ConfirmationIn:  strings.NewReader(longToken),
-	}, ioDiscard{}, ioDiscard{})
+	}, io.Discard, io.Discard)
 	require.Error(t, err)
 	assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
+}
+
+func TestWorktreePRMerge_RejectsConflictingStrategies(t *testing.T) {
+	t.Parallel()
+
+	err := WorktreePRMerge(context.Background(), nil, nil, "", WorktreePRMergeOpts{
+		WorktreeRef: "wt-1",
+		RepoRef:     "repo-1",
+		Squash:      true,
+		Merge:       true,
+	}, io.Discard, io.Discard)
+	require.Error(t, err)
+	assert.Equal(t, errors.EUsage, errors.GetCode(err))
+	assert.Contains(t, err.Error(), "at most one of --squash, --merge, --rebase may be specified")
 }
 
 func TestWorktreePRMerge_JSONSuccessIncludesDurableMergeFields(t *testing.T) {
@@ -204,7 +219,7 @@ exit 0
 	}
 
 	client := daemonclient.NewClient(store.NewStore(fsys, dataDir, time.Now).DaemonSocketPath())
-	startResp, err := client.WorktreePRMerge(context.Background(), worktreeID, repoID, daemonclient.WorktreePRMergeOpts{
+	startResp, err := client.WorktreePRMerge(context.Background(), worktreeID, repoID, daemon.WorktreePRMergeRequest{
 		Strategy:         "squash",
 		ConfirmationMode: "yes",
 		Confirmed:        true,

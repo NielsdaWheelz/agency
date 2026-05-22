@@ -9,14 +9,14 @@ import (
 // SchemaVersion is the current schema version for checkpoints.json.
 const SchemaVersion = "1.1"
 
-// MaxCheckpoints is the maximum number of checkpoints retained per invocation.
-const MaxCheckpoints = 200
+// maxCheckpoints is the maximum number of checkpoints retained per invocation.
+const maxCheckpoints = 200
 
 // RefPrefix is the namespace prefix for checkpoint refs.
 const RefPrefix = "refs/agency/snapshots/"
 
-// RestoreBackupRefPrefix stores pre-apply HEAD backups for recovery/audit.
-const RestoreBackupRefPrefix = "refs/agency/restore-backups/"
+// restoreBackupRefPrefix stores pre-apply HEAD backups for recovery/audit.
+const restoreBackupRefPrefix = "refs/agency/restore-backups/"
 
 // Checkpoint represents a single checkpoint entry.
 type Checkpoint struct {
@@ -91,16 +91,16 @@ func NewCheckpointsFile() *CheckpointsFile {
 	}
 }
 
-// NextID returns the next checkpoint ID (1 if no checkpoints exist).
-func (f *CheckpointsFile) NextID() int {
+// nextID returns the next checkpoint ID (1 if no checkpoints exist).
+func (f *CheckpointsFile) nextID() int {
 	if len(f.Checkpoints) == 0 {
 		return 1
 	}
 	return f.Checkpoints[len(f.Checkpoints)-1].ID + 1
 }
 
-// FindByID returns the checkpoint with the given ID, or nil if not found.
-func (f *CheckpointsFile) FindByID(id int) *Checkpoint {
+// findByID returns the checkpoint with the given ID, or nil if not found.
+func (f *CheckpointsFile) findByID(id int) *Checkpoint {
 	for i := range f.Checkpoints {
 		if f.Checkpoints[i].ID == id {
 			return &f.Checkpoints[i]
@@ -109,28 +109,28 @@ func (f *CheckpointsFile) FindByID(id int) *Checkpoint {
 	return nil
 }
 
-// EventKind is the type of checkpoint event.
-type EventKind string
+// eventKind is the type of checkpoint event.
+type eventKind string
 
 const (
-	// EventKindCheckpointCreated indicates a checkpoint was successfully created.
-	EventKindCheckpointCreated EventKind = "agency.checkpoint_created"
+	// eventKindCheckpointCreated indicates a checkpoint was successfully created.
+	eventKindCheckpointCreated eventKind = "agency.checkpoint_created"
 
-	// EventKindCheckpointFailed indicates checkpoint creation failed.
-	EventKindCheckpointFailed EventKind = "agency.checkpoint_failed"
+	// eventKindCheckpointFailed indicates checkpoint creation failed.
+	eventKindCheckpointFailed eventKind = "agency.checkpoint_failed"
 
-	// EventKindCheckpointApplyStarted indicates checkpoint apply has started.
-	EventKindCheckpointApplyStarted EventKind = "agency.checkpoint_apply_started"
+	// eventKindCheckpointApplyStarted indicates checkpoint apply has started.
+	eventKindCheckpointApplyStarted eventKind = "agency.checkpoint_apply_started"
 
-	// EventKindCheckpointApplied indicates a checkpoint was applied (rollback).
-	EventKindCheckpointApplied EventKind = "agency.checkpoint_applied"
+	// eventKindCheckpointApplied indicates a checkpoint was applied (rollback).
+	eventKindCheckpointApplied eventKind = "agency.checkpoint_applied"
 
-	// EventKindCheckpointDenylistTriggered indicates denylisted files were found.
-	EventKindCheckpointDenylistTriggered EventKind = "agency.checkpoint_denylist_triggered"
+	// eventKindCheckpointDenylistTriggered indicates denylisted files were found.
+	eventKindCheckpointDenylistTriggered eventKind = "agency.checkpoint_denylist_triggered"
 )
 
-// Event represents a checkpoint-related event for events.jsonl.
-type Event struct {
+// event represents a checkpoint-related event for events.jsonl.
+type event struct {
 	// SchemaVersion is always "1.0".
 	SchemaVersion string `json:"schema_version"`
 
@@ -144,26 +144,14 @@ type Event struct {
 	InvocationID string `json:"invocation_id"`
 
 	// Kind is the event type (agency-prefixed).
-	Kind EventKind `json:"kind"`
+	Kind eventKind `json:"kind"`
 
 	// Data contains event-specific details.
 	Data map[string]any `json:"data,omitempty"`
 }
 
-// NewEvent creates a new Event with the common fields populated.
-func NewEvent(invocationID string, seq uint64, kind EventKind, data map[string]any, now time.Time) Event {
-	return Event{
-		SchemaVersion: "1.0",
-		Seq:           seq,
-		Timestamp:     now.UTC().Format(time.RFC3339),
-		InvocationID:  invocationID,
-		Kind:          kind,
-		Data:          data,
-	}
-}
-
-// CheckpointCreatedData returns the data map for a checkpoint_created event.
-func CheckpointCreatedData(checkpointID int, includesUntracked bool, sandboxHeadSHA string) map[string]any {
+// checkpointCreatedData returns the data map for a checkpoint_created event.
+func checkpointCreatedData(checkpointID int, includesUntracked bool, sandboxHeadSHA string) map[string]any {
 	return map[string]any{
 		"checkpoint_id":      checkpointID,
 		"includes_untracked": includesUntracked,
@@ -171,23 +159,23 @@ func CheckpointCreatedData(checkpointID int, includesUntracked bool, sandboxHead
 	}
 }
 
-// CheckpointFailedData returns the data map for a checkpoint_failed event.
-func CheckpointFailedData(reason string) map[string]any {
+// checkpointFailedData returns the data map for a checkpoint_failed event.
+func checkpointFailedData(reason string) map[string]any {
 	return map[string]any{
 		"reason": reason,
 	}
 }
 
-// CheckpointAppliedData returns the data map for a checkpoint_applied event.
-func CheckpointAppliedData(checkpointID int, snapshotCommit string) map[string]any {
+// checkpointAppliedData returns the data map for a checkpoint_applied event.
+func checkpointAppliedData(checkpointID int, snapshotCommit string) map[string]any {
 	return map[string]any{
 		"checkpoint_id":   checkpointID,
 		"snapshot_commit": snapshotCommit,
 	}
 }
 
-// CheckpointApplyStartedData returns the data map for a checkpoint_apply_started event.
-func CheckpointApplyStartedData(checkpointID int, snapshotCommit string, rewindHead bool) map[string]any {
+// checkpointApplyStartedData returns the data map for a checkpoint_apply_started event.
+func checkpointApplyStartedData(checkpointID int, snapshotCommit string, rewindHead bool) map[string]any {
 	return map[string]any{
 		"checkpoint_id":   checkpointID,
 		"snapshot_commit": snapshotCommit,
@@ -195,17 +183,17 @@ func CheckpointApplyStartedData(checkpointID int, snapshotCommit string, rewindH
 	}
 }
 
-// CheckpointDenylistTriggeredData returns the data map for a checkpoint_denylist_triggered event.
-func CheckpointDenylistTriggeredData(excludedFiles []string) map[string]any {
+// checkpointDenylistTriggeredData returns the data map for a checkpoint_denylist_triggered event.
+func checkpointDenylistTriggeredData(excludedFiles []string) map[string]any {
 	return map[string]any{
 		"excluded_files": excludedFiles,
 		"snapshot_type":  "tracked_only",
 	}
 }
 
-// DenylistPatterns are the hardcoded patterns for files that should not be included in snapshots.
+// denylistPatterns are the hardcoded patterns for files that should not be included in snapshots.
 // Matching is done on the base filename only using filepath.Match (glob).
-var DenylistPatterns = []string{
+var denylistPatterns = []string{
 	".env",
 	".env.*",
 	"*.key",
@@ -233,10 +221,10 @@ type TriggerEvent struct {
 // Trigger constants for Checkpoint.Trigger field.
 const (
 	TriggerToolEnd  = "tool_end"
-	TriggerDrift    = "drift"
-	TriggerPoll     = "poll"
-	TriggerShutdown = "shutdown"
-	TriggerManual   = "manual"
+	triggerDrift    = "drift"
+	triggerPoll     = "poll"
+	triggerShutdown = "shutdown"
+	triggerManual   = "manual"
 )
 
 // Config holds the checkpoint engine configuration.

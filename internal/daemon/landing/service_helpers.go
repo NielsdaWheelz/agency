@@ -92,13 +92,7 @@ func (s *Service) emitLandFailure(repoID, invocationID, reason string, operation
 }
 
 func (s *Service) emitEvent(repoID, invocationID, eventType string, data map[string]any) error {
-	writer := s.eventWriter
-	if writer == nil {
-		writer = eventlog.NewWriter("invocation_id", s.clock)
-		s.eventWriter = writer
-	}
-
-	_, err := writer.Append(
+	_, err := s.eventWriter.Append(
 		s.eventsPath(repoID, invocationID),
 		invocationID,
 		eventType,

@@ -1,12 +1,21 @@
 package daemon
 
 import (
+	stderrors "errors"
 	"net/http"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
+
+type taskAmbiguousError struct {
+	err        error
+	candidates []string
+}
+
+func (e *taskAmbiguousError) Error() string { return e.err.Error() }
+func (e *taskAmbiguousError) Unwrap() error { return e.err }
 
 func taskDTOFromMeta(s *Server, meta *store.TaskMeta) TaskDTO {
 	return TaskDTO{
@@ -42,7 +51,7 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	records, err := store.ScanTasksForRepo(s.Store.DataDir, repoID)
+	records, err := s.store.ScanTasksForRepo(repoID)
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to scan tasks: "+err.Error(), "", nil)
 		return
@@ -73,7 +82,7 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request, taskRef s
 		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "repo_id query parameter is required", "pass ?repo_id=<repo_id>", nil)
 		return
 	}
-	record, err := s.resolveTaskRecord(repoID, taskRef, true)
+	record, err := s.resolveTaskRecord(repoID, taskRef)
 	if err != nil {
 		s.writeTaskResolveError(w, requestID, err)
 		return
@@ -85,8 +94,8 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request, taskRef s
 	s.writeAPIResponse(w, requestID, taskDTOFromMeta(s, record.Meta))
 }
 
-func (s *Server) resolveTaskRecord(repoID, taskRef string, includeArchived bool) (*store.TaskRecord, error) {
-	records, err := store.ScanTasksForRepo(s.Store.DataDir, repoID)
+func (s *Server) resolveTaskRecord(repoID, taskRef string) (*store.TaskRecord, error) {
+	records, err := s.store.ScanTasksForRepo(repoID)
 	if err != nil {
 		return nil, errors.Wrap(errors.EInternal, "failed to scan tasks", err)
 	}
@@ -97,9 +106,6 @@ func (s *Server) resolveTaskRecord(repoID, taskRef string, includeArchived bool)
 	var matches []*store.TaskRecord
 	for i := range records {
 		record := &records[i]
-		if !includeArchived && record.Meta != nil && record.Meta.State == store.TaskStateArchived {
-			continue
-		}
 		if record.TaskID == ref || strings.HasPrefix(record.TaskID, ref) || record.Name == ref {
 			matches = append(matches, record)
 		}
@@ -114,18 +120,43 @@ func (s *Server) resolveTaskRecord(repoID, taskRef string, includeArchived bool)
 		for _, match := range matches {
 			candidates = append(candidates, match.TaskID)
 		}
-		return nil, errors.NewWithDetails(errors.ETaskIDAmbiguous, "ambiguous task identifier '"+ref+"' matches multiple tasks: "+strings.Join(candidates, ", "), map[string]string{"input": ref})
+		return nil, &taskAmbiguousError{
+			err:        errors.NewWithDetails(errors.ETaskIDAmbiguous, "ambiguous task identifier '"+ref+"' matches multiple tasks: "+strings.Join(candidates, ", "), map[string]string{"input": ref}),
+			candidates: candidates,
+		}
 	}
 }
 
 func (s *Server) writeTaskResolveError(w http.ResponseWriter, requestID string, err error) {
-	code := errors.GetCode(err)
+	status, code, hint := taskResolveErrorPresentation(err)
 	if code == errors.ETaskIDAmbiguous {
-		s.writeAPIError(w, http.StatusConflict, requestID, string(code), err.Error(), "use a more specific task id", nil)
+		var ambiguous *taskAmbiguousError
+		var details interface{}
+		if stderrors.As(err, &ambiguous) {
+			details = AmbiguousDetails{Candidates: ambiguous.candidates}
+		}
+		s.writeAPIError(w, status, requestID, string(code), err.Error(), hint, details)
 		return
 	}
+	s.writeAPIError(w, status, requestID, string(code), err.Error(), hint, nil)
+}
+
+func (s *Server) writeTaskStartResolveError(w http.ResponseWriter, requestID string, err error, clientRequestID string) {
+	status, code, hint := taskResolveErrorPresentation(err)
+	s.writeTaskStartError(w, status, requestID, code, err.Error(), hint, clientRequestID, nil)
+}
+
+func taskResolveErrorPresentation(err error) (int, errors.Code, string) {
+	code := errors.GetCode(err)
 	if code == "" {
-		code = errors.EInternal
+		return http.StatusInternalServerError, errors.EInternal, ""
 	}
-	s.writeAPIError(w, http.StatusNotFound, requestID, string(code), err.Error(), "use 'agency task ls' to list tasks", nil)
+	switch code {
+	case errors.ETaskIDAmbiguous:
+		return http.StatusConflict, code, "use a more specific task id"
+	case errors.ETaskNotFound:
+		return http.StatusNotFound, code, "use 'agency task ls' to list tasks"
+	default:
+		return http.StatusInternalServerError, code, ""
+	}
 }

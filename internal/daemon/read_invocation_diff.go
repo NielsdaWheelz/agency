@@ -79,7 +79,7 @@ func (s *Server) buildInvocationDiff(ctx context.Context, record *resolvedInvoca
 	}
 	gitEnv := prSyncNonInteractiveEnv(profileEnv)
 
-	tipResult, err := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "rev-parse", "HEAD"}, exec.RunOpts{Env: gitEnv})
+	tipResult, err := s.runner.Run(ctx, "git", []string{"-C", sandboxPath, "rev-parse", "HEAD"}, exec.RunOpts{Env: gitEnv})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sandbox HEAD: %w", err)
 	}
@@ -104,7 +104,7 @@ func (s *Server) buildInvocationDiff(ctx context.Context, record *resolvedInvoca
 		TurnContext:      turnContext,
 	}
 
-	logResult, err := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "log", "--oneline", diffFrom + ".." + diffTo}, exec.RunOpts{Env: gitEnv})
+	logResult, err := s.runner.Run(ctx, "git", []string{"-C", sandboxPath, "log", "--oneline", diffFrom + ".." + diffTo}, exec.RunOpts{Env: gitEnv})
 	if err == nil && strings.TrimSpace(logResult.Stdout) != "" {
 		data.HasCommits = true
 
@@ -114,23 +114,24 @@ func (s *Server) buildInvocationDiff(ctx context.Context, record *resolvedInvoca
 			if line == "" {
 				continue
 			}
-			parts := strings.SplitN(line, " ", 2)
-			commit := DiffCommit{SHA: parts[0]}
-			if len(parts) > 1 {
-				commit.Summary = parts[1]
+			sha, summary, ok := strings.Cut(line, " ")
+			commit := DiffCommit{SHA: sha}
+			if ok {
+				commit.Summary = summary
 			}
 			committedRange.Commits = append(committedRange.Commits, commit)
 		}
 
-		statResult, _ := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff", "--stat", diffFrom + ".." + diffTo}, exec.RunOpts{Env: gitEnv})
+		statResult, _ := s.runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff", "--stat", diffFrom + ".." + diffTo}, exec.RunOpts{Env: gitEnv})
 		committedRange.Diffstat = extractDiffstat(statResult.Stdout)
 
-		if params.IncludePatch {
-			patchResult, _ := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff", diffFrom + ".." + diffTo}, exec.RunOpts{Env: gitEnv})
+		if params.includePatch() {
+			patchResult, _ := s.runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff", diffFrom + ".." + diffTo}, exec.RunOpts{Env: gitEnv})
 			patch := patchResult.Stdout
 			committedRange.PatchBytes = len(patch)
-			if len(patch) > params.MaxPatchBytes {
-				patch = patch[:params.MaxPatchBytes]
+			maxPatchBytes := params.maxPatchBytes()
+			if len(patch) > maxPatchBytes {
+				patch = patch[:maxPatchBytes]
 				committedRange.PatchTruncated = true
 			}
 			committedRange.Patch = patch
@@ -139,21 +140,22 @@ func (s *Server) buildInvocationDiff(ctx context.Context, record *resolvedInvoca
 		data.CommittedRange = committedRange
 	}
 
-	if params.IncludeUncommitted && !hasTurnSelector(params) {
-		statusResult, err := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "status", "--porcelain"}, exec.RunOpts{Env: gitEnv})
+	if params.includeUncommitted() && !hasTurnSelector(params) {
+		statusResult, err := s.runner.Run(ctx, "git", []string{"-C", sandboxPath, "status", "--porcelain"}, exec.RunOpts{Env: gitEnv})
 		if err == nil && strings.TrimSpace(statusResult.Stdout) != "" {
 			data.HasUncommitted = true
 
 			workingTree := &DiffRange{}
-			statResult, _ := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff", "--stat"}, exec.RunOpts{Env: gitEnv})
+			statResult, _ := s.runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff", "--stat"}, exec.RunOpts{Env: gitEnv})
 			workingTree.Diffstat = extractDiffstat(statResult.Stdout)
 
-			if params.IncludePatch {
-				patchResult, _ := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff"}, exec.RunOpts{Env: gitEnv})
+			if params.includePatch() {
+				patchResult, _ := s.runner.Run(ctx, "git", []string{"-C", sandboxPath, "diff"}, exec.RunOpts{Env: gitEnv})
 				patch := patchResult.Stdout
 				workingTree.PatchBytes = len(patch)
-				if len(patch) > params.MaxPatchBytes {
-					patch = patch[:params.MaxPatchBytes]
+				maxPatchBytes := params.maxPatchBytes()
+				if len(patch) > maxPatchBytes {
+					patch = patch[:maxPatchBytes]
 					workingTree.PatchTruncated = true
 				}
 				workingTree.Patch = patch

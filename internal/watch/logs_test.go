@@ -35,7 +35,7 @@ func loadLogsPageForMode(t *testing.T, mode string) (string, model) {
 	})))
 
 	m := newModel(context.Background(), client, RunOptions{})
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Invocations: []daemon.InvocationDTO{
 			{InvocationID: "inv-1", RepoID: "repo-1", Mode: mode},
 		},
@@ -64,7 +64,7 @@ func TestLogsPage_HeadedInvocationUsesTerminalLogsByDefault(t *testing.T) {
 
 	kind, nextModel := loadLogsPageForMode(t, "headed")
 
-	assert.Equal(t, "terminal", kind)
+	assert.Equal(t, daemon.InvocationLogKindTerminal, kind)
 	assert.Equal(t, pageLogs, nextModel.page)
 	assert.Equal(t, "headed logs", nextModel.logsContent)
 	assert.False(t, nextModel.logsLoading)
@@ -76,7 +76,7 @@ func TestLogsPage_HeadlessInvocationUsesRawLogsByDefault(t *testing.T) {
 
 	kind, nextModel := loadLogsPageForMode(t, "headless")
 
-	assert.Equal(t, "raw", kind)
+	assert.Equal(t, daemon.InvocationLogKindRaw, kind)
 	assert.Equal(t, pageLogs, nextModel.page)
 	assert.Equal(t, "headless logs", nextModel.logsContent)
 	assert.False(t, nextModel.logsLoading)

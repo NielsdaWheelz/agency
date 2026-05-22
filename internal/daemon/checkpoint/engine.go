@@ -3,7 +3,7 @@ package checkpoint
 import (
 	"context"
 	"fmt"
-	"os"
+	"maps"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -44,29 +44,6 @@ type Engine struct {
 
 const maxChangedPathsPreview = 20
 
-// NewEngine creates a new checkpoint engine for the given sandbox.
-func NewEngine(
-	invocationID, repoID, sandboxPath, repoRoot, checkpointsDir, eventsPath string,
-	config Config,
-	runner exec.CommandRunner,
-	fsys fs.FS,
-	clock func() time.Time,
-) *Engine {
-	return NewEngineWithWriter(
-		invocationID,
-		repoID,
-		sandboxPath,
-		repoRoot,
-		checkpointsDir,
-		eventsPath,
-		config,
-		runner,
-		fsys,
-		clock,
-		eventlog.NewWriter("invocation_id", clock),
-	)
-}
-
 // NewEngineWithWriter creates a checkpoint engine using a shared invocation
 // event writer.
 func NewEngineWithWriter(
@@ -102,19 +79,17 @@ func gitEnv(base, extra map[string]string) map[string]string {
 	if len(base) == 0 && len(extra) == 0 {
 		return nil
 	}
-	env := make(map[string]string, len(base)+len(extra))
-	for k, v := range base {
-		env[k] = v
+	env := maps.Clone(base)
+	if env == nil {
+		env = make(map[string]string, len(extra))
 	}
-	for k, v := range extra {
-		env[k] = v
-	}
+	maps.Copy(env, extra)
 	return env
 }
 
-// ParseGitIgnoredDirs parses the output of `git ls-files --others --ignored
+// parseGitIgnoredDirs parses the output of `git ls-files --others --ignored
 // --exclude-standard --directory` into a set of absolute directory paths.
-func ParseGitIgnoredDirs(sandboxPath, gitOutput string) map[string]bool {
+func parseGitIgnoredDirs(sandboxPath, gitOutput string) map[string]bool {
 	result := make(map[string]bool)
 	for _, line := range strings.Split(gitOutput, "\n") {
 		line = strings.TrimSpace(line)
@@ -123,36 +98,6 @@ func ParseGitIgnoredDirs(sandboxPath, gitOutput string) map[string]bool {
 		}
 		dir := strings.TrimSuffix(line, "/")
 		result[filepath.Join(sandboxPath, dir)] = true
-	}
-	return result
-}
-
-// ReadGitIgnoredDirs reads the root .gitignore and returns existing gitignored
-// directories that should be skipped during watch setup.
-func ReadGitIgnoredDirs(sandboxPath string) map[string]bool {
-	data, err := os.ReadFile(filepath.Join(sandboxPath, ".gitignore"))
-	if err != nil {
-		return map[string]bool{}
-	}
-
-	result := make(map[string]bool)
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "!") {
-			continue
-		}
-
-		dirName := strings.TrimSuffix(line, "/")
-		if dirName == "" || strings.Contains(dirName, "*") || strings.Contains(dirName, "?") {
-			continue
-		}
-
-		absPath := filepath.Join(sandboxPath, dirName)
-		info, err := os.Stat(absPath)
-		if err != nil || !info.IsDir() {
-			continue
-		}
-		result[absPath] = true
 	}
 	return result
 }
@@ -186,9 +131,12 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.watcher = watcher
 	defer func() { _ = watcher.Close() }()
 
-	_ = e.setupInitialWatches()
-
 	hasTriggerCh := e.triggerCh != nil
+	_ = e.setupInitialWatches()
+	if !hasTriggerCh {
+		e.tryCheckpointIfDirty(ctx)
+	}
+
 	debounceInterval := e.config.DebounceInterval
 	if hasTriggerCh && e.config.DriftInterval > 0 {
 		debounceInterval = e.config.DriftInterval

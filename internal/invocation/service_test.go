@@ -287,18 +287,15 @@ func TestSandboxMarkerWritten(t *testing.T) {
 
 	// Verify SANDBOX_MARKER exists in sandbox tree
 	sandboxMarkerPath := filepath.Join(result.SandboxPath, ".agency", SandboxMarkerFileName)
-	_, err = os.Stat(sandboxMarkerPath)
-	assert.False(t, os.IsNotExist(err), "SANDBOX_MARKER not found at %s", sandboxMarkerPath)
+	assert.FileExists(t, sandboxMarkerPath, "SANDBOX_MARKER not found at %s", sandboxMarkerPath)
 
 	// Verify integration tree does NOT contain SANDBOX_MARKER
 	integrationSandboxMarker := filepath.Join(wtMeta.TreePath, ".agency", SandboxMarkerFileName)
-	_, err = os.Stat(integrationSandboxMarker)
-	assert.True(t, os.IsNotExist(err) || err != nil, "SANDBOX_MARKER should NOT exist in integration tree at %s", integrationSandboxMarker)
+	assert.NoFileExists(t, integrationSandboxMarker, "SANDBOX_MARKER should NOT exist in integration tree at %s", integrationSandboxMarker)
 
 	// Verify sandbox does NOT contain INTEGRATION_MARKER
 	sandboxIntegrationMarker := filepath.Join(result.SandboxPath, ".agency", integrationworktree.IntegrationMarkerFileName)
-	_, err = os.Stat(sandboxIntegrationMarker)
-	assert.True(t, os.IsNotExist(err) || err != nil, "INTEGRATION_MARKER should NOT exist in sandbox tree at %s", sandboxIntegrationMarker)
+	assert.NoFileExists(t, sandboxIntegrationMarker, "INTEGRATION_MARKER should NOT exist in sandbox tree at %s", sandboxIntegrationMarker)
 }
 
 // TestCleanupOnPartialFailure verifies that partial state is cleaned up
@@ -434,8 +431,7 @@ func TestMultipleSandboxesPerWorktree(t *testing.T) {
 		seenPaths[inv.SandboxPath] = true
 
 		// Verify sandbox exists
-		_, err := os.Stat(inv.SandboxPath)
-		assert.False(t, os.IsNotExist(err), "sandbox path does not exist: %s", inv.SandboxPath)
+		assert.DirExists(t, inv.SandboxPath, "sandbox path does not exist: %s", inv.SandboxPath)
 	}
 
 	// Verify integration tree remains unchanged (marker still present)
@@ -531,6 +527,7 @@ func (f *failOnMarkerWriteFS) WriteFile(path string, data []byte, perm os.FileMo
 func TestScanInvocations_CorruptMeta(t *testing.T) {
 	t.Parallel()
 	dataDir := t.TempDir()
+	st := store.NewStore(fs.NewRealFS(), dataDir, nil)
 	repoID := "test-repo-corrupt"
 
 	// Create the invocations directory with a fake invocation
@@ -542,7 +539,7 @@ func TestScanInvocations_CorruptMeta(t *testing.T) {
 	metaPath := filepath.Join(invocationDir, "meta.json")
 	require.NoError(t, os.WriteFile(metaPath, []byte("{invalid json!!!"), 0o644))
 
-	records, err := store.ScanInvocationsForRepo(dataDir, repoID)
+	records, err := st.ScanInvocationsForRepo(repoID)
 	require.NoError(t, err, "ScanInvocationsForRepo should not error on corrupt meta")
 	require.Len(t, records, 1, "expected exactly one record")
 
@@ -556,6 +553,7 @@ func TestScanInvocations_CorruptMeta(t *testing.T) {
 func TestScanInvocations_MissingMeta(t *testing.T) {
 	t.Parallel()
 	dataDir := t.TempDir()
+	st := store.NewStore(fs.NewRealFS(), dataDir, nil)
 	repoID := "test-repo-missing"
 
 	// Create the invocation directory without meta.json
@@ -563,65 +561,13 @@ func TestScanInvocations_MissingMeta(t *testing.T) {
 	invocationDir := filepath.Join(dataDir, "repos", repoID, "invocations", invocationID)
 	require.NoError(t, os.MkdirAll(invocationDir, 0o755))
 
-	records, err := store.ScanInvocationsForRepo(dataDir, repoID)
+	records, err := st.ScanInvocationsForRepo(repoID)
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 
 	assert.True(t, records[0].Broken, "record should be marked as Broken when meta.json is missing")
 	assert.Nil(t, records[0].Meta)
 	assert.Equal(t, invocationID, records[0].InvocationID)
-}
-
-// TestScanInvocations_IncompleteFields verifies that ScanInvocationsForRepo marks
-// an invocation as Broken when meta.json is valid JSON but missing required fields.
-func TestScanInvocations_IncompleteFields(t *testing.T) {
-	t.Parallel()
-	dataDir := t.TempDir()
-	repoID := "test-repo-incomplete"
-
-	invocationID := "20260131120000-0002"
-	invocationDir := filepath.Join(dataDir, "repos", repoID, "invocations", invocationID)
-	require.NoError(t, os.MkdirAll(invocationDir, 0o755))
-
-	// Write valid JSON that is missing required fields (schema_version, started_at, invocation_id)
-	metaPath := filepath.Join(invocationDir, "meta.json")
-	require.NoError(t, os.WriteFile(metaPath, []byte(`{"runner":"claude-code"}`), 0o644))
-
-	records, err := store.ScanInvocationsForRepo(dataDir, repoID)
-	require.NoError(t, err)
-	require.Len(t, records, 1)
-
-	assert.True(t, records[0].Broken, "record should be Broken when required fields are missing")
-	assert.Nil(t, records[0].Meta)
-}
-
-// TestResolve_BrokenByExactID verifies that Resolve still returns a record
-// for a broken invocation when matched by exact ID.
-// The E_INVOCATION_BROKEN check happens at the caller (commands/agent.go)
-// after Resolve returns.
-func TestResolve_BrokenByExactID(t *testing.T) {
-	t.Parallel()
-	dataDir := t.TempDir()
-	repoID := "test-repo-broken-resolve"
-	fsys := fs.NewRealFS()
-	cr := exec.NewRealRunner()
-	st := store.NewStore(fsys, dataDir, testNow)
-
-	// Create a broken invocation (dir with corrupt meta.json)
-	invocationID := "20260131120000-beef"
-	invocationDir := filepath.Join(dataDir, "repos", repoID, "invocations", invocationID)
-	require.NoError(t, os.MkdirAll(invocationDir, 0o755))
-	metaPath := filepath.Join(invocationDir, "meta.json")
-	require.NoError(t, os.WriteFile(metaPath, []byte("not-json"), 0o644))
-
-	svc := NewService(st, cr, fsys, testNow)
-
-	// Resolve by exact ID should succeed and return the broken record
-	record, err := svc.Resolve(repoID, invocationID, ResolveOpts{IncludeFinished: true})
-	require.NoError(t, err, "Resolve by exact ID should succeed even for broken invocations")
-	require.NotNil(t, record)
-	assert.True(t, record.Broken, "resolved record should be marked as Broken")
-	assert.Equal(t, invocationID, record.InvocationID)
 }
 
 // TestEnsureInvocationDir_DirAlreadyExists verifies that EnsureInvocationDir

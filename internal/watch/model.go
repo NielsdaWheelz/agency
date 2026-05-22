@@ -85,7 +85,7 @@ type snapshotLoadedMsg struct {
 	worktreeID      string
 	worktreeState   string
 	invocationState string
-	snapshot        Snapshot
+	snapshot        snapshot
 	err             error
 }
 
@@ -136,14 +136,14 @@ type model struct {
 	ctx           context.Context
 	client        *daemonclient.Client
 	interval      time.Duration
-	sessionLoader InvocationSessionLoader
+	sessionLoader invocationSessionLoader
 	page          watchPage
 	backPage      watchPage
 
 	width  int
 	height int
 
-	snapshot              Snapshot
+	snapshot              snapshot
 	workspaceFocus        workspacePane
 	activeRepoID          string
 	activeWorktreeID      string
@@ -241,8 +241,8 @@ func newModel(ctx context.Context, client *daemonclient.Client, opts RunOptions)
 		page = watchPage(opts.InitialPage)
 	}
 
-	sessionLoader := opts.SessionLoader
-	if sessionLoader == nil && client != nil {
+	var sessionLoader invocationSessionLoader
+	if client != nil {
 		sessionLoader = func(ctx context.Context, invocationID, repoID string) (daemon.InvocationSessionData, error) {
 			result, err := client.GetInvocationSession(ctx, invocationID, repoID)
 			if err != nil {

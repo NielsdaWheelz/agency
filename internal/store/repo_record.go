@@ -52,7 +52,7 @@ type BuildRepoRecordInput struct {
 func (s *Store) LoadRepoRecord(repoID string) (RepoRecord, bool, error) {
 	path := s.RepoRecordPath(repoID)
 
-	data, err := s.FS.ReadFile(path)
+	data, err := s.fsys.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return RepoRecord{}, false, nil
@@ -79,7 +79,7 @@ func (s *Store) LoadRepoRecord(repoID string) (RepoRecord, bool, error) {
 // If existing is non-nil, preserves CreatedAt and updates UpdatedAt.
 // If existing is nil, sets both CreatedAt and UpdatedAt to now.
 func (s *Store) UpsertRepoRecord(existing *RepoRecord, input BuildRepoRecordInput) RepoRecord {
-	now := s.Now().UTC().Format("2006-01-02T15:04:05Z")
+	now := s.nowTime().UTC().Format("2006-01-02T15:04:05Z")
 
 	rec := RepoRecord{
 		SchemaVersion:    SchemaVersion,
@@ -114,10 +114,10 @@ func (s *Store) UpsertRepoRecord(existing *RepoRecord, input BuildRepoRecordInpu
 func (s *Store) SaveRepoRecord(rec RepoRecord) error {
 	// Ensure repo directory exists
 	repoDir := s.RepoDir(rec.RepoID)
-	if err := s.FS.MkdirAll(repoDir, 0o700); err != nil {
+	if err := s.fsys.MkdirAll(repoDir, 0o700); err != nil {
 		return errors.Wrap(errors.EStoreCorrupt, "failed to create repo directory", err)
 	}
-	if err := s.FS.Chmod(repoDir, 0o700); err != nil {
+	if err := s.fsys.Chmod(repoDir, 0o700); err != nil {
 		return errors.Wrap(errors.EStoreCorrupt, "failed to enforce repo directory permissions", err)
 	}
 
@@ -131,7 +131,7 @@ func (s *Store) SaveRepoRecord(rec RepoRecord) error {
 	data = append(data, '\n')
 
 	path := s.RepoRecordPath(rec.RepoID)
-	if err := fs.WriteFileAtomic(s.FS, path, data, 0o600); err != nil {
+	if err := fs.WriteFileAtomic(s.fsys, path, data, 0o600); err != nil {
 		return errors.Wrap(errors.EStoreCorrupt, "failed to write repo.json", err)
 	}
 

@@ -224,7 +224,21 @@ func TestAgentStartCLIE2E_HeadlessLaunchMatrix(t *testing.T) {
 			assert.Equal(t, "exit-ok", capture.Mode)
 			assert.Equal(t, normalizePathForAssert(t, startResp.SandboxPath), normalizePathForAssert(t, capture.CWD))
 
-			wantArgs := expectedHeadlessArgs(tc.canonicalRunner, tc.runnerArg, tc.prompt, startResp.SandboxPath)
+			var wantArgs []string
+			switch tc.canonicalRunner {
+			case "claude-code":
+				wantArgs = []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", tc.runnerArg, "--permission-mode", "bypassPermissions", tc.prompt}
+			case "codex":
+				wantArgs = []string{"--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "--cd", startResp.SandboxPath, "--json", tc.runnerArg, "--disable", "unified_exec", tc.prompt}
+			case "amp":
+				wantArgs = []string{"-x", "--stream-json", "--stream-json-input", tc.runnerArg}
+			case "opencode":
+				wantArgs = []string{"run", "--mode", "auto", tc.runnerArg, tc.prompt}
+			case "cursor":
+				wantArgs = []string{"-p", "--output-format", "stream-json", "--force", "--workspace", startResp.SandboxPath, tc.runnerArg, tc.prompt}
+			case "droid":
+				wantArgs = []string{"exec", "--auto", "medium", "--output-format", "stream-json", "--input-format", "stream-json", tc.runnerArg}
+			}
 			if tc.canonicalRunner == "codex" {
 				require.GreaterOrEqual(t, len(capture.Args), 7)
 				assert.Equal(t, normalizePathForAssert(t, startResp.SandboxPath), normalizePathForAssert(t, capture.Args[6]))
@@ -313,7 +327,7 @@ func TestAgentStartCLIE2E_ReservedRunnerArgRejectedJSON(t *testing.T) {
 	_ = runAgencyCLI(t, agencyBin, repoDir, env, "daemon", "stop", "--force")
 }
 
-func TestAgentStartCLIE2E_CWDFallbacks(t *testing.T) {
+func TestAgentStartCLIE2E_CWDTargetResolution(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping e2e test in short mode")
 	}
@@ -353,17 +367,17 @@ func TestAgentStartCLIE2E_CWDFallbacks(t *testing.T) {
 		"AGENCY_LOCAL_E2E":         "1",
 	}
 
-	create := runAgencyCLI(t, agencyBin, repoDir, env, "worktree", "create", "cwd-fallback")
+	create := runAgencyCLI(t, agencyBin, repoDir, env, "worktree", "create", "cwd-target")
 	require.Equalf(t, 0, create.ExitCode, "worktree create failed\nstdout:\n%s\nstderr:\n%s", create.Stdout, create.Stderr)
 
-	path := runAgencyCLI(t, agencyBin, repoDir, env, "worktree", "cwd-fallback", "path")
+	path := runAgencyCLI(t, agencyBin, repoDir, env, "worktree", "cwd-target", "path")
 	require.Equalf(t, 0, path.ExitCode, "worktree path failed\nstdout:\n%s\nstderr:\n%s", path.Stdout, path.Stderr)
 	worktreePath := strings.TrimSpace(path.Stdout)
 	require.NotEmpty(t, worktreePath)
 
 	fromRepo := runAgencyCLI(t, agencyBin, repoDir, env,
 		"agent", "start",
-		"--worktree", "cwd-fallback",
+		"--worktree", "cwd-target",
 		"--runner", "claude-code",
 		"--mode", "headless",
 		"--prompt", "start from repo cwd",
@@ -480,7 +494,12 @@ func startE2ELandDaemon(t *testing.T, dataDir string) (<-chan daemon.LandRequest
 				APIVersion: daemon.APIVersion,
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/repo-1":
-			_ = json.NewEncoder(w).Encode(daemon.APIResponse{
+			_ = json.NewEncoder(w).Encode(struct {
+				OK         bool   `json:"ok"`
+				APIVersion int    `json:"api_version,omitempty"`
+				RequestID  string `json:"request_id,omitempty"`
+				Data       any    `json:"data,omitempty"`
+			}{
 				OK:         true,
 				APIVersion: daemon.APIVersion,
 				RequestID:  "repo-req",
@@ -593,25 +612,6 @@ func readLaunchCapture(t *testing.T, capturePath string) launchCapture {
 		return json.Unmarshal(data, &capture) == nil
 	}, 5*time.Second, 50*time.Millisecond, "launch capture not written: %s", capturePath)
 	return capture
-}
-
-func expectedHeadlessArgs(canonicalRunner, runnerArg, prompt, sandboxPath string) []string {
-	switch canonicalRunner {
-	case "claude-code":
-		return []string{"-p", "--output-format", "stream-json", "--input-format", "text", "--verbose", runnerArg, "--permission-mode", "bypassPermissions", prompt}
-	case "codex":
-		return []string{"--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "--cd", sandboxPath, "--json", runnerArg, "--disable", "unified_exec", prompt}
-	case "amp":
-		return []string{"-x", "--stream-json", "--stream-json-input", runnerArg}
-	case "opencode":
-		return []string{"run", "--mode", "auto", runnerArg, prompt}
-	case "cursor":
-		return []string{"-p", "--output-format", "stream-json", "--force", "--workspace", sandboxPath, runnerArg, prompt}
-	case "droid":
-		return []string{"exec", "--output-format", "stream-json", "--input-format", "stream-json", runnerArg}
-	default:
-		return nil
-	}
 }
 
 func writeE2EConfig(t *testing.T, configDir, fakeRunnerBin string) {

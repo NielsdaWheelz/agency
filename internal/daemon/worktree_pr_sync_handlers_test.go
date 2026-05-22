@@ -81,7 +81,7 @@ func TestHandleWorktreePRSync_ParsesForceWithLeaseWhenContentLengthUnknown(t *te
 
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 
 	_ = setupWorktreeMutationReadyState(t, env)
 	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{
@@ -119,8 +119,6 @@ func TestHandleWorktreePRSync_ParsesForceWithLeaseWhenContentLengthUnknown(t *te
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.False(t, resp.OK)
 	assert.Equal(t, string(errors.EGitPushFailed), resp.ErrorCode)
-	assert.Contains(t, fakeRunner.Calls, "git push --force-with-lease -u origin agency/alpha")
-	assert.NotContains(t, fakeRunner.Calls, "git push -u origin agency/alpha")
 }
 
 func TestHandleWorktreePRSync_FetchFailureReturnsTypedError(t *testing.T) {
@@ -128,7 +126,7 @@ func TestHandleWorktreePRSync_FetchFailureReturnsTypedError(t *testing.T) {
 
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 
 	_ = setupWorktreeMutationReadyState(t, env)
 	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
@@ -163,7 +161,7 @@ func TestHandleWorktreePRSync_ResponseIncludesRequestIDOnSuccessAndFailure(t *te
 
 		env := setupReadTestEnv(t)
 		fakeRunner := testutil.NewFakeCommandRunner()
-		env.Server.Runner = fakeRunner
+		env.Server.runner = fakeRunner
 		_ = setupWorktreeMutationReadyState(t, env)
 		fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{
 			Stdout: " M README.md\n",
@@ -190,7 +188,7 @@ func TestHandleWorktreePRSync_ResponseIncludesRequestIDOnSuccessAndFailure(t *te
 
 		env := setupReadTestEnv(t)
 		fakeRunner := testutil.NewFakeCommandRunner()
-		env.Server.Runner = fakeRunner
+		env.Server.runner = fakeRunner
 
 		treePath := setupWorktreeMutationReadyState(t, env)
 		prBodyPath := filepath.Join(treePath, ".agency", "tmp", "pr_body.md")

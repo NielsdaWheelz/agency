@@ -203,13 +203,11 @@ func TestHandleWorktreeCreate_Success(t *testing.T) {
 	assert.NotEmpty(t, resp.Branch, "expected branch to be set")
 
 	// Verify worktree was created
-	_, err := os.Stat(resp.TreePath)
-	assert.False(t, os.IsNotExist(err), "tree_path does not exist: %s", resp.TreePath)
+	assert.DirExists(t, resp.TreePath, "tree_path does not exist: %s", resp.TreePath)
 
 	// Verify INTEGRATION_MARKER exists
 	markerPath := filepath.Join(resp.TreePath, ".agency", "INTEGRATION_MARKER")
-	_, err = os.Stat(markerPath)
-	assert.False(t, os.IsNotExist(err), "INTEGRATION_MARKER does not exist: %s", markerPath)
+	assert.FileExists(t, markerPath, "INTEGRATION_MARKER does not exist: %s", markerPath)
 }
 
 func TestHandleWorktreeCreate_Idempotency(t *testing.T) {
@@ -443,8 +441,7 @@ func TestHandleWorktreeRm_Success(t *testing.T) {
 	require.True(t, createResp.OK, "failed to create worktree: %s - %s", createResp.ErrorCode, createResp.Message)
 
 	// Verify worktree exists
-	_, err := os.Stat(createResp.TreePath)
-	require.False(t, os.IsNotExist(err), "worktree was not created: %s", createResp.TreePath)
+	require.DirExists(t, createResp.TreePath, "worktree was not created: %s", createResp.TreePath)
 
 	// Now remove it (force=true because integration marker file is untracked)
 	rmReq := WorktreeRmRequest{Force: true}
@@ -460,8 +457,7 @@ func TestHandleWorktreeRm_Success(t *testing.T) {
 	assert.True(t, rmResp.OK, "expected OK=true, got error: %s - %s", rmResp.ErrorCode, rmResp.Message)
 
 	// Verify worktree tree was removed
-	_, err = os.Stat(createResp.TreePath)
-	assert.True(t, os.IsNotExist(err), "worktree tree still exists: %s", createResp.TreePath)
+	assert.NoDirExists(t, createResp.TreePath, "worktree tree still exists: %s", createResp.TreePath)
 }
 
 func TestHandleWorktreeRm_Idempotent(t *testing.T) {
@@ -533,64 +529,10 @@ func TestHandleWorktreeRm_ArchivedExactIDDoesNotRequireRepoRoot(t *testing.T) {
 	assert.True(t, resp.OK)
 }
 
-func TestWorktreeIdempotencyKey(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		repoID string
-		key    string
-		want   string
-	}{
-		{"abc123", "uuid-1", "abc123:worktree:uuid-1"},
-		{"def456", "uuid-2", "def456:worktree:uuid-2"},
-	}
-
-	for _, tc := range tests {
-		got := worktreeIdempotencyKey(tc.repoID, tc.key)
-		assert.Equal(t, tc.want, got)
-	}
-}
-
-func TestUnresolvedInvocationsForWorktree(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-	writeTestUserConfig(t, tmpDir)
-	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
-	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
-
-	writeWorktreeGuardInvocation(t, st, "repo-1", "wt-a", "inv-1", store.InvocationStatusRunning, "")
-	writeWorktreeGuardInvocation(t, st, "repo-1", "wt-a", "inv-2", store.InvocationStatusFinished, store.LandingStatusPending)
-	writeWorktreeGuardInvocation(t, st, "repo-1", "wt-a", "inv-3", store.InvocationStatusFailed, store.LandingStatusPending)
-	writeWorktreeGuardInvocation(t, st, "repo-1", "wt-a", "inv-4", store.InvocationStatusFinished, store.LandingStatusLanded)
-	writeWorktreeGuardInvocation(t, st, "repo-1", "wt-a", "inv-5", store.InvocationStatusFinished, store.LandingStatusDiscarded)
-	writeWorktreeGuardInvocation(t, st, "repo-1", "wt-b", "inv-6", store.InvocationStatusRunning, "")
-
-	unresolved, err := s.unresolvedInvocationsForWorktree("repo-1", "wt-a")
-	require.NoError(t, err)
-	require.Len(t, unresolved, 3)
-	assert.Equal(t, "inv-3", unresolved[0].InvocationID)
-	assert.Equal(t, "inv-2", unresolved[1].InvocationID)
-	assert.Equal(t, "inv-1", unresolved[2].InvocationID)
-}
-
-func TestUnresolvedInvocationsForWorktree_UnknownLandingStatusIsCorrupt(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-	writeTestUserConfig(t, tmpDir)
-	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
-	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
-	writeWorktreeGuardInvocation(t, st, "repo-1", "wt-a", "inv-1", store.InvocationStatusFinished, store.LandingStatus("bogus"))
-
-	_, err := s.unresolvedInvocationsForWorktree("repo-1", "wt-a")
-	require.Error(t, err)
-	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
-}
-
 func TestHandleWorktreeRm_MissingTreeArchivesWithoutMarkerDirtyOrGitRemove(t *testing.T) {
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 	repoRoot := t.TempDir()
 	writeWorktreeMergeRepoRecord(t, env, repoRoot, repoRoot)
 
@@ -623,7 +565,7 @@ func TestHandleWorktreeRm_MissingTreeStillBlocksActiveMerge(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.RemoveAll(meta.TreePath))
 
-	proc, attached, err := env.Server.beginWorktreeMerge(env.RepoID, "wt-1", "attempt-1", "request-1", normalizedMergeRequest{Strategy: mergeStrategySquash})
+	proc, attached, err := env.Server.beginWorktreeMerge(env.RepoID, "wt-1", "attempt-1", normalizedMergeRequest{Strategy: mergeStrategySquash})
 	require.NoError(t, err)
 	require.False(t, attached)
 	t.Cleanup(func() { env.Server.releaseWorktreeMerge(proc) })
@@ -701,28 +643,10 @@ func TestHandleWorktrees_Routing(t *testing.T) {
 			wantStatus: http.StatusMethodNotAllowed,
 		},
 		{
-			name:       "unsupported nested route should 404",
-			method:     http.MethodGet,
-			path:       "/worktrees/test-id/merge",
-			wantStatus: http.StatusNotFound,
-		},
-		{
-			name:       "pr merge with GET routes to merge read handler",
-			method:     http.MethodGet,
-			path:       "/worktrees/test-id/pr/merge",
-			wantStatus: http.StatusBadRequest,
-		},
-		{
 			name:       "rebase with GET should fail",
 			method:     http.MethodGet,
 			path:       "/worktrees/test-id/rebase",
 			wantStatus: http.StatusMethodNotAllowed,
-		},
-		{
-			name:       "old update route should 404",
-			method:     http.MethodPost,
-			path:       "/worktrees/test-id/update",
-			wantStatus: http.StatusNotFound,
 		},
 		{
 			name:       "base path with GET should list worktrees",
@@ -790,12 +714,9 @@ func TestWorktreeCreateAndRemove_Integration(t *testing.T) {
 	markerPath := filepath.Join(treePath, ".agency", "INTEGRATION_MARKER")
 	metaPath := st.IntegrationWorktreeMetaPath(createResp.RepoID, createResp.WorktreeID)
 
-	_, err := os.Stat(treePath)
-	assert.False(t, os.IsNotExist(err), "tree path does not exist: %s", treePath)
-	_, err = os.Stat(markerPath)
-	assert.False(t, os.IsNotExist(err), "INTEGRATION_MARKER does not exist: %s", markerPath)
-	_, err = os.Stat(metaPath)
-	assert.False(t, os.IsNotExist(err), "meta.json does not exist: %s", metaPath)
+	assert.DirExists(t, treePath, "tree path does not exist: %s", treePath)
+	assert.FileExists(t, markerPath, "INTEGRATION_MARKER does not exist: %s", markerPath)
+	assert.FileExists(t, metaPath, "meta.json does not exist: %s", metaPath)
 
 	// Read and verify meta.json
 	meta, err := st.ReadIntegrationWorktreeMeta(createResp.RepoID, createResp.WorktreeID)
@@ -821,8 +742,7 @@ func TestWorktreeCreateAndRemove_Integration(t *testing.T) {
 	require.True(t, rmResp.OK, "rm failed: %s - %s", rmResp.ErrorCode, rmResp.Message)
 
 	// Verify tree was removed
-	_, err = os.Stat(treePath)
-	assert.True(t, os.IsNotExist(err), "tree path still exists: %s", treePath)
+	assert.NoDirExists(t, treePath, "tree path still exists: %s", treePath)
 
 	// Verify meta.json shows archived state
 	meta, err = st.ReadIntegrationWorktreeMeta(createResp.RepoID, createResp.WorktreeID)

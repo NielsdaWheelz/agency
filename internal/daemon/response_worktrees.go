@@ -128,6 +128,6 @@ func (s *Server) worktreePRMergeResponse(
 		Action:                action,
 		RepoID:                record.RepoID,
 		IntegrationWorktreeID: record.WorktreeID,
-		Merge:                 WorktreeMergeMetaToDTO(mergeMeta),
+		Merge:                 worktreeMergeMetaToDTO(mergeMeta),
 	}
 }

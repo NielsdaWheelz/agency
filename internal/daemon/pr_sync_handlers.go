@@ -47,7 +47,7 @@ func (s *Server) runPRSync(
 	}
 	env := prSyncNonInteractiveEnv(profileEnv)
 
-	clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.Runner, wtMeta.TreePath, env)
+	clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.runner, wtMeta.TreePath, env)
 	if err != nil {
 		return nil, err
 	}
@@ -62,18 +62,18 @@ func (s *Server) runPRSync(
 		)
 	}
 
-	if err := prSyncCheckGHAuth(ctx, s.Runner, wtMeta.TreePath, env); err != nil {
+	if err := prSyncCheckGHAuth(ctx, s.runner, wtMeta.TreePath, env); err != nil {
 		return nil, err
 	}
-	if err := prSyncGitFetchOrigin(ctx, s.Runner, wtMeta.TreePath, env); err != nil {
+	if err := prSyncGitFetchOrigin(ctx, s.runner, wtMeta.TreePath, env); err != nil {
 		return nil, err
 	}
 
-	baseRef, err := prSyncResolveBaseRef(ctx, s.Runner, wtMeta.TreePath, wtMeta.BaseBranch, env)
+	baseRef, err := prSyncResolveBaseRef(ctx, s.runner, wtMeta.TreePath, wtMeta.BaseBranch, env)
 	if err != nil {
 		return nil, err
 	}
-	ahead, err := prSyncComputeAhead(ctx, s.Runner, wtMeta.TreePath, baseRef, wtMeta.Branch, env)
+	ahead, err := prSyncComputeAhead(ctx, s.runner, wtMeta.TreePath, baseRef, wtMeta.Branch, env)
 	if err != nil {
 		return nil, err
 	}
@@ -81,16 +81,16 @@ func (s *Server) runPRSync(
 		return nil, errors.New(errors.EEmptyDiff, "no commits ahead of base branch; make at least one commit")
 	}
 
-	bodyPath, err := prSyncPrepareBody(s.FS, wtMeta.TreePath)
+	bodyPath, err := prSyncPrepareBody(s.fsys, wtMeta.TreePath)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := prSyncGitPush(ctx, s.Runner, wtMeta.TreePath, wtMeta.Branch, req.ForceWithLease, env); err != nil {
+	if err := prSyncGitPush(ctx, s.runner, wtMeta.TreePath, wtMeta.Branch, req.ForceWithLease, env); err != nil {
 		return nil, err
 	}
 
-	owner, err := prSyncResolveGitHubOwner(ctx, s.Runner, wtMeta.TreePath, env)
+	owner, err := prSyncResolveGitHubOwner(ctx, s.runner, wtMeta.TreePath, env)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +100,7 @@ func (s *Server) runPRSync(
 		title = wtMeta.Branch
 	}
 	title = "[agency] " + title
-	prs, err := prSyncListPRsByHead(ctx, s.Runner, wtMeta.TreePath, head, env)
+	prs, err := prSyncListPRsByHead(ctx, s.runner, wtMeta.TreePath, head, env)
 	if err != nil {
 		return nil, err
 	}
@@ -114,13 +114,13 @@ func (s *Server) runPRSync(
 	}
 
 	if len(prs) == 0 {
-		createErr := prSyncCreatePR(ctx, s.Runner, wtMeta.TreePath, wtMeta.BaseBranch, wtMeta.Branch, title, bodyPath, env)
+		createErr := prSyncCreatePR(ctx, s.runner, wtMeta.TreePath, wtMeta.BaseBranch, wtMeta.Branch, title, bodyPath, env)
 		createdNow := createErr == nil
 		if createErr != nil && !prSyncIsAlreadyExistsError(createErr) {
 			return nil, createErr
 		}
 
-		pr, lookupErr := prSyncLookupPRAfterCreateWithRetry(ctx, s.Runner, wtMeta.TreePath, owner, wtMeta.Branch, env)
+		pr, lookupErr := prSyncLookupPRAfterCreateWithRetry(ctx, s.runner, wtMeta.TreePath, owner, wtMeta.Branch, env)
 		if lookupErr != nil {
 			return nil, lookupErr
 		}
@@ -153,7 +153,7 @@ func (s *Server) runPRSync(
 		}
 
 		// PR already existed (create raced/failed as already exists): update body.
-		if err := prSyncEditPRBody(ctx, s.Runner, wtMeta.TreePath, pr.Number, bodyPath, env); err != nil {
+		if err := prSyncEditPRBody(ctx, s.runner, wtMeta.TreePath, pr.Number, bodyPath, env); err != nil {
 			return nil, err
 		}
 		return &prSyncResult{
@@ -175,7 +175,7 @@ func (s *Server) runPRSync(
 			},
 		)
 	}
-	if err := prSyncEditPRBody(ctx, s.Runner, wtMeta.TreePath, pr.Number, bodyPath, env); err != nil {
+	if err := prSyncEditPRBody(ctx, s.runner, wtMeta.TreePath, pr.Number, bodyPath, env); err != nil {
 		return nil, err
 	}
 

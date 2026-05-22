@@ -115,7 +115,7 @@ func normalizeMergeRequest(req WorktreePRMergeRequest) (normalizedMergeRequest, 
 }
 
 func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWorktreeMeta, ghRepo, owner, workDir string, env map[string]string) (*mergePRView, error) {
-	prs, err := mergeListPRsForBranchWithRetry(ctx, s.Runner, workDir, owner, wtMeta.Branch, env)
+	prs, err := mergeListPRsForBranchWithRetry(ctx, s.runner, workDir, owner, wtMeta.Branch, env)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +140,7 @@ func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWo
 		)
 	}
 
-	pr, err := mergeViewPR(ctx, s.Runner, workDir, ghRepo, prs[0].Number, env)
+	pr, err := mergeViewPR(ctx, s.runner, workDir, ghRepo, prs[0].Number, env)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +163,7 @@ func (s *Server) resolveMergePR(ctx context.Context, wtMeta *store.IntegrationWo
 	}
 	switch strings.ToUpper(strings.TrimSpace(pr.State)) {
 	case "OPEN":
-		if err := mergeEnsureMergeable(ctx, s.Runner, workDir, ghRepo, pr.Number, env); err != nil {
+		if err := mergeEnsureMergeable(ctx, s.runner, workDir, ghRepo, pr.Number, env); err != nil {
 			return nil, err
 		}
 	case "MERGED":
@@ -322,16 +322,16 @@ func mergeEnsureMergeable(ctx context.Context, runner exec.CommandRunner, workDi
 
 func (s *Server) resolveMergeRepoRoot(ctx context.Context, repoID, workspaceRoot string) (string, error) {
 	_ = ctx
-	return mergeflow.ResolveRepoRoot(s.Store, repoID, workspaceRoot)
+	return mergeflow.ResolveRepoRoot(s.store, repoID, workspaceRoot)
 }
 
 func (s *Server) resolveMergeGitHubRepo(ctx context.Context, repoID, workDir string, env map[string]string) (string, string, error) {
 	originURL := ""
-	if repoRecord, exists, err := s.Store.LoadRepoRecord(repoID); err == nil && exists {
+	if repoRecord, exists, err := s.store.LoadRepoRecord(repoID); err == nil && exists {
 		originURL = strings.TrimSpace(repoRecord.OriginURL)
 	}
 	if originURL == "" {
-		result, err := s.Runner.Run(ctx, "git", []string{"config", "--get", "remote.origin.url"}, exec.RunOpts{
+		result, err := s.runner.Run(ctx, "git", []string{"config", "--get", "remote.origin.url"}, exec.RunOpts{
 			Dir: workDir,
 			Env: env,
 		})

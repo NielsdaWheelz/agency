@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
@@ -25,12 +25,7 @@ func sortedEnvKeys(env map[string]string) []string {
 	if len(env) == 0 {
 		return nil
 	}
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
+	return slices.Sorted(maps.Keys(env))
 }
 
 func loadMaxStreamSeq(path string) uint64 {
@@ -67,8 +62,8 @@ func (s *Server) startRunner(ctx context.Context, repoID string, result *invocat
 	return s.startRunnerWithArgs(ctx, repoID, result, repoRoot, integrationWorktreeID, req, args, "", gitEnv, claim)
 }
 
-func (s *Server) startRunnerResumeTurn(ctx context.Context, proc *SupervisedProcess, prompt string) (int, int, error) {
-	meta, err := s.Store.ReadInvocationMeta(proc.RepoID, proc.InvocationID)
+func (s *Server) startRunnerResumeTurn(ctx context.Context, proc *supervisedProcess, prompt string) (int, int, error) {
+	meta, err := s.store.ReadInvocationMeta(proc.repoID, proc.invocationID)
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to read invocation meta: %w", err)
 	}
@@ -77,29 +72,29 @@ func (s *Server) startRunnerResumeTurn(ctx context.Context, proc *SupervisedProc
 		return 0, 0, fmt.Errorf("failed to resolve execution profile env: %w", err)
 	}
 	req := ControlPlaneStartRequest{
-		Runner:             proc.Runner,
+		Runner:             proc.runner,
 		Prompt:             prompt,
-		RunnerArgs:         append([]string(nil), proc.RunnerArgs...),
+		RunnerArgs:         slices.Clone(proc.runnerArgs),
 		ExecutionProfile:   meta.ExecutionProfile,
-		NoIncludeUntracked: proc.NoIncludeUntracked,
+		NoIncludeUntracked: proc.noIncludeUntracked,
 	}
 	requestEnv := map[string]string{}
 	for _, key := range meta.CustomEnvKeys {
-		if value, ok := proc.Env[key]; ok {
+		if value, ok := proc.env[key]; ok {
 			requestEnv[key] = value
 		}
 	}
 	req.Env = envForLaunch(profileEnv, requestEnv)
-	resumeSessionID := proc.GetResumeSessionID()
-	args, err := runners.BuildResumeArgs(proc.Runner, prompt, resumeSessionID, req.RunnerArgs)
+	resumeSessionID := proc.getResumeSessionID()
+	args, err := runners.BuildResumeArgs(proc.runner, prompt, resumeSessionID, req.RunnerArgs)
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to build runner resume args: %w", err)
 	}
-	return s.startRunnerWithArgs(ctx, proc.RepoID, &invocation.CreateResult{
-		InvocationID: proc.InvocationID,
-		SandboxPath:  proc.SandboxPath,
-	}, proc.RepoRoot, proc.IntegrationWorktreeID, req, args, resumeSessionID, prSyncNonInteractiveEnv(profileEnv), func(pid, pgid int) error {
-		return s.claimHeadlessInvocationResume(proc.RepoID, proc.InvocationID, pid, pgid)
+	return s.startRunnerWithArgs(ctx, proc.repoID, &invocation.CreateResult{
+		InvocationID: proc.invocationID,
+		SandboxPath:  proc.sandboxPath,
+	}, proc.repoRoot, proc.integrationWorktreeID, req, args, resumeSessionID, prSyncNonInteractiveEnv(profileEnv), func(pid, pgid int) error {
+		return s.claimHeadlessInvocationResume(proc.repoID, proc.invocationID, pid, pgid)
 	})
 }
 
@@ -109,7 +104,7 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 		return 0, 0, fmt.Errorf("failed to load user config: %w", err)
 	}
 
-	runnerCmd, err := config.ResolveRunnerCmd(s.Runner, s.FS, s.ConfigDir, userCfg, req.Runner)
+	runnerCmd, err := config.ResolveRunnerCmd(s.runner, s.fsys, s.configDir, userCfg, req.Runner)
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to resolve runner command: %w", err)
 	}
@@ -118,8 +113,6 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to open invocation log files: %w", err)
 	}
-	rawLogPath := logFiles.RawPath
-	stderrLogPath := logFiles.StderrPath
 	streamLogPath := logFiles.StreamPath
 	rawFile := logFiles.RawFile
 	stderrFile := logFiles.StderrFile
@@ -133,11 +126,26 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 		envOverlay[k] = v
 	}
 
-	stdinReader, followUpRelay, relayWarning := createFollowUpRelay(req.Runner)
-	if relayWarning != nil {
-		s.recordInvocationWarning(repoID, result.InvocationID, "followup_relay_setup_failed", relayWarning.Error(), nil)
+	var stdinReader *os.File
+	var followUpRelay relay.FollowUpRelay
+	initialPromptFromStdin := false
+	if followUpMode, promptMode, err := runners.FollowUpPolicy(req.Runner); err == nil {
+		initialPromptFromStdin = promptMode == runners.InitialPromptStdin
+		switch followUpMode {
+		case runners.FollowUpModeStdin:
+			pr, pw, err := os.Pipe()
+			if err != nil {
+				s.recordInvocationWarning(repoID, result.InvocationID, "followup_relay_setup_failed", fmt.Errorf("failed to create stdin pipe for follow-up relay: %w", err).Error(), nil)
+			} else {
+				stdinReader = pr
+				followUpRelay = relay.NewStdinRelay(pw, req.Runner)
+			}
+		case runners.FollowUpModeResume:
+			followUpRelay = relay.NewResumeRelay(req.Runner)
+		}
 	}
-	startedProc, err := exec.StartProcess(context.Background(), runnerCmd, args, exec.StartOpts{
+	runnerCtx := daemonOwnedContext(ctx)
+	startedProc, err := exec.StartProcess(runnerCtx, runnerCmd, args, exec.StartOpts{
 		Dir:        result.SandboxPath,
 		Env:        envOverlay,
 		Stdin:      stdinReader,
@@ -156,17 +164,8 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 		return 0, 0, fmt.Errorf("failed to start runner: %w", err)
 	}
 	if followUpRelay != nil {
-		mode, err := runners.ResolveInitialPromptMode(req.Runner)
-		if err != nil {
-			_ = followUpRelay.Close()
-			if startedProc.PGID > 0 {
-				_ = syscall.Kill(-startedProc.PGID, syscall.SIGKILL)
-			}
-			logFiles.Close()
-			return 0, 0, fmt.Errorf("failed to deliver initial prompt: %w", err)
-		}
-		if mode == runners.InitialPromptStdin {
-			if err := followUpRelay.Send(context.Background(), req.Prompt); err != nil {
+		if initialPromptFromStdin {
+			if err := followUpRelay.Send(runnerCtx, req.Prompt); err != nil {
 				_ = followUpRelay.Close()
 				if startedProc.PGID > 0 {
 					_ = syscall.Kill(-startedProc.PGID, syscall.SIGKILL)
@@ -179,18 +178,14 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 
 	pid := startedProc.PID
 	pgid := startedProc.PGID
-	parser := stream.NewParser(result.InvocationID, req.Runner, s.Clock)
+	parser := stream.NewParser(result.InvocationID, req.Runner, s.clock)
 	parser.SetInitialSeq(loadMaxStreamSeq(streamLogPath))
 
-	checkpointsDir := s.Store.InvocationDir(repoID, result.InvocationID)
-	eventsPath := s.Store.InvocationEventsPath(repoID, result.InvocationID)
+	checkpointsDir := s.store.InvocationDir(repoID, result.InvocationID)
+	eventsPath := s.store.InvocationEventsPath(repoID, result.InvocationID)
 	cpConfig := checkpoint.DefaultConfig()
 	cpConfig.IncludeUntracked = !req.NoIncludeUntracked
 	cpConfig.Env = gitEnv
-	if s.CheckpointDebounceOverride != nil {
-		cpConfig.DebounceInterval = *s.CheckpointDebounceOverride
-		cpConfig.DriftInterval = *s.CheckpointDebounceOverride
-	}
 
 	cpEngine := checkpoint.NewEngineWithWriter(
 		result.InvocationID,
@@ -200,69 +195,40 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 		checkpointsDir,
 		eventsPath,
 		cpConfig,
-		s.Runner,
-		s.FS,
-		s.Clock,
-		s.InvocationEvents,
+		s.runner,
+		s.fsys,
+		s.clock,
+		s.invocationEvents,
 	)
-	cpEngine.SetGitIgnoredDirs(checkpoint.ReadGitIgnoredDirs(result.SandboxPath))
+	s.configureCheckpointIgnoredDirs(runnerCtx, repoID, result.InvocationID, cpEngine, result.SandboxPath, cpConfig.Env)
 
-	triggerCh := make(chan checkpoint.TriggerEvent, 32)
-	cpEngine.SetTriggerChannel(triggerCh)
-	parser.SetCheckpointNotify(func(n stream.CheckpointNotification) {
-		trigger := checkpoint.TriggerEvent{
-			Kind:      checkpoint.TriggerToolEnd,
-			ToolName:  n.ToolName,
-			ToolNames: n.ToolNames,
-			Seq:       n.Seq,
-		}
-		select {
-		case triggerCh <- trigger:
-			return
-		default:
-		}
+	s.attachCheckpointTriggers(repoID, result.InvocationID, parser, cpEngine)
 
-		timer := time.NewTimer(250 * time.Millisecond)
-		defer timer.Stop()
-		select {
-		case triggerCh <- trigger:
-		case <-timer.C:
-			s.recordInvocationWarning(repoID, result.InvocationID, "checkpoint_trigger_dropped", "checkpoint trigger queue full; dropped semantic trigger", map[string]any{
-				"seq":       n.Seq,
-				"tool_name": n.ToolName,
-			})
-		}
-	})
-
-	proc := &SupervisedProcess{
-		InvocationID:          result.InvocationID,
-		RepoID:                repoID,
-		IntegrationWorktreeID: integrationWorktreeID,
-		PID:                   pid,
-		PGID:                  pgid,
-		SandboxPath:           result.SandboxPath,
-		RawLogFile:            rawLogPath,
-		StderrFile:            stderrLogPath,
-		StreamLogFile:         streamLogPath,
-		Runner:                req.Runner,
-		RepoRoot:              repoRoot,
-		RunnerArgs:            append([]string(nil), req.RunnerArgs...),
-		Env:                   copyStringMap(req.Env),
-		NoIncludeUntracked:    req.NoIncludeUntracked,
-		Parser:                parser,
-		CheckpointEngine:      cpEngine,
-		Relay:                 followUpRelay,
+	proc := &supervisedProcess{
+		invocationID:          result.InvocationID,
+		repoID:                repoID,
+		integrationWorktreeID: integrationWorktreeID,
+		pgid:                  pgid,
+		sandboxPath:           result.SandboxPath,
+		runner:                req.Runner,
+		repoRoot:              repoRoot,
+		runnerArgs:            slices.Clone(req.RunnerArgs),
+		env:                   copyStringMap(req.Env),
+		noIncludeUntracked:    req.NoIncludeUntracked,
+		parser:                parser,
+		checkpointEngine:      cpEngine,
+		relay:                 followUpRelay,
 		done:                  make(chan struct{}),
 	}
-	if proc.Relay != nil {
-		proc.InitializeTurnTracking()
+	if proc.relay != nil {
+		proc.initializeTurnTracking()
 	}
-	proc.SetResumeSessionID(resumeSessionID)
+	proc.setResumeSessionID(resumeSessionID)
 	parser.SetFinalNotify(func(n stream.FinalNotification) {
 		s.handleSuccessfulFinalNotification(proc, n)
 	})
 	parser.SetSessionStartNotify(func(n stream.SessionStartNotification) {
-		proc.SetResumeSessionID(n.SessionID)
+		proc.setResumeSessionID(n.SessionID)
 	})
 
 	s.mu.Lock()
@@ -275,8 +241,8 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 			if pgid > 0 {
 				_ = syscall.Kill(-pgid, syscall.SIGKILL)
 			}
-			if proc.Relay != nil {
-				_ = proc.Relay.Close()
+			if proc.relay != nil {
+				_ = proc.relay.Close()
 			}
 			logFiles.Close()
 			return 0, 0, err
@@ -294,10 +260,6 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 	return pid, pgid, nil
 }
 
-func buildRunnerArgsWithSandbox(runner, prompt, sandboxPath string, extraArgs []string) ([]string, error) {
-	return runners.BuildHeadlessArgs(runner, prompt, sandboxPath, extraArgs)
-}
-
 func buildRunnerArgsForHeaded(runner string, extraArgs []string) ([]string, error) {
 	return runners.BuildHeadedArgs(runner, extraArgs)
 }
@@ -306,42 +268,19 @@ func copyStringMap(in map[string]string) map[string]string {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make(map[string]string, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
-func createFollowUpRelay(runner string) (*os.File, relay.FollowUpRelay, error) {
-	mode, err := runners.ResolveFollowUpMode(runner)
-	if err != nil {
-		return nil, nil, nil
-	}
-	switch mode {
-	case runners.FollowUpModeStdin:
-		pr, pw, err := os.Pipe()
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to create stdin pipe for follow-up relay: %w", err)
-		}
-		return pr, relay.NewStdinRelay(pw, runner), nil
-	case runners.FollowUpModeResume:
-		return nil, relay.NewResumeRelay(runner), nil
-	default:
-		return nil, nil, nil
-	}
+	return maps.Clone(in)
 }
 
 func (s *Server) cleanupFailedInvocation(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, failureReason string, env map[string]string) {
 	s.failInvocationStart(repoID, result.InvocationID, failureReason, true)
 
 	args := []string{"-C", repoRoot, "worktree", "remove", "--force", result.SandboxPath}
-	_, _ = s.Runner.Run(ctx, "git", args, exec.RunOpts{Env: env})
+	_, _ = s.runner.Run(ctx, "git", args, exec.RunOpts{Env: env})
 	args = []string{"-C", repoRoot, "branch", "-D", result.SandboxBranch}
-	_, _ = s.Runner.Run(ctx, "git", args, exec.RunOpts{Env: env})
+	_, _ = s.runner.Run(ctx, "git", args, exec.RunOpts{Env: env})
 }
 
-func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedProc *exec.StartedProcess, rawFile, stderrFile, streamFile *os.File) {
+func (s *Server) waitForExitWithFailureReason(proc *supervisedProcess, startedProc *exec.StartedProcess, rawFile, stderrFile, streamFile *os.File) {
 	defer s.supervisionWg.Done()
 	defer func() { _ = rawFile.Close() }()
 	defer func() { _ = stderrFile.Close() }()
@@ -350,24 +289,24 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 			_ = streamFile.Close()
 		}
 	}()
-	defer proc.CloseDone()
+	defer proc.closeDone()
 	defer func() {
-		if proc.Relay != nil {
-			_ = proc.Relay.Close()
+		if proc.relay != nil {
+			_ = proc.relay.Close()
 		}
 	}()
 
 	proc.streamWg.Wait()
 	exitResult, waitErr := startedProc.WaitExit()
-	if proc.Parser != nil {
-		proc.Parser.Stop()
+	if proc.parser != nil {
+		proc.parser.Stop()
 	}
 
 	exitCode := exitResult.ExitCode
 	exitReason := "exited"
 	failureReason := ""
 	status := store.InvocationStatusFinished
-	completionSatisfied := proc.SuccessfulCompletionObserved()
+	completionSatisfied := proc.successfulCompletionObserved()
 	if !completionSatisfied && (waitErr != nil || exitResult.ExitCode != 0 || exitResult.Signal != "") {
 		status = store.InvocationStatusFailed
 		failureReason = "runner_exit_nonzero"
@@ -391,28 +330,28 @@ func (s *Server) waitForExitWithFailureReason(proc *SupervisedProcess, startedPr
 	}
 
 	var queuedResumePrompts []string
-	if resumeRelay, ok := proc.Relay.(*relay.ResumeRelay); ok {
+	if resumeRelay, ok := proc.relay.(*relay.ResumeRelay); ok {
 		queuedResumePrompts = resumeRelay.Drain()
 	}
 
-	if status == store.InvocationStatusFinished && len(queuedResumePrompts) > 0 && runners.SupportsResumeTurns(proc.Runner) {
+	if status == store.InvocationStatusFinished && len(queuedResumePrompts) > 0 && runners.SupportsResumeTurns(proc.runner) {
 		_, _, resumeErr := s.startRunnerResumeTurn(context.Background(), proc, queuedResumePrompts[0])
 		if resumeErr != nil {
 			status = store.InvocationStatusFailed
 			failureReason = "runner_resume_failed"
 		} else {
 			if len(queuedResumePrompts) > 1 {
-				s.enqueueFollowUpPrompts(proc.InvocationID, queuedResumePrompts[1:])
+				s.enqueueFollowUpPrompts(proc.invocationID, queuedResumePrompts[1:])
 			}
 			return
 		}
 	}
 
-	if err := s.writeInvocationProcessExit(proc.RepoID, proc.InvocationID, status, exitReason, failureReason, exitCode); err != nil {
-		s.recordInvocationWarning(proc.RepoID, proc.InvocationID, "meta_update_on_exit_failed", err.Error(), nil)
+	if err := s.writeInvocationProcessExit(proc.repoID, proc.invocationID, status, exitReason, failureReason, exitCode); err != nil {
+		s.recordInvocationWarning(proc.repoID, proc.invocationID, "meta_update_on_exit_failed", err.Error(), nil)
 	}
 
-	s.clearInvocationProcessIfCurrent(proc.InvocationID, proc)
+	s.clearInvocationProcessIfCurrent(proc.invocationID, proc)
 }
 
 func (s *Server) enqueueFollowUpPrompts(invocationID string, prompts []string) {
@@ -422,19 +361,19 @@ func (s *Server) enqueueFollowUpPrompts(invocationID string, prompts []string) {
 	s.mu.Lock()
 	proc, ok := s.processes[invocationID]
 	s.mu.Unlock()
-	if !ok || proc == nil || proc.Relay == nil {
+	if !ok || proc == nil || proc.relay == nil {
 		return
 	}
-	requiresAckedTurn := proc.Relay.Mode() == relay.ModeResume
+	requiresAckedTurn := proc.relay.Mode() == relay.ModeResume
 	for _, prompt := range prompts {
 		if strings.TrimSpace(prompt) == "" {
 			continue
 		}
 		if requiresAckedTurn {
-			proc.IncrementExpectedTurns()
+			proc.incrementExpectedTurns()
 		}
-		if err := proc.Relay.Send(context.Background(), prompt); err != nil && requiresAckedTurn {
-			proc.DecrementExpectedTurns()
+		if err := proc.relay.Send(context.Background(), prompt); err != nil && requiresAckedTurn {
+			proc.decrementExpectedTurns()
 		}
 	}
 }

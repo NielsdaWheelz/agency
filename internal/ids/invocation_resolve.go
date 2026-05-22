@@ -2,7 +2,8 @@
 package ids
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"strings"
 )
 
@@ -185,7 +186,7 @@ func ResolveInvocationRef(input string, refs []InvocationRef, opts ResolveInvoca
 
 // sortInvocationCandidates sorts candidates deterministically by InvocationID.
 func sortInvocationCandidates(refs []InvocationRef) {
-	sort.Slice(refs, func(i, j int) bool {
-		return refs[i].InvocationID < refs[j].InvocationID
+	slices.SortFunc(refs, func(a, b InvocationRef) int {
+		return cmp.Compare(a.InvocationID, b.InvocationID)
 	})
 }

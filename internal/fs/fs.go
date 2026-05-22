@@ -22,43 +22,42 @@ type FS interface {
 	CreateTemp(dir, pattern string) (path string, w io.WriteCloser, err error)
 }
 
-// RealFS is the production implementation of FS using the os package.
-type RealFS struct{}
+type realFS struct{}
 
-// NewRealFS creates a new RealFS.
-func NewRealFS() *RealFS {
-	return &RealFS{}
+// NewRealFS creates a production filesystem implementation.
+func NewRealFS() FS {
+	return &realFS{}
 }
 
-func (r *RealFS) MkdirAll(path string, perm os.FileMode) error {
+func (r *realFS) MkdirAll(path string, perm os.FileMode) error {
 	return os.MkdirAll(path, perm)
 }
 
-func (r *RealFS) ReadFile(path string) ([]byte, error) {
+func (r *realFS) ReadFile(path string) ([]byte, error) {
 	return os.ReadFile(path)
 }
 
-func (r *RealFS) WriteFile(path string, data []byte, perm os.FileMode) error {
+func (r *realFS) WriteFile(path string, data []byte, perm os.FileMode) error {
 	return os.WriteFile(path, data, perm)
 }
 
-func (r *RealFS) Stat(path string) (iofs.FileInfo, error) {
+func (r *realFS) Stat(path string) (iofs.FileInfo, error) {
 	return os.Stat(path)
 }
 
-func (r *RealFS) Rename(oldpath, newpath string) error {
+func (r *realFS) Rename(oldpath, newpath string) error {
 	return os.Rename(oldpath, newpath)
 }
 
-func (r *RealFS) Remove(path string) error {
+func (r *realFS) Remove(path string) error {
 	return os.Remove(path)
 }
 
-func (r *RealFS) Chmod(path string, perm os.FileMode) error {
+func (r *realFS) Chmod(path string, perm os.FileMode) error {
 	return os.Chmod(path, perm)
 }
 
-func (r *RealFS) CreateTemp(dir, pattern string) (string, io.WriteCloser, error) {
+func (r *realFS) CreateTemp(dir, pattern string) (string, io.WriteCloser, error) {
 	f, err := os.CreateTemp(dir, pattern)
 	if err != nil {
 		return "", nil, err

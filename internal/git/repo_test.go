@@ -207,10 +207,9 @@ func TestParseOriginHost(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := ParseOriginHost(tt.raw)
+			got := parseOriginHost(tt.raw)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -246,7 +245,6 @@ func TestHasCommits(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			has, err := HasCommits(context.Background(), exec.NewRealRunner(), tt.repoDir(t), nil)
 			require.NoError(t, err)
@@ -284,7 +282,6 @@ func TestIsClean(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			repoRoot := testutil.SetupGitRepo(t)
 			if tt.mutate != nil {
@@ -337,7 +334,6 @@ func TestIsCleanExcludingAgency(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			repoRoot := testutil.SetupGitRepo(t)
 			if tt.mutate != nil {
@@ -362,30 +358,10 @@ func TestBranchExists(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			exists, err := BranchExists(context.Background(), exec.NewRealRunner(), testutil.SetupGitRepo(t), tt.branch, nil)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, exists)
 		})
 	}
-}
-
-func TestGetOriginURL(t *testing.T) {
-	t.Run("present", func(t *testing.T) {
-		repoRoot := testutil.SetupGitRepo(t)
-		runGit(t, repoRoot, "remote", "add", "origin", "git@github.com:owner/repo.git")
-
-		url := GetOriginURL(context.Background(), exec.NewRealRunner(), repoRoot, nil)
-
-		assert.Equal(t, "git@github.com:owner/repo.git", url)
-	})
-
-	t.Run("missing", func(t *testing.T) {
-		repoRoot := testutil.SetupGitRepo(t)
-
-		url := GetOriginURL(context.Background(), exec.NewRealRunner(), repoRoot, nil)
-
-		assert.Empty(t, url)
-	})
 }

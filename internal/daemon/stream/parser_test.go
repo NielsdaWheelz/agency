@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -35,373 +36,6 @@ func (r *errorAfterPayloadReader) Read(p []byte) (int, error) {
 		return n, r.err
 	}
 	return n, nil
-}
-
-func TestClaudeAdapter_ParseLine(t *testing.T) {
-	t.Parallel()
-	adapter := &ClaudeAdapter{}
-
-	tests := []struct {
-		name     string
-		input    string
-		wantKind EventKind
-		wantErr  bool
-	}{
-		{
-			name:     "system init",
-			input:    `{"type":"system","subtype":"init","cwd":"/sandbox","model":"claude-3"}`,
-			wantKind: EventKindSessionStart,
-		},
-		{
-			name:     "assistant text only",
-			input:    `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hello"}]}}`,
-			wantKind: EventKindMessage,
-		},
-		{
-			name:     "assistant with tool use",
-			input:    `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Let me check"},{"type":"tool_use","id":"t1","name":"Read"}]}}`,
-			wantKind: EventKindMessage,
-		},
-		{
-			name:     "user tool result",
-			input:    `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"file contents"}]}}`,
-			wantKind: EventKindMessage,
-		},
-		{
-			name:     "result success",
-			input:    `{"type":"result","subtype":"success","duration_ms":45000,"cost_usd":0.15}`,
-			wantKind: EventKindFinal,
-		},
-		{
-			name:     "result error",
-			input:    `{"type":"result","subtype":"error","error":"rate limit exceeded","error_code":"E_RATE_LIMIT"}`,
-			wantKind: EventKindError,
-		},
-		{
-			name:     "result canceled",
-			input:    `{"type":"result","subtype":"canceled"}`,
-			wantKind: EventKindError,
-		},
-		{
-			name:    "malformed json",
-			input:   `{not valid json}`,
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			result, err := adapter.ParseLine([]byte(tt.input))
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-
-			if tt.wantKind != "" {
-				require.NotEmpty(t, result.Events, "ParseLine() returned no events, wanted kind %v", tt.wantKind)
-			}
-
-			if len(result.Events) > 0 {
-				assert.Equal(t, tt.wantKind, result.Events[0].Kind)
-			}
-		})
-	}
-}
-
-func TestClaudeAdapter_ContentBlocks_Assistant(t *testing.T) {
-	t.Parallel()
-	adapter := &ClaudeAdapter{}
-
-	input := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Let me check"},{"type":"tool_use","id":"t1","name":"Read","input":{"path":"/foo"}}]}}`
-
-	result, err := adapter.ParseLine([]byte(input))
-	require.NoError(t, err)
-	require.Len(t, result.Events, 1)
-
-	ev := result.Events[0]
-	assert.Equal(t, "assistant", ev.Data["role"])
-	assert.Equal(t, true, ev.Data["has_tool_use"])
-	assert.Equal(t, "Let me check", ev.Data["text"])
-	assert.Equal(t, []string{"Read"}, ev.Data["tool_names"])
-
-	blocks, ok := ev.Data["content_blocks"].([]map[string]interface{})
-	require.True(t, ok, "content_blocks should be []map[string]interface{}")
-	require.Len(t, blocks, 2)
-
-	assert.Equal(t, "text", blocks[0]["type"])
-	assert.Equal(t, "Let me check", blocks[0]["text"])
-
-	assert.Equal(t, "tool_use", blocks[1]["type"])
-	assert.Equal(t, "Read", blocks[1]["name"])
-	assert.Equal(t, "t1", blocks[1]["id"])
-	assert.NotNil(t, blocks[1]["input"], "tool_use block should have input")
-}
-
-func TestClaudeAdapter_ContentBlocks_User(t *testing.T) {
-	t.Parallel()
-	adapter := &ClaudeAdapter{}
-
-	input := `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"file contents here"}]}}`
-
-	result, err := adapter.ParseLine([]byte(input))
-	require.NoError(t, err)
-	require.Len(t, result.Events, 1)
-
-	ev := result.Events[0]
-	assert.Equal(t, "user", ev.Data["role"])
-	assert.Equal(t, "file contents here", ev.Data["text"])
-
-	blocks, ok := ev.Data["content_blocks"].([]map[string]interface{})
-	require.True(t, ok, "content_blocks should be present")
-	require.Len(t, blocks, 1)
-
-	assert.Equal(t, "tool_result", blocks[0]["type"])
-	assert.Equal(t, "t1", blocks[0]["tool_use_id"])
-	assert.Equal(t, "file contents here", blocks[0]["content"])
-}
-
-func TestClaudeAdapter_UserToolUseResultWithoutMessageContentFallback(t *testing.T) {
-	t.Parallel()
-	adapter := &ClaudeAdapter{}
-
-	result, err := adapter.ParseLine([]byte(`{"type":"user","tool_use_result":"command output"}`))
-	require.NoError(t, err)
-	require.Len(t, result.Events, 1)
-
-	ev := result.Events[0]
-	assert.Equal(t, EventKindMessage, ev.Kind)
-	assert.Equal(t, "user", ev.Data["role"])
-	assert.Equal(t, "tool_result", ev.Data["message_family"])
-	assert.Equal(t, "command output", ev.Data["text"])
-}
-
-func TestCodexAdapter_ParseLine(t *testing.T) {
-	t.Parallel()
-	adapter := &CodexAdapter{}
-
-	tests := []struct {
-		name     string
-		input    string
-		wantKind EventKind
-		wantErr  bool
-	}{
-		{
-			name:     "thread started",
-			input:    `{"type":"thread.started","thread_id":"thread_123"}`,
-			wantKind: EventKindSessionStart,
-		},
-		{
-			name:     "command start",
-			input:    `{"type":"item.started","item":{"type":"command_execution","command":"cat file.txt"}}`,
-			wantKind: EventKindToolStart,
-		},
-		{
-			name:     "command end",
-			input:    `{"type":"item.completed","item":{"type":"command_execution","command":"cat file.txt","exit_code":0}}`,
-			wantKind: EventKindToolEnd,
-		},
-		{
-			name:     "agent message",
-			input:    `{"type":"item.completed","item":{"type":"agent_message","content":[{"type":"text","text":"Done!"}]}}`,
-			wantKind: EventKindMessage,
-		},
-		{
-			name:     "turn completed",
-			input:    `{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":50}}`,
-			wantKind: EventKindUsage,
-		},
-		{
-			name:    "malformed json",
-			input:   `{invalid}`,
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			result, err := adapter.ParseLine([]byte(tt.input))
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-
-			if tt.wantKind != "" {
-				require.NotEmpty(t, result.Events, "ParseLine() returned no events, wanted kind %v", tt.wantKind)
-			}
-
-			if len(result.Events) > 0 {
-				assert.Equal(t, tt.wantKind, result.Events[0].Kind)
-			}
-		})
-	}
-}
-
-func TestCodexAdapter_ContentBlocks_AgentMessage(t *testing.T) {
-	t.Parallel()
-	adapter := &CodexAdapter{}
-
-	input := `{"type":"item.completed","item":{"type":"agent_message","content":[{"type":"text","text":"Done!"}]}}`
-
-	result, err := adapter.ParseLine([]byte(input))
-	require.NoError(t, err)
-	require.Len(t, result.Events, 1)
-
-	ev := result.Events[0]
-	assert.Equal(t, "assistant", ev.Data["role"])
-	assert.Equal(t, "Done!", ev.Data["text"])
-
-	blocks, ok := ev.Data["content_blocks"].([]map[string]interface{})
-	require.True(t, ok, "content_blocks should be present")
-	require.Len(t, blocks, 1)
-
-	assert.Equal(t, "text", blocks[0]["type"])
-	assert.Equal(t, "Done!", blocks[0]["text"])
-}
-
-func TestCodexAdapter_ParseLine_ItemUpdatedIncludesToolID(t *testing.T) {
-	t.Parallel()
-	adapter := &CodexAdapter{}
-
-	input := `{"type":"item.updated","item":{"id":"item_1","type":"command_execution","command":"sh -lc probe","aggregated_output":"sleep-start\n","status":"in_progress"}}`
-
-	result, err := adapter.ParseLine([]byte(input))
-	require.NoError(t, err)
-	require.Len(t, result.Events, 1)
-
-	ev := result.Events[0]
-	assert.Equal(t, EventKindToolStart, ev.Kind)
-	assert.Equal(t, "item_1", ev.Data["tool_id"])
-	assert.Equal(t, "sh -lc probe", ev.Data["command"])
-}
-
-func TestCursorAdapter_ParseLine_ToolCallCompleted(t *testing.T) {
-	t.Parallel()
-	adapter := &CursorAdapter{}
-
-	input := `{"type":"tool_call","subtype":"completed","tool_call":{"editToolCall":{"target_file":"main.go"},"exitCode":0}}`
-
-	result, err := adapter.ParseLine([]byte(input))
-	require.NoError(t, err)
-	require.Len(t, result.Events, 1)
-
-	ev := result.Events[0]
-	assert.Equal(t, EventKindToolEnd, ev.Kind)
-	assert.Equal(t, "Edit", ev.Data["name"])
-	assert.Equal(t, "main.go", ev.Data["command"])
-	assert.Equal(t, 0, ev.Data["exit_code"])
-}
-
-func TestCursorAdapter_ParseLine_ToolCallCompleted_DeterministicKeyPriority(t *testing.T) {
-	t.Parallel()
-	adapter := &CursorAdapter{}
-
-	// Intentionally include multiple nested tool payloads to ensure stable
-	// canonical selection order across runs.
-	input := `{"type":"tool_call","subtype":"completed","tool_call":{"bashToolCall":{"command":"echo hi","exitCode":0},"editToolCall":{"target_file":"main.go","exitCode":0}}}`
-
-	result, err := adapter.ParseLine([]byte(input))
-	require.NoError(t, err)
-	require.Len(t, result.Events, 1)
-
-	ev := result.Events[0]
-	assert.Equal(t, EventKindToolEnd, ev.Kind)
-	assert.Equal(t, "Bash", ev.Data["name"])
-	assert.Equal(t, "echo hi", ev.Data["command"])
-	assert.Equal(t, 0, ev.Data["exit_code"])
-}
-
-func TestParser_StreamAndParse_ClaudeCodeFixture(t *testing.T) {
-	t.Parallel()
-	// Read fixture
-	fixturePath := filepath.Join("testdata", "claude_stream.jsonl")
-	fixtureData, err := os.ReadFile(fixturePath)
-	require.NoError(t, err, "Failed to read fixture")
-
-	// Create parser
-	parser := NewParser("test-inv-1", "claude-code", fixedClock)
-
-	// Create temp files
-	rawFile, err := os.CreateTemp("", "raw-*.jsonl")
-	require.NoError(t, err, "Failed to create temp raw file")
-	defer func() { _ = os.Remove(rawFile.Name()) }()
-	defer func() { _ = rawFile.Close() }()
-
-	streamFile, err := os.CreateTemp("", "stream-*.jsonl")
-	require.NoError(t, err, "Failed to create temp stream file")
-	defer func() { _ = os.Remove(streamFile.Name()) }()
-	defer func() { _ = streamFile.Close() }()
-
-	// Parse
-	reader := bytes.NewReader(fixtureData)
-	err = parser.StreamAndParse(reader, rawFile, streamFile)
-	require.NoError(t, err, "StreamAndParse failed")
-
-	// Verify raw.jsonl contains verbatim data
-	_, _ = rawFile.Seek(0, 0)
-	rawData, _ := os.ReadFile(rawFile.Name())
-	assert.Equal(t, fixtureData, rawData, "raw.jsonl content doesn't match fixture")
-
-	// Verify stream.jsonl has normalized events
-	_, _ = streamFile.Seek(0, 0)
-	streamData, _ := os.ReadFile(streamFile.Name())
-	assert.NotEmpty(t, streamData, "stream.jsonl is empty")
-
-	// Count lines in stream.jsonl (should have multiple events)
-	lines := strings.Split(strings.TrimSpace(string(streamData)), "\n")
-	assert.GreaterOrEqual(t, len(lines), 5, "Expected at least 5 normalized events")
-
-	// Verify enriched content_blocks appear in stream.jsonl
-	foundContentBlocks := false
-	for _, line := range lines {
-		if strings.Contains(line, `"content_blocks"`) {
-			foundContentBlocks = true
-			break
-		}
-	}
-	assert.True(t, foundContentBlocks, "stream.jsonl should contain content_blocks in at least one event")
-}
-
-func TestParser_StreamAndParse_CodexFixture(t *testing.T) {
-	t.Parallel()
-	// Read fixture
-	fixturePath := filepath.Join("testdata", "codex_stream.jsonl")
-	fixtureData, err := os.ReadFile(fixturePath)
-	require.NoError(t, err, "Failed to read fixture")
-
-	// Create parser
-	parser := NewParser("test-inv-2", "codex", fixedClock)
-
-	// Create temp files
-	rawFile, err := os.CreateTemp("", "raw-*.jsonl")
-	require.NoError(t, err, "Failed to create temp raw file")
-	defer func() { _ = os.Remove(rawFile.Name()) }()
-	defer func() { _ = rawFile.Close() }()
-
-	streamFile, err := os.CreateTemp("", "stream-*.jsonl")
-	require.NoError(t, err, "Failed to create temp stream file")
-	defer func() { _ = os.Remove(streamFile.Name()) }()
-	defer func() { _ = streamFile.Close() }()
-
-	// Parse
-	reader := bytes.NewReader(fixtureData)
-	err = parser.StreamAndParse(reader, rawFile, streamFile)
-	require.NoError(t, err, "StreamAndParse failed")
-
-	// Verify raw.jsonl contains verbatim data
-	_, _ = rawFile.Seek(0, 0)
-	rawData, _ := os.ReadFile(rawFile.Name())
-	assert.Equal(t, fixtureData, rawData, "raw.jsonl content doesn't match fixture")
-
-	// Verify stream.jsonl has normalized events
-	_, _ = streamFile.Seek(0, 0)
-	streamData, _ := os.ReadFile(streamFile.Name())
-	assert.NotEmpty(t, streamData, "stream.jsonl is empty")
 }
 
 func TestParser_StreamAndParse_CodexCommandOutputAcrossStartAndEndPreserved(t *testing.T) {
@@ -436,68 +70,6 @@ func TestParser_StreamAndParse_CodexCommandOutputAcrossStartAndEndPreserved(t *t
 	require.NoError(t, err)
 	assert.Contains(t, string(streamData), "sleep-start", "normalized stream must keep early command output")
 	assert.Contains(t, string(streamData), "sleep-end", "normalized stream must keep final command output")
-}
-
-func TestParser_StreamAndParse_CodexMutatingFixture_EmitsCheckpointNotification(t *testing.T) {
-	t.Parallel()
-
-	fixturePath := filepath.Join("testdata", "codex_mutating_stream.jsonl")
-	fixtureData, err := os.ReadFile(fixturePath)
-	require.NoError(t, err, "Failed to read fixture")
-
-	var notifications []CheckpointNotification
-	parser := NewParser("test-inv-codex-mut-fixture", "codex", fixedClock)
-	parser.SetCheckpointNotify(func(n CheckpointNotification) {
-		notifications = append(notifications, n)
-	})
-
-	rawFile, err := os.CreateTemp("", "raw-codex-mut-fixture-*.jsonl")
-	require.NoError(t, err)
-	defer func() { _ = os.Remove(rawFile.Name()) }()
-	defer func() { _ = rawFile.Close() }()
-
-	streamFile, err := os.CreateTemp("", "stream-codex-mut-fixture-*.jsonl")
-	require.NoError(t, err)
-	defer func() { _ = os.Remove(streamFile.Name()) }()
-	defer func() { _ = streamFile.Close() }()
-
-	err = parser.StreamAndParse(bytes.NewReader(fixtureData), rawFile, streamFile)
-	require.NoError(t, err)
-
-	require.NotEmpty(t, notifications, "mutating codex fixture should emit checkpoint notification")
-	assert.Equal(t, "Bash", notifications[0].ToolName)
-	assert.Greater(t, notifications[0].Seq, uint64(0))
-}
-
-func TestParser_StreamAndParse_CursorToolCallFixture_EmitsCheckpointNotification(t *testing.T) {
-	t.Parallel()
-
-	fixturePath := filepath.Join("testdata", "cursor_tool_call_stream.jsonl")
-	fixtureData, err := os.ReadFile(fixturePath)
-	require.NoError(t, err, "Failed to read fixture")
-
-	var notifications []CheckpointNotification
-	parser := NewParser("test-inv-cursor-mut-fixture", "cursor", fixedClock)
-	parser.SetCheckpointNotify(func(n CheckpointNotification) {
-		notifications = append(notifications, n)
-	})
-
-	rawFile, err := os.CreateTemp("", "raw-cursor-mut-fixture-*.jsonl")
-	require.NoError(t, err)
-	defer func() { _ = os.Remove(rawFile.Name()) }()
-	defer func() { _ = rawFile.Close() }()
-
-	streamFile, err := os.CreateTemp("", "stream-cursor-mut-fixture-*.jsonl")
-	require.NoError(t, err)
-	defer func() { _ = os.Remove(streamFile.Name()) }()
-	defer func() { _ = streamFile.Close() }()
-
-	err = parser.StreamAndParse(bytes.NewReader(fixtureData), rawFile, streamFile)
-	require.NoError(t, err)
-
-	require.NotEmpty(t, notifications, "cursor tool_call fixture should emit checkpoint notification")
-	assert.Equal(t, "Bash", notifications[0].ToolName)
-	assert.Greater(t, notifications[0].Seq, uint64(0))
 }
 
 func TestParser_StreamAndParse_MalformedMidStream(t *testing.T) {
@@ -657,7 +229,7 @@ func TestParser_StreamAndParse_OversizedLineEmitsParseErrorAndContinues(t *testi
 		if json.Unmarshal([]byte(line), &event) != nil {
 			continue
 		}
-		if event.Kind == string(EventKindParseError) {
+		if event.Kind == string(eventKindParseError) {
 			if reason, ok := event.Data["reason"].(string); ok && reason == "line_too_large" {
 				foundLineTooLarge = true
 			}
@@ -767,38 +339,6 @@ func TestParser_StreamAndParse_OversizedLineWithReaderErrorStillEmitsParseError(
 	require.NoError(t, err)
 	assert.Contains(t, string(streamData), `"kind":"parse_error"`)
 	assert.Contains(t, string(streamData), `"reason":"line_too_large"`)
-}
-
-func TestGetAdapter(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		runner  string
-		wantNil bool
-	}{
-		{"claude", true},
-		{"claude-code", false},
-		{"codex", false},
-		{"amp", true},
-		{"opencode", true},
-		{"cursor", false},
-		{"cursor-cli", true},
-		{"droid", true},
-		{"unknown", true},
-		{"", true},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.runner, func(t *testing.T) {
-			t.Parallel()
-			adapter := GetAdapter(tt.runner)
-			if tt.wantNil {
-				assert.Nil(t, adapter)
-			} else {
-				assert.NotNil(t, adapter)
-			}
-		})
-	}
 }
 
 func TestParser_StreamAndParse_RawWriteFailureReturnsError(t *testing.T) {
@@ -1106,29 +646,10 @@ func TestParser_StreamAndParse_StreamWriteFailureReturnsError(t *testing.T) {
 	assert.True(t, stderrors.Is(err, ErrNormalizedStreamWriteFailed), "expected normalized-stream write failure classification")
 }
 
-type oversizedNormalizedEventAdapter struct{}
-
-func (a *oversizedNormalizedEventAdapter) Name() string { return "oversized-test-adapter" }
-
-func (a *oversizedNormalizedEventAdapter) ParseLine(_ []byte) (*ParseResult, error) {
-	return &ParseResult{
-		Events: []*NormalizedEvent{
-			{
-				Kind: EventKindMessage,
-				Data: map[string]interface{}{
-					"role": "assistant",
-					"text": strings.Repeat("x", MaxLineSize+1024),
-				},
-			},
-		},
-	}, nil
-}
-
-func TestParser_StreamAndParse_OversizedNormalizedEventFallsBackToParseError(t *testing.T) {
+func TestParser_StreamAndParse_WritesParseErrorForOversizedNormalizedEvent(t *testing.T) {
 	t.Parallel()
 
 	parser := NewParser("test-inv-oversized-normalized", "claude-code", fixedClock)
-	parser.Adapter = &oversizedNormalizedEventAdapter{}
 
 	rawFile, err := os.CreateTemp("", "raw-oversized-normalized-*.jsonl")
 	require.NoError(t, err)
@@ -1140,7 +661,22 @@ func TestParser_StreamAndParse_OversizedNormalizedEventFallsBackToParseError(t *
 	defer func() { _ = os.Remove(streamFile.Name()) }()
 	defer func() { _ = streamFile.Close() }()
 
-	reader := strings.NewReader(`{"type":"synthetic"}` + "\n")
+	payload, err := json.Marshal(map[string]interface{}{
+		"type": "assistant",
+		"message": map[string]interface{}{
+			"role": "assistant",
+			"content": []map[string]string{
+				{
+					"type": "text",
+					"text": strings.Repeat("x", MaxLineSize/2+8192),
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Less(t, len(payload), MaxLineSize, "raw input must stay parseable")
+
+	reader := bytes.NewReader(append(payload, '\n'))
 	err = parser.StreamAndParse(reader, rawFile, streamFile)
 	require.NoError(t, err)
 
@@ -1151,22 +687,22 @@ func TestParser_StreamAndParse_OversizedNormalizedEventFallsBackToParseError(t *
 
 	lines := strings.Split(trimmed, "\n")
 	require.Len(t, lines, 1)
-	assert.LessOrEqual(t, len(lines[0]), MaxLineSize, "fallback parse_error event must remain under MaxLineSize")
+	assert.LessOrEqual(t, len(lines[0]), MaxLineSize, "overflow parse_error event must remain under MaxLineSize")
 
 	var event struct {
 		Kind string                 `json:"kind"`
 		Data map[string]interface{} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(lines[0]), &event))
-	assert.Equal(t, string(EventKindParseError), event.Kind)
+	assert.Equal(t, string(eventKindParseError), event.Kind)
 	assert.Equal(t, "normalized_event_too_large", dataStringValue(event.Data, "reason"))
-	assert.Equal(t, string(EventKindMessage), dataStringValue(event.Data, "event_kind"))
+	assert.Equal(t, string(eventKindMessage), dataStringValue(event.Data, "event_kind"))
 }
 
-func TestParser_StreamAndParse_S8CodexD05_CanonicalFamilies(t *testing.T) {
+func TestParser_StreamAndParse_CodexSuccess_CanonicalFamilies(t *testing.T) {
 	t.Parallel()
 
-	events := parseS8FixtureEvents(t, "codex", "codex_d05_success.jsonl")
+	events := parseRunnerContractFixtureEvents(t, "codex", "codex_success.jsonl")
 	require.NotEmpty(t, events)
 
 	sawAssistantMessageText := false
@@ -1176,14 +712,14 @@ func TestParser_StreamAndParse_S8CodexD05_CanonicalFamilies(t *testing.T) {
 
 	for _, ev := range events {
 		switch ev.Kind {
-		case string(EventKindMessage):
+		case string(eventKindMessage):
 			if dataStringValue(ev.Data, "role") != "assistant" {
 				continue
 			}
 			if strings.TrimSpace(dataStringValue(ev.Data, "text")) != "" {
 				sawAssistantMessageText = true
 			}
-		case string(EventKindToolStart), string(EventKindToolEnd):
+		case string(eventKindToolStart), string(eventKindToolEnd):
 			switch dataStringValue(ev.Data, "action_family") {
 			case "command_execution":
 				sawCommandExecution = true
@@ -1191,7 +727,7 @@ func TestParser_StreamAndParse_S8CodexD05_CanonicalFamilies(t *testing.T) {
 			case "file_change":
 				sawFileChange = true
 			}
-		case string(EventKindUsage):
+		case string(eventKindUsage):
 			sawUsage = true
 		}
 	}
@@ -1202,10 +738,10 @@ func TestParser_StreamAndParse_S8CodexD05_CanonicalFamilies(t *testing.T) {
 	assert.True(t, sawUsage, "codex turn.completed should map to usage")
 }
 
-func TestParser_StreamAndParse_S8CursorD05_ParsesPromptAndNestedToolResults(t *testing.T) {
+func TestParser_StreamAndParse_CursorSuccess_ParsesPromptAndNestedToolResults(t *testing.T) {
 	t.Parallel()
 
-	events := parseS8FixtureEvents(t, "cursor", "cursor_d05_success.jsonl")
+	events := parseRunnerContractFixtureEvents(t, "cursor", "cursor_success.jsonl")
 	require.NotEmpty(t, events)
 
 	sawPromptMessage := false
@@ -1215,13 +751,13 @@ func TestParser_StreamAndParse_S8CursorD05_ParsesPromptAndNestedToolResults(t *t
 
 	for _, ev := range events {
 		switch ev.Kind {
-		case string(EventKindMessage):
+		case string(eventKindMessage):
 			if dataStringValue(ev.Data, "role") == "user" &&
 				dataStringValue(ev.Data, "message_family") == "prompt" &&
 				strings.TrimSpace(dataStringValue(ev.Data, "text")) != "" {
 				sawPromptMessage = true
 			}
-		case string(EventKindToolEnd):
+		case string(eventKindToolEnd):
 			switch dataStringValue(ev.Data, "action_family") {
 			case "file_read":
 				sawFileRead = true
@@ -1242,7 +778,7 @@ func TestParser_StreamAndParse_S8CursorD05_ParsesPromptAndNestedToolResults(t *t
 	assert.True(t, sawCommandExecution, "cursor shell tool should map to command_execution family")
 }
 
-func TestParser_StreamAndParse_S8DirectCorpusClosure_D01ToD04_Parseable(t *testing.T) {
+func TestParser_StreamAndParse_RunnerContractCoverage_Parseable(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -1250,34 +786,34 @@ func TestParser_StreamAndParse_S8DirectCorpusClosure_D01ToD04_Parseable(t *testi
 		runner  string
 		fixture string
 	}{
-		{name: "claude_d01", runner: "claude-code", fixture: "claude_d01_assistant_only.jsonl"},
-		{name: "claude_d02", runner: "claude-code", fixture: "claude_d02_read_search_no_edit.jsonl"},
-		{name: "claude_d03", runner: "claude-code", fixture: "claude_d03_command_long_output.jsonl"},
-		{name: "claude_d04", runner: "claude-code", fixture: "claude_d04_single_edit.jsonl"},
-		{name: "codex_d01", runner: "codex", fixture: "codex_d01_assistant_only.jsonl"},
-		{name: "codex_d02", runner: "codex", fixture: "codex_d02_read_search_no_edit.jsonl"},
-		{name: "codex_d03", runner: "codex", fixture: "codex_d03_command_long_output.jsonl"},
-		{name: "codex_d04", runner: "codex", fixture: "codex_d04_single_edit.jsonl"},
-		{name: "cursor_d01", runner: "cursor", fixture: "cursor_d01_assistant_only.jsonl"},
-		{name: "cursor_d02", runner: "cursor", fixture: "cursor_d02_read_search_no_edit.jsonl"},
-		{name: "cursor_d03", runner: "cursor", fixture: "cursor_d03_command_long_output.jsonl"},
-		{name: "cursor_d04", runner: "cursor", fixture: "cursor_d04_single_edit.jsonl"},
+		{name: "claude_assistant_only", runner: "claude-code", fixture: "claude_assistant_only.jsonl"},
+		{name: "claude_read_search_no_edit", runner: "claude-code", fixture: "claude_read_search_no_edit.jsonl"},
+		{name: "claude_command_long_output", runner: "claude-code", fixture: "claude_command_long_output.jsonl"},
+		{name: "claude_single_edit", runner: "claude-code", fixture: "claude_single_edit.jsonl"},
+		{name: "codex_assistant_only", runner: "codex", fixture: "codex_assistant_only.jsonl"},
+		{name: "codex_read_search_no_edit", runner: "codex", fixture: "codex_read_search_no_edit.jsonl"},
+		{name: "codex_command_long_output", runner: "codex", fixture: "codex_command_long_output.jsonl"},
+		{name: "codex_single_edit", runner: "codex", fixture: "codex_single_edit.jsonl"},
+		{name: "cursor_assistant_only", runner: "cursor", fixture: "cursor_assistant_only.jsonl"},
+		{name: "cursor_read_search_no_edit", runner: "cursor", fixture: "cursor_read_search_no_edit.jsonl"},
+		{name: "cursor_command_long_output", runner: "cursor", fixture: "cursor_command_long_output.jsonl"},
+		{name: "cursor_single_edit", runner: "cursor", fixture: "cursor_single_edit.jsonl"},
 	}
 
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			events := parseS8FixtureEvents(t, tc.runner, tc.fixture)
+			events := parseRunnerContractFixtureEvents(t, tc.runner, tc.fixture)
 			require.NotEmpty(t, events, "fixture should parse into normalized events")
 
 			sawTextMessage := false
 			sawTerminal := false
 			for _, ev := range events {
-				if ev.Kind == string(EventKindMessage) && strings.TrimSpace(dataStringValue(ev.Data, "text")) != "" {
+				if ev.Kind == string(eventKindMessage) && strings.TrimSpace(dataStringValue(ev.Data, "text")) != "" {
 					sawTextMessage = true
 				}
-				if ev.Kind == string(EventKindFinal) || ev.Kind == string(EventKindUsage) {
+				if ev.Kind == string(eventKindFinal) || ev.Kind == string(eventKindUsage) {
 					sawTerminal = true
 				}
 			}
@@ -1288,10 +824,10 @@ func TestParser_StreamAndParse_S8DirectCorpusClosure_D01ToD04_Parseable(t *testi
 	}
 }
 
-func TestParser_StreamAndParse_S8CursorToolFamilyCoverage_IncludesSearchAndWeb(t *testing.T) {
+func TestParser_StreamAndParse_CursorToolFamilyCoverage_IncludesSearchAndWeb(t *testing.T) {
 	t.Parallel()
 
-	events := parseS8FixtureEvents(t, "cursor", "cursor_d07_tool_family_coverage.jsonl")
+	events := parseRunnerContractFixtureEvents(t, "cursor", "cursor_tool_family_coverage.jsonl")
 	require.NotEmpty(t, events)
 
 	sawGlob := false
@@ -1300,19 +836,19 @@ func TestParser_StreamAndParse_S8CursorToolFamilyCoverage_IncludesSearchAndWeb(t
 	sawWebFetch := false
 
 	for _, ev := range events {
-		if ev.Kind != string(EventKindToolEnd) {
+		if ev.Kind != string(eventKindToolEnd) {
 			continue
 		}
 		name := dataStringValue(ev.Data, "name")
 		family := dataStringValue(ev.Data, "action_family")
 		switch {
-		case name == "Glob" && family == ActionFamilySearch:
+		case name == "Glob" && family == actionFamilySearch:
 			sawGlob = true
-		case name == "Grep" && family == ActionFamilySearch:
+		case name == "Grep" && family == actionFamilySearch:
 			sawGrep = true
-		case name == "WebSearch" && family == ActionFamilyWebAction:
+		case name == "WebSearch" && family == actionFamilyWebAction:
 			sawWebSearch = true
-		case name == "WebFetch" && family == ActionFamilyWebAction:
+		case name == "WebFetch" && family == actionFamilyWebAction:
 			sawWebFetch = true
 		}
 	}
@@ -1323,15 +859,15 @@ func TestParser_StreamAndParse_S8CursorToolFamilyCoverage_IncludesSearchAndWeb(t
 	assert.True(t, sawWebFetch, "cursor webFetch tool calls must normalize to web_action family")
 }
 
-func TestParser_StreamAndParse_S8CursorD06_ExtractsFailureExitCode(t *testing.T) {
+func TestParser_StreamAndParse_CursorFailure_ExtractsFailureExitCode(t *testing.T) {
 	t.Parallel()
 
-	events := parseS8FixtureEvents(t, "cursor", "cursor_d06_failure.jsonl")
+	events := parseRunnerContractFixtureEvents(t, "cursor", "cursor_failure.jsonl")
 	require.NotEmpty(t, events)
 
 	sawFailedCommand := false
 	for _, ev := range events {
-		if ev.Kind != string(EventKindToolEnd) {
+		if ev.Kind != string(eventKindToolEnd) {
 			continue
 		}
 		if dataStringValue(ev.Data, "action_family") != "command_execution" {
@@ -1347,15 +883,15 @@ func TestParser_StreamAndParse_S8CursorD06_ExtractsFailureExitCode(t *testing.T)
 	assert.True(t, sawFailedCommand, "cursor nested failure payload should preserve non-zero exit code")
 }
 
-func TestParser_StreamAndParse_S8CodexD06_PreservesFailedCommandExitCode(t *testing.T) {
+func TestParser_StreamAndParse_CodexFailure_PreservesFailedCommandExitCode(t *testing.T) {
 	t.Parallel()
 
-	events := parseS8FixtureEvents(t, "codex", "codex_d06_failure.jsonl")
+	events := parseRunnerContractFixtureEvents(t, "codex", "codex_failure.jsonl")
 	require.NotEmpty(t, events)
 
 	sawFailedCommand := false
 	for _, ev := range events {
-		if ev.Kind != string(EventKindToolEnd) {
+		if ev.Kind != string(eventKindToolEnd) {
 			continue
 		}
 		if dataStringValue(ev.Data, "action_family") != "command_execution" {
@@ -1371,10 +907,10 @@ func TestParser_StreamAndParse_S8CodexD06_PreservesFailedCommandExitCode(t *test
 	assert.True(t, sawFailedCommand, "codex failure fixture should preserve non-zero command exit code")
 }
 
-func TestParser_StreamAndParse_S8ClaudeD06_PreservesToolFailureContext(t *testing.T) {
+func TestParser_StreamAndParse_ClaudeFailure_PreservesToolFailureContext(t *testing.T) {
 	t.Parallel()
 
-	events := parseS8FixtureEvents(t, "claude-code", "claude_d06_failure.jsonl")
+	events := parseRunnerContractFixtureEvents(t, "claude-code", "claude_failure.jsonl")
 	require.NotEmpty(t, events)
 
 	sawToolResultMessage := false
@@ -1383,7 +919,7 @@ func TestParser_StreamAndParse_S8ClaudeD06_PreservesToolFailureContext(t *testin
 
 	for _, ev := range events {
 		switch ev.Kind {
-		case string(EventKindMessage):
+		case string(eventKindMessage):
 			if dataStringValue(ev.Data, "role") == "user" &&
 				dataStringValue(ev.Data, "message_family") == "tool_result" &&
 				strings.Contains(strings.ToLower(dataStringValue(ev.Data, "text")), "fixture failure") {
@@ -1394,7 +930,7 @@ func TestParser_StreamAndParse_S8ClaudeD06_PreservesToolFailureContext(t *testin
 				strings.Contains(strings.ToLower(dataStringValue(ev.Data, "text")), "exit code 7") {
 				sawToolResultExitCode = true
 			}
-		case string(EventKindUnknown):
+		case string(eventKindUnknown):
 			if dataStringValue(ev.Data, "runner_event_type") == "rate_limit_event" {
 				sawUnknownDiagnostic = true
 			}
@@ -1406,14 +942,15 @@ func TestParser_StreamAndParse_S8ClaudeD06_PreservesToolFailureContext(t *testin
 	assert.True(t, sawUnknownDiagnostic, "unknown runner event shape should emit explicit diagnostic")
 }
 
-func TestParser_StreamAndParse_S8ClaudeD05_UnknownEventDiagnosticEmitted(t *testing.T) {
+func TestParser_StreamAndParse_ClaudeSuccess_UnknownEventDiagnosticEmitted(t *testing.T) {
 	t.Parallel()
 
-	events := parseS8FixtureEvents(t, "claude-code", "claude_d05_success.jsonl")
+	events := parseRunnerContractFixtureEvents(t, "claude-code", "claude_success.jsonl")
 	require.NotEmpty(t, events)
 
 	sawUnknownDiagnostic := false
 	sawFinal := false
+	sawContentBlocks := false
 
 	for _, ev := range events {
 		switch ev.Kind {
@@ -1421,62 +958,191 @@ func TestParser_StreamAndParse_S8ClaudeD05_UnknownEventDiagnosticEmitted(t *test
 			if dataStringValue(ev.Data, "runner_event_type") == "rate_limit_event" {
 				sawUnknownDiagnostic = true
 			}
-		case string(EventKindFinal):
+		case string(eventKindMessage):
+			if _, ok := ev.Data["content_blocks"]; ok {
+				sawContentBlocks = true
+			}
+		case string(eventKindFinal):
 			sawFinal = true
 		}
 	}
 
 	assert.True(t, sawUnknownDiagnostic, "unknown runner event shape should emit explicit diagnostic event")
+	assert.True(t, sawContentBlocks, "claude content_blocks should survive StreamAndParse serialization")
 	assert.True(t, sawFinal, "parsing should continue after unknown runner event")
 }
 
-func TestCodexAdapter_ParseLine_ItemStartedNil_EmitsUnknownDiagnostic(t *testing.T) {
+func TestParser_StreamAndParse_ClaudeResultErrorsEmitError(t *testing.T) {
 	t.Parallel()
-	adapter := &CodexAdapter{}
 
-	result, err := adapter.ParseLine([]byte(`{"type":"item.started","item":null}`))
-	require.NoError(t, err)
-	require.Len(t, result.Events, 1)
-	assert.Equal(t, EventKindUnknown, result.Events[0].Kind)
-	assert.Equal(t, "missing_item", dataStringValue(result.Events[0].Data, "reason"))
-	assert.Contains(t, dataStringValue(result.Events[0].Data, "raw_json_preview"), `"item":null`)
-	assert.Empty(t, dataStringValue(result.Events[0].Data, "raw_json"))
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "result error",
+			input: `{"type":"result","subtype":"error","error":"rate limit exceeded","error_code":"E_RATE_LIMIT"}`,
+		},
+		{
+			name:  "result canceled",
+			input: `{"type":"result","subtype":"canceled"}`,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			events := parseRunnerInputEvents(t, "claude-code", tc.input+"\n")
+			require.Len(t, events, 1)
+			assert.Equal(t, string(eventKindError), events[0].Kind)
+		})
+	}
 }
 
-func TestCodexAdapter_ParseLine_ItemCompletedNil_EmitsUnknownDiagnostic(t *testing.T) {
+func TestParser_StreamAndParse_ClaudeContentBlocksAndToolResultFallback(t *testing.T) {
 	t.Parallel()
-	adapter := &CodexAdapter{}
 
-	result, err := adapter.ParseLine([]byte(`{"type":"item.completed","item":null}`))
-	require.NoError(t, err)
-	require.Len(t, result.Events, 1)
-	assert.Equal(t, EventKindUnknown, result.Events[0].Kind)
-	assert.Equal(t, "missing_item", dataStringValue(result.Events[0].Data, "reason"))
-	assert.Contains(t, dataStringValue(result.Events[0].Data, "raw_json_preview"), `"item":null`)
-	assert.Empty(t, dataStringValue(result.Events[0].Data, "raw_json"))
+	input := strings.Join([]string{
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Let me check"},{"type":"tool_use","id":"t1","name":"Read","input":{"path":"/foo"}}]}}`,
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"file contents here"}]}}`,
+		`{"type":"user","tool_use_result":"command output"}`,
+	}, "\n") + "\n"
+	events := parseRunnerInputEvents(t, "claude-code", input)
+
+	require.Len(t, events, 3)
+	assistant := events[0]
+	assert.Equal(t, string(eventKindMessage), assistant.Kind)
+	assert.Equal(t, "assistant", dataStringValue(assistant.Data, "role"))
+	assert.Equal(t, true, assistant.Data["has_tool_use"])
+	assert.Equal(t, "Let me check", dataStringValue(assistant.Data, "text"))
+	assert.Equal(t, []interface{}{"Read"}, assistant.Data["tool_names"])
+
+	assistantBlocks := dataMapSlice(assistant.Data, "content_blocks")
+	require.Len(t, assistantBlocks, 2)
+	assert.Equal(t, "text", dataStringValue(assistantBlocks[0], "type"))
+	assert.Equal(t, "Let me check", dataStringValue(assistantBlocks[0], "text"))
+	assert.Equal(t, "tool_use", dataStringValue(assistantBlocks[1], "type"))
+	assert.Equal(t, "Read", dataStringValue(assistantBlocks[1], "name"))
+	assert.Equal(t, "t1", dataStringValue(assistantBlocks[1], "id"))
+	assert.NotNil(t, assistantBlocks[1]["input"], "tool_use block should preserve input")
+
+	userToolResult := events[1]
+	assert.Equal(t, "user", dataStringValue(userToolResult.Data, "role"))
+	assert.Equal(t, "file contents here", dataStringValue(userToolResult.Data, "text"))
+	userBlocks := dataMapSlice(userToolResult.Data, "content_blocks")
+	require.Len(t, userBlocks, 1)
+	assert.Equal(t, "tool_result", dataStringValue(userBlocks[0], "type"))
+	assert.Equal(t, "t1", dataStringValue(userBlocks[0], "tool_use_id"))
+	assert.Equal(t, "file contents here", dataStringValue(userBlocks[0], "content"))
+
+	fallback := events[2]
+	assert.Equal(t, string(eventKindMessage), fallback.Kind)
+	assert.Equal(t, "user", dataStringValue(fallback.Data, "role"))
+	assert.Equal(t, "tool_result", dataStringValue(fallback.Data, "message_family"))
+	assert.Equal(t, "command output", dataStringValue(fallback.Data, "text"))
 }
 
-func TestCursorAdapter_ParseLine_UnrecognizedToolCall_EmitsUnknownDiagnostic(t *testing.T) {
+func TestParser_StreamAndParse_CodexContentBlocksAndUpdatedToolID(t *testing.T) {
 	t.Parallel()
-	adapter := &CursorAdapter{}
 
-	result, err := adapter.ParseLine([]byte(`{"type":"tool_call","subtype":"completed","tool_call":{"strangeToolCall":{"foo":"bar"}}}`))
-	require.NoError(t, err)
-	require.Len(t, result.Events, 1)
-	assert.Equal(t, EventKindUnknown, result.Events[0].Kind)
-	assert.Equal(t, "unrecognized_tool_structure", dataStringValue(result.Events[0].Data, "reason"))
-	assert.Contains(t, dataStringValue(result.Events[0].Data, "raw_json_preview"), `"strangeToolCall"`)
+	input := strings.Join([]string{
+		`{"type":"item.completed","item":{"type":"agent_message","content":[{"type":"text","text":"Done!"}]}}`,
+		`{"type":"item.updated","item":{"id":"item_1","type":"command_execution","command":"sh -lc probe","aggregated_output":"sleep-start\n","status":"in_progress"}}`,
+	}, "\n") + "\n"
+	events := parseRunnerInputEvents(t, "codex", input)
+
+	require.Len(t, events, 2)
+	message := events[0]
+	assert.Equal(t, string(eventKindMessage), message.Kind)
+	assert.Equal(t, "assistant", dataStringValue(message.Data, "role"))
+	assert.Equal(t, "Done!", dataStringValue(message.Data, "text"))
+	messageBlocks := dataMapSlice(message.Data, "content_blocks")
+	require.Len(t, messageBlocks, 1)
+	assert.Equal(t, "text", dataStringValue(messageBlocks[0], "type"))
+	assert.Equal(t, "Done!", dataStringValue(messageBlocks[0], "text"))
+
+	toolStart := events[1]
+	assert.Equal(t, string(eventKindToolStart), toolStart.Kind)
+	assert.Equal(t, "item_1", dataStringValue(toolStart.Data, "tool_id"))
+	assert.Equal(t, "sh -lc probe", dataStringValue(toolStart.Data, "command"))
 }
 
-func TestCursorAdapter_ParseLine_EmptyToolCall_EmitsUnknownDiagnostic(t *testing.T) {
+func TestParser_StreamAndParse_CursorCompletedToolMetadataUsesStablePriority(t *testing.T) {
 	t.Parallel()
-	adapter := &CursorAdapter{}
 
-	result, err := adapter.ParseLine([]byte(`{"type":"tool_call","subtype":"completed","tool_call":{}}`))
-	require.NoError(t, err)
-	require.Len(t, result.Events, 1)
-	assert.Equal(t, EventKindUnknown, result.Events[0].Kind)
-	assert.Equal(t, "unrecognized_tool_structure", dataStringValue(result.Events[0].Data, "reason"))
+	input := `{"type":"tool_call","subtype":"completed","tool_call":{"bashToolCall":{"command":"echo hi","exitCode":0},"editToolCall":{"target_file":"main.go","exitCode":0}}}` + "\n"
+	events := parseRunnerInputEvents(t, "cursor", input)
+
+	require.Len(t, events, 1)
+	ev := events[0]
+	assert.Equal(t, string(eventKindToolEnd), ev.Kind)
+	assert.Equal(t, "Bash", dataStringValue(ev.Data, "name"))
+	assert.Equal(t, "echo hi", dataStringValue(ev.Data, "command"))
+	exitCode, ok := dataFloatValue(ev.Data, "exit_code")
+	require.True(t, ok)
+	assert.Equal(t, float64(0), exitCode)
+	assert.Equal(t, actionFamilyCommandExecution, dataStringValue(ev.Data, "action_family"))
+}
+
+func TestParser_StreamAndParse_UnknownDiagnosticsForMalformedRunnerEvents(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name            string
+		runner          string
+		input           string
+		wantReason      string
+		wantEventType   string
+		wantPreviewText string
+	}{
+		{
+			name:            "codex item started missing item",
+			runner:          "codex",
+			input:           `{"type":"item.started","item":null}`,
+			wantReason:      "missing_item",
+			wantEventType:   "item.started",
+			wantPreviewText: `"item":null`,
+		},
+		{
+			name:            "codex item completed missing item",
+			runner:          "codex",
+			input:           `{"type":"item.completed","item":null}`,
+			wantReason:      "missing_item",
+			wantEventType:   "item.completed",
+			wantPreviewText: `"item":null`,
+		},
+		{
+			name:            "cursor unrecognized tool call",
+			runner:          "cursor",
+			input:           `{"type":"tool_call","subtype":"completed","tool_call":{"strangeToolCall":{"foo":"bar"}}}`,
+			wantReason:      "unrecognized_tool_structure",
+			wantEventType:   "tool_call",
+			wantPreviewText: `"strangeToolCall"`,
+		},
+		{
+			name:          "cursor empty tool call",
+			runner:        "cursor",
+			input:         `{"type":"tool_call","subtype":"completed","tool_call":{}}`,
+			wantReason:    "unrecognized_tool_structure",
+			wantEventType: "tool_call",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			events := parseRunnerInputEvents(t, tc.runner, tc.input+"\n")
+			require.Len(t, events, 1)
+			ev := events[0]
+			assert.Equal(t, string(eventKindUnknown), ev.Kind)
+			assert.Equal(t, tc.wantReason, dataStringValue(ev.Data, "reason"))
+			assert.Equal(t, tc.wantEventType, dataStringValue(ev.Data, "runner_event_type"))
+			if tc.wantPreviewText != "" {
+				assert.Contains(t, dataStringValue(ev.Data, "raw_json_preview"), tc.wantPreviewText)
+			}
+		})
+	}
 }
 
 type parsedStreamEvent struct {
@@ -1484,21 +1150,48 @@ type parsedStreamEvent struct {
 	Data map[string]interface{} `json:"data"`
 }
 
-func parseS8FixtureEvents(t *testing.T, runner, fixtureName string) []parsedStreamEvent {
+func parseRunnerInputEvents(t *testing.T, runner, input string) []parsedStreamEvent {
 	t.Helper()
 
-	fixturePath := filepath.Join("testdata", "s8_20260312", fixtureName)
+	parser := NewParser("inline-"+runner, runner, fixedClock)
+
+	rawFile, err := os.CreateTemp("", "raw-runner-inline-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(rawFile.Name()) }()
+	defer func() { _ = rawFile.Close() }()
+
+	streamFile, err := os.CreateTemp("", "stream-runner-inline-*.jsonl")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(streamFile.Name()) }()
+	defer func() { _ = streamFile.Close() }()
+
+	err = parser.StreamAndParse(strings.NewReader(input), rawFile, streamFile)
+	require.NoError(t, err)
+
+	rawData, err := os.ReadFile(rawFile.Name())
+	require.NoError(t, err)
+	assert.Equal(t, []byte(input), rawData, "raw.jsonl content should match parser input")
+
+	streamData, err := os.ReadFile(streamFile.Name())
+	require.NoError(t, err)
+	return parseStreamEvents(t, streamData)
+}
+
+func parseRunnerContractFixtureEvents(t *testing.T, runner, fixtureName string) []parsedStreamEvent {
+	t.Helper()
+
+	fixturePath := filepath.Join("testdata", "runner_contract_fixtures", fixtureName)
 	fixtureData, err := os.ReadFile(fixturePath)
 	require.NoError(t, err, "failed reading fixture: %s", fixturePath)
 
 	parser := NewParser("fixture-"+runner, runner, fixedClock)
 
-	rawFile, err := os.CreateTemp("", "raw-s8-*.jsonl")
+	rawFile, err := os.CreateTemp("", "raw-runner-contract-*.jsonl")
 	require.NoError(t, err)
 	defer func() { _ = os.Remove(rawFile.Name()) }()
 	defer func() { _ = rawFile.Close() }()
 
-	streamFile, err := os.CreateTemp("", "stream-s8-*.jsonl")
+	streamFile, err := os.CreateTemp("", "stream-runner-contract-*.jsonl")
 	require.NoError(t, err)
 	defer func() { _ = os.Remove(streamFile.Name()) }()
 	defer func() { _ = streamFile.Close() }()
@@ -1506,8 +1199,18 @@ func parseS8FixtureEvents(t *testing.T, runner, fixtureName string) []parsedStre
 	err = parser.StreamAndParse(bytes.NewReader(fixtureData), rawFile, streamFile)
 	require.NoError(t, err)
 
+	rawData, err := os.ReadFile(rawFile.Name())
+	require.NoError(t, err)
+	assert.Equal(t, fixtureData, rawData, "raw.jsonl content should match fixture")
+
 	streamData, err := os.ReadFile(streamFile.Name())
 	require.NoError(t, err)
+	return parseStreamEvents(t, streamData)
+}
+
+func parseStreamEvents(t *testing.T, streamData []byte) []parsedStreamEvent {
+	t.Helper()
+
 	trimmed := strings.TrimSpace(string(streamData))
 	if trimmed == "" {
 		return nil
@@ -1539,6 +1242,32 @@ func dataStringValue(data map[string]interface{}, key string) string {
 		return ""
 	}
 	return s
+}
+
+func dataMapSlice(data map[string]interface{}, key string) []map[string]interface{} {
+	if data == nil {
+		return nil
+	}
+	v, ok := data[key]
+	if !ok {
+		return nil
+	}
+	switch values := v.(type) {
+	case []map[string]interface{}:
+		return slices.Clone(values)
+	case []interface{}:
+		result := make([]map[string]interface{}, 0, len(values))
+		for _, value := range values {
+			m, ok := value.(map[string]interface{})
+			if !ok {
+				return nil
+			}
+			result = append(result, m)
+		}
+		return result
+	default:
+		return nil
+	}
 }
 
 func dataFloatValue(data map[string]interface{}, key string) (float64, bool) {

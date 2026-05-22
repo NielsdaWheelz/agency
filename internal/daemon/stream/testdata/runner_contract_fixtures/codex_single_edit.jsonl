@@ -1,0 +1,11 @@
+{"type":"thread.started","thread_id":"019d01ac-7a88-75d1-b158-cd4869055314"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Appending `fixture-note: direct-edit` to `docs/notes.md` and then I’ll verify the file contents."}}
+{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc 'tail -n 20 docs/notes.md'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc 'tail -n 20 docs/notes.md'","aggregated_output":"fixture-notes\nalpha\nbeta\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"Editing [docs/notes.md](/private/tmp/agency-runner-contract-fixtures/workspace/docs/notes.md) now, then I’ll re-check the tail to confirm the append landed cleanly."}}
+{"type":"item.completed","item":{"id":"item_3","type":"file_change","changes":[{"path":"/private/tmp/agency-runner-contract-fixtures/workspace/docs/notes.md","kind":"update"}],"status":"completed"}}
+{"type":"item.started","item":{"id":"item_4","type":"command_execution","command":"/bin/zsh -lc 'tail -n 20 docs/notes.md'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_4","type":"command_execution","command":"/bin/zsh -lc 'tail -n 20 docs/notes.md'","aggregated_output":"fixture-notes\nalpha\nbeta\nfixture-note: direct-edit\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_5","type":"agent_message","text":"Appended `fixture-note: direct-edit` to [docs/notes.md](/private/tmp/agency-runner-contract-fixtures/workspace/docs/notes.md) and verified it is present at the end of the file."}}
+{"type":"turn.completed","usage":{"input_tokens":48722,"cached_input_tokens":36480,"output_tokens":584}}

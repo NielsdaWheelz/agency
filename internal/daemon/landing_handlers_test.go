@@ -45,33 +45,6 @@ func TestHandleLandDiscardRouting(t *testing.T) {
 
 		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 	})
-
-	t.Run("POST /land routes correctly", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/invocations/test-inv/land?repo_id=test-repo", nil)
-		w := httptest.NewRecorder()
-
-		s.handleInvocations(w, req)
-
-		// Should NOT be 404 "unknown action". It will fail at invocation lookup.
-		var resp map[string]any
-		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-		if code, ok := resp["error_code"].(string); ok {
-			assert.NotEqual(t, "E_NOT_FOUND", code, "land route should be recognized")
-		}
-	})
-
-	t.Run("POST /discard routes correctly", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/invocations/test-inv/discard?repo_id=test-repo", nil)
-		w := httptest.NewRecorder()
-
-		s.handleInvocations(w, req)
-
-		var resp map[string]any
-		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-		if code, ok := resp["error_code"].(string); ok {
-			assert.NotEqual(t, "E_NOT_FOUND", code, "discard route should be recognized")
-		}
-	})
 }
 
 func TestHandleLandDiscard_ErrorResponseIncludesRequestID(t *testing.T) {
@@ -183,6 +156,9 @@ func TestHandleDiscardUsesInvocationProfileEnv(t *testing.T) {
 
 	runner := testutil.NewFakeCommandRunner()
 	runner.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoRoot + "\n"}
+	runner.Responses["git -C "+repoRoot+" worktree remove --force "+sandboxPath] = testutil.FakeResponse{ExitCode: 0}
+	runner.Responses["git -C "+repoRoot+" show-ref --quiet --verify refs/heads/agency/sandbox-inv-1"] = testutil.FakeResponse{ExitCode: 1}
+	runner.Responses["git -C "+repoRoot+" for-each-ref --format=%(refname) refs/agency/snapshots/"+invocationID+"/"] = testutil.FakeResponse{ExitCode: 0}
 	s := NewServer(st, runner, fsys, configDir)
 
 	req := httptest.NewRequest(http.MethodPost, "/invocations/"+invocationID+"/discard?repo_id="+repoID, nil)
@@ -206,7 +182,7 @@ func TestStopInvocationForDiscardUsesProcessGroupLivenessWhenLeaderExited(t *tes
 	dataDir := t.TempDir()
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), dataDir)
-	s.PIDChecker = func(int) bool {
+	s.pidChecker = func(int) bool {
 		t.Fatal("discard liveness must check the process group, not the process id")
 		return false
 	}

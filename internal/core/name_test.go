@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -73,7 +72,6 @@ func TestValidateName(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -82,7 +80,9 @@ func TestValidateName(t *testing.T) {
 			if tt.wantErr {
 				require.Error(t, err)
 				gotCode := errors.GetCode(err)
-				assert.Equal(t, tt.wantCode, gotCode)
+				if gotCode != tt.wantCode {
+					t.Fatalf("error code = %s, want %s", gotCode, tt.wantCode)
+				}
 			} else {
 				require.NoError(t, err)
 			}
@@ -102,5 +102,7 @@ func TestValidateName_ErrorDetails(t *testing.T) {
 
 	require.NotNil(t, ae.Details, "expected error details")
 
-	assert.Equal(t, "Bad-Name", ae.Details["name"])
+	if got := ae.Details["name"]; got != "Bad-Name" {
+		t.Fatalf("error detail name = %q, want %q", got, "Bad-Name")
+	}
 }

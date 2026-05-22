@@ -34,24 +34,11 @@ func (s *Server) handleGetInvocationLogs(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	var logPath string
-	switch params.Kind {
-	case "stderr":
-		logPath = s.readableInvocationLogPath(record.RepoID, record.InvocationID, "stderr")
-	case "stream":
-		logPath = s.readableInvocationLogPath(record.RepoID, record.InvocationID, "stream")
-	case "hooks":
-		logPath = s.readableInvocationLogPath(record.RepoID, record.InvocationID, "hooks")
-	case "terminal":
-		logPath = s.readableInvocationLogPath(record.RepoID, record.InvocationID, "terminal")
-	default:
-		logPath = s.readableInvocationLogPath(record.RepoID, record.InvocationID, "raw")
-		params.Kind = "raw"
-	}
+	logPath := s.readableInvocationLogPath(record.RepoID, record.InvocationID, params.Kind)
 
 	offsetData, err := s.readLogFileAtOffset(logPath, params.Offset, params.Limit)
 	if err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", err.Error(), "", nil)
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), err.Error(), "", nil)
 		return
 	}
 	offsetData.Kind = params.Kind

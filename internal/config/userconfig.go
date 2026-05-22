@@ -130,26 +130,6 @@ func parseUserConfigStrict(raw map[string]json.RawMessage) (UserConfig, error) {
 			"execution_profile": true,
 		}
 		for key := range defaultsMap {
-			switch key {
-			case "model":
-				return UserConfig{}, errors.NewWithDetails(
-					errors.EInvalidUserConfig,
-					"defaults.model is not supported; use runner_defaults.<runner>.model",
-					map[string]string{"hint": "move the model under runner_defaults.<runner>.model"},
-				)
-			case "effort":
-				return UserConfig{}, errors.NewWithDetails(
-					errors.EInvalidUserConfig,
-					"defaults.effort is not supported; use runner_defaults.<runner>.effort",
-					map[string]string{"hint": "move the effort under runner_defaults.<runner>.effort"},
-				)
-			case "thinking":
-				return UserConfig{}, errors.NewWithDetails(
-					errors.EInvalidUserConfig,
-					"defaults.thinking is not supported; select a thinking-capable model via runner_defaults.<runner>.model",
-					map[string]string{"hint": "pick a thinking-capable model in runner_defaults.<runner>.model"},
-				)
-			}
 			if !allowedDefaultKeys[key] {
 				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults contains unknown field: "+key)
 			}

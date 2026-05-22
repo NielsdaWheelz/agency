@@ -95,8 +95,8 @@ func (s *Store) EnsureIntegrationWorktreeDir(repoID, worktreeID string) (string,
 	worktreeDir := s.IntegrationWorktreeDir(repoID, worktreeID)
 
 	// Ensure parent directories exist (integration_worktrees/)
-	parentDir := s.IntegrationWorktreesDir(repoID)
-	if err := s.FS.MkdirAll(parentDir, 0o700); err != nil {
+	parentDir := s.integrationWorktreesDir(repoID)
+	if err := s.fsys.MkdirAll(parentDir, 0o700); err != nil {
 		return "", errors.WrapWithDetails(
 			errors.EWorktreeCreateFailed,
 			"failed to create integration worktrees directory",
@@ -129,7 +129,7 @@ func (s *Store) EnsureIntegrationWorktreeDir(repoID, worktreeID string) (string,
 func (s *Store) WriteIntegrationWorktreeMeta(repoID, worktreeID string, meta *IntegrationWorktreeMeta) error {
 	metaPath := s.IntegrationWorktreeMetaPath(repoID, worktreeID)
 
-	if err := fs.WriteJSONAtomic(metaPath, meta, 0o600); err != nil {
+	if err := fs.WriteJSONAtomic(s.fsys, metaPath, meta, 0o600); err != nil {
 		return errors.WrapWithDetails(
 			errors.EMetaWriteFailed,
 			"failed to write integration worktree meta.json atomically",
@@ -155,7 +155,7 @@ func (s *Store) UpdateIntegrationWorktreeMeta(repoID, worktreeID string, updateF
 	updateFn(meta)
 
 	// Write back atomically
-	if err := fs.WriteJSONAtomic(metaPath, meta, 0o600); err != nil {
+	if err := fs.WriteJSONAtomic(s.fsys, metaPath, meta, 0o600); err != nil {
 		return errors.WrapWithDetails(
 			errors.EMetaWriteFailed,
 			"failed to write integration worktree meta.json atomically",
@@ -173,7 +173,7 @@ func (s *Store) UpdateIntegrationWorktreeMeta(repoID, worktreeID string, updateF
 func (s *Store) ReadIntegrationWorktreeMeta(repoID, worktreeID string) (*IntegrationWorktreeMeta, error) {
 	metaPath := s.IntegrationWorktreeMetaPath(repoID, worktreeID)
 
-	data, err := s.FS.ReadFile(metaPath)
+	data, err := s.fsys.ReadFile(metaPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, errors.NewWithDetails(

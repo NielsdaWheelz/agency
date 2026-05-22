@@ -12,7 +12,7 @@ func paginateWorktrees(all []WorktreeDTO, cursor string, limit int) ([]WorktreeD
 
 	startIdx := 0
 	if cursor != "" {
-		var c WorktreeCursor
+		var c worktreeCursor
 		decoded, err := base64.StdEncoding.DecodeString(cursor)
 		if err == nil && json.Unmarshal(decoded, &c) == nil {
 			for i, w := range all {
@@ -34,7 +34,7 @@ func paginateWorktrees(all []WorktreeDTO, cursor string, limit int) ([]WorktreeD
 	var nextCursor string
 	if endIdx < len(all) {
 		last := result[len(result)-1]
-		c := WorktreeCursor{LastUsedAt: last.LastUsedAt, WorktreeID: last.WorktreeID}
+		c := worktreeCursor{LastUsedAt: last.LastUsedAt, WorktreeID: last.WorktreeID}
 		data, _ := json.Marshal(c)
 		nextCursor = base64.StdEncoding.EncodeToString(data)
 	}
@@ -49,7 +49,7 @@ func paginateInvocations(all []InvocationDTO, cursor string, limit int) ([]Invoc
 
 	startIdx := 0
 	if cursor != "" {
-		var c InvocationCursor
+		var c invocationCursor
 		decoded, err := base64.StdEncoding.DecodeString(cursor)
 		if err == nil && json.Unmarshal(decoded, &c) == nil {
 			for i, inv := range all {
@@ -71,7 +71,7 @@ func paginateInvocations(all []InvocationDTO, cursor string, limit int) ([]Invoc
 	var nextCursor string
 	if endIdx < len(all) {
 		last := result[len(result)-1]
-		c := InvocationCursor{StartedAt: last.StartedAt, InvocationID: last.InvocationID}
+		c := invocationCursor{StartedAt: last.StartedAt, InvocationID: last.InvocationID}
 		data, _ := json.Marshal(c)
 		nextCursor = base64.StdEncoding.EncodeToString(data)
 	}
@@ -86,7 +86,7 @@ func paginateCheckpoints(all []CheckpointDTO, cursor string, limit int) ([]Check
 
 	startIdx := 0
 	if cursor != "" {
-		var c CheckpointCursor
+		var c checkpointCursor
 		decoded, err := base64.StdEncoding.DecodeString(cursor)
 		if err == nil && json.Unmarshal(decoded, &c) == nil {
 			for i, cp := range all {
@@ -108,7 +108,7 @@ func paginateCheckpoints(all []CheckpointDTO, cursor string, limit int) ([]Check
 	var nextCursor string
 	if endIdx < len(all) {
 		last := result[len(result)-1]
-		c := CheckpointCursor{ID: last.ID}
+		c := checkpointCursor{ID: last.ID}
 		data, _ := json.Marshal(c)
 		nextCursor = base64.StdEncoding.EncodeToString(data)
 	}

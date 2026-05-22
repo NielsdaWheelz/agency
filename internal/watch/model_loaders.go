@@ -7,7 +7,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
-	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 )
 
 func (m *model) loadWorkspaceSnapshotCmd() tea.Cmd {
@@ -41,11 +40,9 @@ func (m *model) loadReviewCmd() tea.Cmd {
 	repoID := m.selectedRepoID
 	turnID := m.reviewTurnID
 	return func() tea.Msg {
-		diffResult, err := client.GetInvocationDiff(ctx, invocationID, repoID, daemonclient.GetInvocationDiffOpts{
-			IncludePatch:       true,
-			MaxPatchBytes:      5 * 1024 * 1024,
-			IncludeUncommitted: true,
-			TurnID:             turnID,
+		diffResult, err := client.GetInvocationDiff(ctx, invocationID, repoID, daemon.GetDiffParams{
+			MaxPatchBytes: 5 * 1024 * 1024,
+			TurnID:        turnID,
 		})
 		if err != nil {
 			return reviewLoadedMsg{

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 
 	agencyerrors "github.com/NielsdaWheelz/agency/internal/errors"
@@ -42,8 +43,8 @@ func (s *Server) writeControlPlaneSuccess(w http.ResponseWriter, invocationID st
 		WorktreeName:     s.worktreeNameForResponse(repoID, meta.IntegrationWorktreeID),
 		ExecutionProfile: meta.ExecutionProfile,
 		CheckoutRoot:     meta.CheckoutRoot,
-		CustomEnvKeys:    append([]string(nil), meta.CustomEnvKeys...),
-		DaemonInstanceID: s.InstanceID,
+		CustomEnvKeys:    slices.Clone(meta.CustomEnvKeys),
+		DaemonInstanceID: s.instanceID,
 		AlreadyRunning:   alreadyRunning,
 		LogPaths:         s.invocationLogPaths(repoID, invocationID),
 		RequestID:        requestID,
@@ -85,9 +86,9 @@ func (s *Server) writeHeadedSuccess(w http.ResponseWriter, invocationID string, 
 		WorktreeName:     s.worktreeNameForResponse(repoID, meta.IntegrationWorktreeID),
 		ExecutionProfile: meta.ExecutionProfile,
 		CheckoutRoot:     meta.CheckoutRoot,
-		CustomEnvKeys:    append([]string(nil), meta.CustomEnvKeys...),
+		CustomEnvKeys:    slices.Clone(meta.CustomEnvKeys),
 		TmuxSession:      meta.TmuxSession,
-		DaemonInstanceID: s.InstanceID,
+		DaemonInstanceID: s.instanceID,
 		AlreadyRunning:   alreadyRunning,
 		LogPaths:         s.invocationLogPaths(repoID, invocationID),
 		RequestID:        requestID,
@@ -109,20 +110,6 @@ func (s *Server) writeFollowUpError(w http.ResponseWriter, status int, requestID
 		ErrorCode:       code,
 		Message:         message,
 		Hint:            hint,
-	})
-}
-
-func (s *Server) writeFollowUpSuccessWithDelivery(w http.ResponseWriter, invocationID, timelineEntryID, clientRequestID, requestID string, alreadyApplied bool, deliveryMode string) {
-	s.writeJSON(w, http.StatusOK, ControlPlaneFollowUpResponse{
-		OK:              true,
-		InvocationID:    invocationID,
-		TimelineEntry:   timelineEntryID,
-		AlreadyApplied:  alreadyApplied,
-		DeliveryMode:    deliveryMode,
-		RequestID:       requestID,
-		APIVersion:      APIVersion,
-		BuildVersion:    daemonBuildVersion(),
-		ClientRequestID: clientRequestID,
 	})
 }
 

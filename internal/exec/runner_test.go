@@ -84,7 +84,7 @@ func TestStartProcess_SignalGroupTerminatesProcess(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, proc.SignalGroup(syscall.SIGKILL))
+	require.NoError(t, syscall.Kill(-proc.PGID, syscall.SIGKILL))
 	exit, waitErr := proc.WaitExit()
 	require.NoError(t, waitErr)
 	assert.NotEqual(t, 0, exit.ExitCode)

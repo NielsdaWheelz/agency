@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
 // AgentPathOpts holds options for the agent path command.
@@ -52,45 +54,17 @@ func AgentPath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 type AgentOpenOpts struct {
 	InvocationRef   string
 	RepoRef         string
-	Editor          string // override for tests; empty uses config/env/default
 	DataDirOverride string
 }
 
 // AgentOpen opens the sandbox directory in the configured editor.
 func AgentOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentOpenOpts, stdout, stderr io.Writer) error {
-	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
+	ns, sandboxPath, err := resolvePresentAgentSandbox(ctx, cr, fsys, cwd, opts.DataDirOverride, "agent open", opts.InvocationRef, opts.RepoRef)
 	if err != nil {
 		return err
 	}
 
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "agent open",
-	})
-	if err != nil {
-		return err
-	}
-
-	invocation, err := ns.client.GetInvocation(ctx, opts.InvocationRef, repoCtx.RepoID)
-	if err != nil {
-		return translateNavigationError(err, "invocation")
-	}
-	sandboxPath := invocation.Data.SandboxPath
-
-	if _, statErr := os.Stat(sandboxPath); os.IsNotExist(statErr) {
-		return errors.NewWithDetails(
-			errors.ESandboxMissing,
-			"sandbox no longer exists",
-			map[string]string{
-				"invocation_id": invocation.Data.InvocationID,
-				"sandbox_path":  sandboxPath,
-				"hint":          "sandbox was removed after landing or discarding",
-			},
-		)
-	}
-
-	editorCmd, err := resolveEditorCmdWithOptionalOverride(cr, fsys, ns.dirs.ConfigDir, opts.Editor)
+	editorCmd, err := resolveEditorCmdWithOptionalOverride(cr, fsys, ns.dirs.ConfigDir, "")
 	if err != nil {
 		return err
 	}
@@ -117,36 +91,9 @@ type AgentShellOpts struct {
 
 // AgentShell opens a shell with cwd set to the daemon-resolved sandbox path.
 func AgentShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentShellOpts, stdout, stderr io.Writer) error {
-	ns, err := setupDaemonNav(ctx, fsys, "")
+	_, sandboxPath, err := resolvePresentAgentSandbox(ctx, cr, fsys, cwd, "", "agent shell", opts.InvocationRef, opts.RepoRef)
 	if err != nil {
 		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "agent shell",
-	})
-	if err != nil {
-		return err
-	}
-
-	invocation, err := ns.client.GetInvocation(ctx, opts.InvocationRef, repoCtx.RepoID)
-	if err != nil {
-		return translateNavigationError(err, "invocation")
-	}
-	sandboxPath := invocation.Data.SandboxPath
-
-	if _, statErr := os.Stat(sandboxPath); os.IsNotExist(statErr) {
-		return errors.NewWithDetails(
-			errors.ESandboxMissing,
-			"sandbox no longer exists",
-			map[string]string{
-				"invocation_id": invocation.Data.InvocationID,
-				"sandbox_path":  sandboxPath,
-				"hint":          "sandbox was removed after landing or discarding",
-			},
-		)
 	}
 
 	shell := os.Getenv("SHELL")
@@ -168,13 +115,49 @@ func AgentShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	return nil
 }
 
+func resolvePresentAgentSandbox(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd, dataDirOverride, cmdName, invocationRef, repoRef string) (*daemonNavSetup, string, error) {
+	ns, err := setupDaemonNav(ctx, fsys, dataDirOverride)
+	if err != nil {
+		return nil, "", err
+	}
+
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
+		RepoRef:       repoRef,
+		AllowAllRepos: false,
+		CmdName:       cmdName,
+	})
+	if err != nil {
+		return nil, "", err
+	}
+
+	invocation, err := ns.client.GetInvocation(ctx, invocationRef, repoCtx.RepoID)
+	if err != nil {
+		return nil, "", translateNavigationError(err, "invocation")
+	}
+
+	sandboxPath := invocation.Data.SandboxPath
+	if _, statErr := os.Stat(sandboxPath); os.IsNotExist(statErr) {
+		return nil, "", errors.NewWithDetails(
+			errors.ESandboxMissing,
+			"sandbox no longer exists",
+			map[string]string{
+				"invocation_id": invocation.Data.InvocationID,
+				"sandbox_path":  sandboxPath,
+				"hint":          "sandbox was removed after landing or discarding",
+			},
+		)
+	}
+
+	return ns, sandboxPath, nil
+}
+
 // AgentAttachOpts holds options for the agent attach command.
 type AgentAttachOpts struct {
 	InvocationRef string
 	RepoRef       string
 
 	IsInteractive   func() bool
-	TmuxAttachFn    func(sessionName string) error
+	TmuxAttachFn    func(context.Context, string) error
 	DataDirOverride string
 }
 
@@ -242,7 +225,7 @@ func AgentAttach(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 	if attachFn == nil {
 		attachFn = realTmuxAttach
 	}
-	return attachFn(session.Data.TmuxSession)
+	return attachFn(ctx, session.Data.TmuxSession)
 }
 
 // AgentClients prints the currently connected tmux clients for a headed invocation session.
@@ -310,7 +293,13 @@ func AgentClients(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 }
 
 func translateNavigationError(err error, targetKind string) error {
-	dre, isDaemonErr := daemonclient.AsDaemonReadError(err)
+	var dre *daemonclient.DaemonReadError
+	isDaemonErr := stderrors.As(err, &dre)
+	ae, _ := errors.AsAgencyError(err)
+	hint := ""
+	if ae != nil {
+		hint = ae.Details["hint"]
+	}
 
 	code := errors.GetCode(err)
 	if code == errors.EWorktreeIDAmbiguous || code == errors.EInvocationIDAmbiguous {
@@ -325,12 +314,11 @@ func translateNavigationError(err error, targetKind string) error {
 				details["candidates"] = string(candidatesJSON)
 				details["candidate_count"] = strconv.Itoa(len(candidates))
 			}
-			if dre.Hint != "" {
-				details["hint"] = dre.Hint
+			if hint != "" {
+				details["hint"] = hint
 			}
 		}
 
-		ae, _ := errors.AsAgencyError(err)
 		msg := "ambiguous target"
 		if ae != nil {
 			msg = ae.Msg
@@ -339,31 +327,53 @@ func translateNavigationError(err error, targetKind string) error {
 		return errors.NewWithDetails(errors.EAmbiguous, msg, details)
 	}
 
-	if isDaemonErr && dre.Hint != "" {
-		return errors.NewWithDetails(code, dre.AgencyErr.Msg, map[string]string{"hint": dre.Hint})
+	if isDaemonErr && hint != "" {
+		msg := err.Error()
+		if ae != nil {
+			msg = ae.Msg
+		}
+		return errors.NewWithDetails(code, msg, map[string]string{"hint": hint})
 	}
 
 	return err
 }
 
 // realTmuxAttach performs the canonical tmux client handoff with stdin/stdout/stderr connected.
-func realTmuxAttach(sessionName string) error {
-	args := []string{"attach-session", "-t", sessionName}
-	if os.Getenv("TMUX") != "" {
-		args = []string{"switch-client", "-t", sessionName}
-	}
-	result, err := exec.RunAttached(context.Background(), "tmux", args, exec.AttachedRunOpts{
-		Stdin:  os.Stdin,
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
+func realTmuxAttach(ctx context.Context, sessionName string) error {
+	client := tmux.NewExecClient(exec.NewRealRunner())
+	return client.AttachSession(ctx, sessionName, tmux.AttachOpts{
+		Stdin:      os.Stdin,
+		Stdout:     os.Stdout,
+		Stderr:     os.Stderr,
+		InsideTmux: os.Getenv("TMUX") != "",
 	})
-	if err != nil {
-		return err
+}
+
+type headedAttachOpts struct {
+	AttachFn    func(context.Context, string) error
+	Stdout      io.Writer
+	Stderr      io.Writer
+	SessionName string
+	Invocation  string
+	RepoID      string
+	Banner      bool
+	LaterHint   bool
+}
+
+func attachHeadedSession(ctx context.Context, opts headedAttachOpts) {
+	if opts.Banner {
+		_, _ = fmt.Fprintln(opts.Stdout, "\nAttaching to tmux session... (detach with Ctrl+b, d)")
 	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("tmux command exited with code %d", result.ExitCode)
+	attachFn := opts.AttachFn
+	if attachFn == nil {
+		attachFn = realTmuxAttach
 	}
-	return nil
+	if err := attachFn(ctx, opts.SessionName); err != nil {
+		_, _ = fmt.Fprintf(opts.Stderr, "warning: could not attach to tmux session: %v\n", err)
+		if opts.LaterHint {
+			_, _ = fmt.Fprintf(opts.Stderr, "Use 'agency agent %s attach --repo %s' to attach later.\n", opts.Invocation, opts.RepoID)
+		}
+	}
 }
 
 // isTerminal returns true if the given file descriptor is a terminal.

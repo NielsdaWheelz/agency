@@ -6,9 +6,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
-	"sort"
+	"slices"
 	"strings"
 	"syscall"
 )
@@ -87,21 +88,20 @@ type CommandRunner interface {
 	LookPath(file string) (string, error)
 }
 
-// RealRunner is the production implementation of CommandRunner using os/exec.
-type RealRunner struct{}
+type realRunner struct{}
 
-// NewRealRunner creates a new RealRunner.
-func NewRealRunner() *RealRunner {
-	return &RealRunner{}
+// NewRealRunner creates a production command runner.
+func NewRealRunner() CommandRunner {
+	return &realRunner{}
 }
 
 // LookPath searches for an executable using the system PATH.
-func (r *RealRunner) LookPath(file string) (string, error) {
+func (r *realRunner) LookPath(file string) (string, error) {
 	return exec.LookPath(file)
 }
 
 // Run executes the command and captures stdout/stderr.
-func (r *RealRunner) Run(ctx context.Context, name string, args []string, opts RunOpts) (CmdResult, error) {
+func (r *realRunner) Run(ctx context.Context, name string, args []string, opts RunOpts) (CmdResult, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 
 	var stdout, stderr bytes.Buffer
@@ -139,13 +139,13 @@ func (r *RealRunner) Run(ctx context.Context, name string, args []string, opts R
 
 // Exit codes for special conditions.
 const (
-	ExitTimeout   = 124 // command timed out
-	ExitCanceled  = 125 // context was canceled
-	ExitStartFail = -1  // command failed to start
+	exitTimeout   = 124 // command timed out
+	exitCanceled  = 125 // context was canceled
+	exitStartFail = -1  // command failed to start
 )
 
 // RunAttached executes a command with stdio passthrough.
-// Exit code semantics mirror RunScript/Run:
+// Exit code semantics mirror Run:
 // - process exits with code N: ExitCode=N, err=nil
 // - command failed to start: ExitCode=-1, err!=nil
 // - context deadline exceeded: ExitCode=124, err=nil
@@ -168,11 +168,11 @@ func RunAttached(ctx context.Context, name string, args []string, opts AttachedR
 	result := CmdResult{}
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			result.ExitCode = ExitTimeout
+			result.ExitCode = exitTimeout
 			return result, nil
 		}
 		if errors.Is(ctx.Err(), context.Canceled) {
-			result.ExitCode = ExitCanceled
+			result.ExitCode = exitCanceled
 			return result, context.Canceled
 		}
 		var exitErr *exec.ExitError
@@ -180,7 +180,7 @@ func RunAttached(ctx context.Context, name string, args []string, opts AttachedR
 			result.ExitCode = exitErr.ExitCode()
 			return result, nil
 		}
-		result.ExitCode = ExitStartFail
+		result.ExitCode = exitStartFail
 		return result, err
 	}
 
@@ -211,7 +211,7 @@ func StartProcess(ctx context.Context, name string, args []string, opts StartOpt
 
 	baseEnv := os.Environ()
 	if len(opts.EnvList) > 0 {
-		baseEnv = append([]string(nil), opts.EnvList...)
+		baseEnv = slices.Clone(opts.EnvList)
 	}
 	if len(opts.Env) > 0 {
 		cmd.Env = MergeEnv(baseEnv, opts.Env)
@@ -269,11 +269,11 @@ func (p *StartedProcess) WaitExit() (ProcessExit, error) {
 	err := p.cmd.Wait()
 	if err != nil {
 		if errors.Is(p.ctx.Err(), context.DeadlineExceeded) {
-			result.ExitCode = ExitTimeout
+			result.ExitCode = exitTimeout
 			return result, nil
 		}
 		if errors.Is(p.ctx.Err(), context.Canceled) {
-			result.ExitCode = ExitCanceled
+			result.ExitCode = exitCanceled
 			return result, context.Canceled
 		}
 		var exitErr *exec.ExitError
@@ -284,24 +284,12 @@ func (p *StartedProcess) WaitExit() (ProcessExit, error) {
 			}
 			return result, nil
 		}
-		result.ExitCode = ExitStartFail
+		result.ExitCode = exitStartFail
 		return result, err
 	}
 
 	result.ExitCode = 0
 	return result, nil
-}
-
-// SignalGroup sends a signal to the process group when available.
-// Falls back to signaling the PID directly when no PGID is set.
-func (p *StartedProcess) SignalGroup(sig syscall.Signal) error {
-	if p.PGID > 0 {
-		return syscall.Kill(-p.PGID, sig)
-	}
-	if p.PID > 0 {
-		return syscall.Kill(p.PID, sig)
-	}
-	return errors.New("process has no pid")
 }
 
 // MergeEnv applies overlay maps on top of a base environment, deterministically:
@@ -323,11 +311,7 @@ func MergeEnv(baseEnv []string, overlays ...map[string]string) []string {
 		}
 	}
 
-	keys := make([]string, 0, len(merged))
-	for k := range merged {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+	keys := slices.Sorted(maps.Keys(merged))
 
 	out := make([]string, 0, len(keys))
 	for _, k := range keys {

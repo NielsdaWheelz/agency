@@ -6,7 +6,7 @@ import (
 )
 
 func (s *Server) unresolvedInvocationsForWorktree(repoID, worktreeID string) ([]store.InvocationRecord, error) {
-	records, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
+	records, err := s.store.ScanInvocationsForRepo(repoID)
 	if err != nil {
 		return nil, errors.Wrap(errors.EInternal, "failed to scan invocations", err)
 	}

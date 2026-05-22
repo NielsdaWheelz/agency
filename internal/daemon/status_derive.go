@@ -9,11 +9,11 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
-// StallThreshold is the duration after which an invocation with no output is considered stalled.
-const StallThreshold = 5 * time.Minute
+// stallThreshold is the duration after which an invocation with no output is considered stalled.
+const stallThreshold = 5 * time.Minute
 
-// InvocationMetaToDTO converts an InvocationMeta to an InvocationDTO.
-func InvocationMetaToDTO(
+// invocationMetaToDTO converts an InvocationMeta to an InvocationDTO.
+func invocationMetaToDTO(
 	meta *store.InvocationMeta,
 	repoID string,
 	logsDir string,
@@ -23,97 +23,97 @@ func InvocationMetaToDTO(
 ) InvocationDTO {
 	flags := make([]string, 0, 4)
 	if meta.Flags.NeedsAttention {
-		flags = append(flags, AttentionFlagNeedsAttention)
+		flags = append(flags, attentionFlagNeedsAttention)
 	}
 	if meta.Flags.Orphaned {
-		flags = append(flags, AttentionFlagOrphaned)
+		flags = append(flags, attentionFlagOrphaned)
 	}
 	if meta.Status == store.InvocationStatusRunning && meta.LastOutputAt != "" {
 		lastOutput, err := time.Parse(time.RFC3339, meta.LastOutputAt)
-		if err == nil && now.Sub(lastOutput) > StallThreshold {
-			flags = append(flags, AttentionFlagStalled)
+		if err == nil && now.Sub(lastOutput) > stallThreshold {
+			flags = append(flags, attentionFlagStalled)
 		}
 	}
 	if meta.Status == store.InvocationStatusFinished &&
 		meta.LandingStatus != store.LandingStatusLanded &&
 		meta.LandingStatus != store.LandingStatusDiscarded {
-		flags = append(flags, AttentionFlagLandable)
+		flags = append(flags, attentionFlagLandable)
 	}
 
 	runnerState, runnerReason, _, runnerValid := projectRunnerStatus(runnerMeta, runnerStatusErr)
 
-	state := InvocationStateStarting
+	state := invocationStateStarting
 	reason := ""
-	sortKey := SortKeyStarting
+	sortKey := sortKeyStarting
 
 	switch meta.Status {
 	case store.InvocationStatusStarting:
-		state = InvocationStateStarting
-		sortKey = SortKeyStarting
+		state = invocationStateStarting
+		sortKey = sortKeyStarting
 	case store.InvocationStatusStopping:
-		state = InvocationStateStopping
-		sortKey = SortKeyStopping
+		state = invocationStateStopping
+		sortKey = sortKeyStopping
 	case store.InvocationStatusFailed:
-		state = InvocationStateFailed
+		state = invocationStateFailed
 		reason = strings.TrimSpace(meta.FailureReason)
-		sortKey = SortKeyFailed
+		sortKey = sortKeyFailed
 	case store.InvocationStatusRunning:
-		state = InvocationStateRunning
-		sortKey = SortKeyRunning
+		state = invocationStateRunning
+		sortKey = sortKeyRunning
 		switch runnerState {
 		case string(runnerstatus.StateWaiting):
-			state = InvocationStateWaiting
+			state = invocationStateWaiting
 			reason = runnerReason
-			sortKey = SortKeyWaiting
+			sortKey = sortKeyWaiting
 		case string(runnerstatus.StateFailed):
-			state = InvocationStateFailed
+			state = invocationStateFailed
 			reason = firstNonEmpty(runnerReason, strings.TrimSpace(meta.FailureReason))
-			sortKey = SortKeyFailed
+			sortKey = sortKeyFailed
 		}
 	case store.InvocationStatusFinished:
 		switch {
 		case runnerStatusErr != nil:
-			state = InvocationStateFailed
+			state = invocationStateFailed
 			reason = "runner_status_unreadable"
-			sortKey = SortKeyFailed
+			sortKey = sortKeyFailed
 		case runnerMeta == nil:
-			state = InvocationStateFailed
+			state = invocationStateFailed
 			reason = "runner_status_missing"
-			sortKey = SortKeyFailed
+			sortKey = sortKeyFailed
 		case runnerMeta.SchemaVersion != runnerstatus.SchemaVersion:
-			state = InvocationStateFailed
+			state = invocationStateFailed
 			reason = "runner_status_invalid"
-			sortKey = SortKeyFailed
+			sortKey = sortKeyFailed
 		case !runnerValid:
-			state = InvocationStateFailed
+			state = invocationStateFailed
 			reason = "runner_status_invalid"
-			sortKey = SortKeyFailed
+			sortKey = sortKeyFailed
 		case runnerState == string(runnerstatus.StateSucceeded):
-			state = InvocationStateSucceeded
-			sortKey = SortKeySucceeded
+			state = invocationStateSucceeded
+			sortKey = sortKeySucceeded
 		case runnerState == string(runnerstatus.StateWaiting):
-			state = InvocationStateWaiting
+			state = invocationStateWaiting
 			reason = runnerReason
-			sortKey = SortKeyWaiting
+			sortKey = sortKeyWaiting
 		case runnerState == string(runnerstatus.StateFailed):
-			state = InvocationStateFailed
+			state = invocationStateFailed
 			reason = firstNonEmpty(runnerReason, "runner_failed")
-			sortKey = SortKeyFailed
+			sortKey = sortKeyFailed
 		default:
-			state = InvocationStateFailed
+			state = invocationStateFailed
 			reason = "invalid_runner_state"
-			sortKey = SortKeyFailed
+			sortKey = sortKeyFailed
 		}
 	}
 
 	if meta.LandingStatus == store.LandingStatusLanded {
-		sortKey = SortKeyLanded
+		sortKey = sortKeyLanded
 	}
 	if meta.LandingStatus == store.LandingStatusDiscarded {
-		sortKey = SortKeyDiscarded
+		sortKey = sortKeyDiscarded
 	}
-	if meta.Flags.NeedsAttention && sortKey > SortKeyNeedsAttention {
-		sortKey = SortKeyNeedsAttention
+	if meta.Flags.NeedsAttention && sortKey > sortKeyNeedsAttention {
+		sortKey = sortKeyNeedsAttention
 	}
 
 	return InvocationDTO{
@@ -155,8 +155,8 @@ func projectRunnerStatus(
 	return string(runnerMeta.State), strings.TrimSpace(runnerMeta.Reason), strings.TrimSpace(runnerMeta.Summary), true
 }
 
-// WorktreeMetaToDTO converts an IntegrationWorktreeMeta and optional merge state to a WorktreeDTO.
-func WorktreeMetaToDTO(meta *store.IntegrationWorktreeMeta, mergeMeta *store.IntegrationWorktreeMergeMeta) WorktreeDTO {
+// worktreeMetaToDTO converts an IntegrationWorktreeMeta and optional merge state to a WorktreeDTO.
+func worktreeMetaToDTO(meta *store.IntegrationWorktreeMeta, mergeMeta *store.IntegrationWorktreeMergeMeta) WorktreeDTO {
 	return WorktreeDTO{
 		WorktreeID:       meta.WorktreeID,
 		WorktreeName:     strings.TrimSpace(meta.Name),
@@ -169,11 +169,11 @@ func WorktreeMetaToDTO(meta *store.IntegrationWorktreeMeta, mergeMeta *store.Int
 		State:            string(meta.State),
 		CreatedAt:        meta.CreatedAt,
 		LastUsedAt:       meta.LastUsedAt,
-		Merge:            WorktreeMergeMetaToDTO(mergeMeta),
+		Merge:            worktreeMergeMetaToDTO(mergeMeta),
 	}
 }
 
-func invocationPRSyncEligible(state InvocationState, landingStatus store.LandingStatus) bool {
+func invocationPRSyncEligible(state invocationState, landingStatus store.LandingStatus) bool {
 	switch landingStatus {
 	case store.LandingStatusLanded:
 		return true
@@ -182,21 +182,21 @@ func invocationPRSyncEligible(state InvocationState, landingStatus store.Landing
 	}
 
 	switch state {
-	case InvocationStateSucceeded:
+	case invocationStateSucceeded:
 		return true
-	case InvocationStateStarting,
-		InvocationStateRunning,
-		InvocationStateWaiting,
-		InvocationStateStopping,
-		InvocationStateFailed:
+	case invocationStateStarting,
+		invocationStateRunning,
+		invocationStateWaiting,
+		invocationStateStopping,
+		invocationStateFailed:
 		return false
 	default:
 		return false
 	}
 }
 
-// WorktreeMergeMetaToDTO converts durable merge state to the canonical daemon read shape.
-func WorktreeMergeMetaToDTO(meta *store.IntegrationWorktreeMergeMeta) *WorktreeMergeDTO {
+// worktreeMergeMetaToDTO converts durable merge state to the canonical daemon read shape.
+func worktreeMergeMetaToDTO(meta *store.IntegrationWorktreeMergeMeta) *WorktreeMergeDTO {
 	if meta == nil {
 		return nil
 	}

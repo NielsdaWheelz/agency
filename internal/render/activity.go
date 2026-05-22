@@ -3,6 +3,7 @@ package render
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -22,7 +23,7 @@ func NormalizeActivityKind(kind string) string {
 	return normalized
 }
 
-// ActivitySummaryText returns summary text with a stable fallback per kind.
+// ActivitySummaryText returns summary text with a stable default per kind.
 func ActivitySummaryText(kind, summary string) string {
 	if trimmed := strings.TrimSpace(summary); trimmed != "" {
 		return trimmed
@@ -104,9 +105,7 @@ func FormatChangedPathSummary(paths []string, totalCount int, trimmed bool) stri
 	return fmt.Sprintf("%s, ... (+%d more)", joined, remaining)
 }
 
-// TimelineContentBlock is the typed shape used by transcript and daemon
-// projections after decoding raw timeline payload content blocks.
-type TimelineContentBlock struct {
+type timelineContentBlock struct {
 	Type    string
 	Text    string
 	Content string
@@ -114,19 +113,17 @@ type TimelineContentBlock struct {
 	Input   interface{}
 }
 
-// TimelineUsage is the typed nested usage payload when a timeline event embeds
-// token accounting inside a final event.
-type TimelineUsage struct {
+type timelineUsage struct {
 	InputTokens     int64
 	OutputTokens    int64
 	HasInputTokens  bool
 	HasOutputTokens bool
 }
 
-// TimelinePayload is the concrete decoded view of raw timeline event data.
+// timelinePayload is the concrete decoded view of raw timeline event data.
 // It is shared by daemon turn projection and transcript rendering so raw map
 // interpretation lives in one place.
-type TimelinePayload struct {
+type timelinePayload struct {
 	Role            string
 	MessageFamily   string
 	Text            string
@@ -142,7 +139,7 @@ type TimelinePayload struct {
 	RunnerEventType string
 
 	ToolNames []string
-	Blocks    []TimelineContentBlock
+	blocks    []timelineContentBlock
 
 	ExitCode    int
 	HasExitCode bool
@@ -164,13 +161,13 @@ type TimelinePayload struct {
 	Line               int
 	HasLine            bool
 
-	Usage TimelineUsage
+	usage timelineUsage
 }
 
 // DecodeTimelinePayload converts raw timeline JSON payload maps into one typed
 // shape that callers can consume directly.
-func DecodeTimelinePayload(data map[string]interface{}) TimelinePayload {
-	payload := TimelinePayload{
+func DecodeTimelinePayload(data map[string]interface{}) timelinePayload {
+	payload := timelinePayload{
 		Role:            timelineString(data, "role"),
 		MessageFamily:   timelineString(data, "message_family"),
 		Text:            timelineString(data, "text"),
@@ -185,7 +182,7 @@ func DecodeTimelinePayload(data map[string]interface{}) TimelinePayload {
 		EventKind:       timelineString(data, "event_kind"),
 		RunnerEventType: timelineString(data, "runner_event_type"),
 		ToolNames:       timelineStringSlice(data, "tool_names"),
-		Blocks:          timelineContentBlocks(data),
+		blocks:          timelineContentBlocks(data),
 	}
 
 	if exitCode, ok := timelineFloat(data, "exit_code"); ok {
@@ -223,12 +220,12 @@ func DecodeTimelinePayload(data map[string]interface{}) TimelinePayload {
 
 	if usage, ok := data["usage"].(map[string]interface{}); ok {
 		if inputTokens, ok := timelineFloat(usage, "input_tokens"); ok {
-			payload.Usage.InputTokens = int64(inputTokens)
-			payload.Usage.HasInputTokens = true
+			payload.usage.InputTokens = int64(inputTokens)
+			payload.usage.HasInputTokens = true
 		}
 		if outputTokens, ok := timelineFloat(usage, "output_tokens"); ok {
-			payload.Usage.OutputTokens = int64(outputTokens)
-			payload.Usage.HasOutputTokens = true
+			payload.usage.OutputTokens = int64(outputTokens)
+			payload.usage.HasOutputTokens = true
 		}
 	}
 
@@ -237,11 +234,11 @@ func DecodeTimelinePayload(data map[string]interface{}) TimelinePayload {
 
 // PromptLikeSummary returns the best prompt/follow-up summary extracted from a
 // decoded timeline payload.
-func (p TimelinePayload) PromptLikeSummary() string {
+func (p timelinePayload) PromptLikeSummary() string {
 	if text := strings.TrimSpace(p.Text); text != "" {
 		return text
 	}
-	for _, block := range p.Blocks {
+	for _, block := range p.blocks {
 		blockType := strings.TrimSpace(block.Type)
 		if blockType != "" && blockType != "text" {
 			continue
@@ -258,14 +255,14 @@ func (p TimelinePayload) PromptLikeSummary() string {
 
 // AssistantSummary returns the canonical assistant-turn summary used by daemon
 // history and latest-activity projections.
-func (p TimelinePayload) AssistantSummary() string {
+func (p timelinePayload) AssistantSummary() string {
 	base := strings.TrimSpace(p.Text)
 	textHints, toolHints := p.summaryHints()
 	if base == "" && len(textHints) > 0 {
 		base = textHints[0]
 	}
 
-	toolNames := normalizeTimelineSummaryHints(append(append([]string(nil), p.ToolNames...), toolHints...))
+	toolNames := normalizeTimelineSummaryHints(slices.Concat(p.ToolNames, toolHints))
 	if ShouldEnrichActivitySummary(base) && len(toolNames) > 0 {
 		toolSummary := "tools: " + strings.Join(toolNames, ", ")
 		if base == "" {
@@ -276,13 +273,12 @@ func (p TimelinePayload) AssistantSummary() string {
 	return base
 }
 
-// PromptMessageText returns the rendered text for a user prompt message.
-func (p TimelinePayload) PromptMessageText() string {
+func (p timelinePayload) promptMessageText() string {
 	if text := strings.TrimSpace(p.Text); text != "" {
 		return text
 	}
-	parts := make([]string, 0, len(p.Blocks))
-	for _, block := range p.Blocks {
+	parts := make([]string, 0, len(p.blocks))
+	for _, block := range p.blocks {
 		blockType := strings.TrimSpace(block.Type)
 		if blockType != "" && blockType != "text" {
 			continue
@@ -298,15 +294,14 @@ func (p TimelinePayload) PromptMessageText() string {
 	return strings.Join(parts, "\n")
 }
 
-// IsToolResultMessage reports whether a decoded user message is a tool result.
-func (p TimelinePayload) IsToolResultMessage() bool {
+func (p timelinePayload) isToolResultMessage() bool {
 	switch strings.ToLower(strings.TrimSpace(p.MessageFamily)) {
 	case "prompt":
 		return false
 	case "tool_result":
 		return true
 	}
-	for _, block := range p.Blocks {
+	for _, block := range p.blocks {
 		if strings.EqualFold(strings.TrimSpace(block.Type), "tool_result") {
 			return true
 		}
@@ -315,7 +310,7 @@ func (p TimelinePayload) IsToolResultMessage() bool {
 }
 
 // ParseErrorSummary returns the canonical parse diagnostic summary.
-func (p TimelinePayload) ParseErrorSummary() string {
+func (p timelinePayload) ParseErrorSummary() string {
 	reason := strings.TrimSpace(p.Reason)
 	if reason == "" {
 		reason = "unknown"
@@ -331,7 +326,7 @@ func (p TimelinePayload) ParseErrorSummary() string {
 }
 
 // UnknownRunnerEventSummary returns the canonical unknown-runner-event summary.
-func (p TimelinePayload) UnknownRunnerEventSummary() string {
+func (p timelinePayload) UnknownRunnerEventSummary() string {
 	summary := "unknown runner event"
 	if eventType := strings.TrimSpace(p.RunnerEventType); eventType != "" {
 		summary += ": " + eventType
@@ -345,9 +340,9 @@ func (p TimelinePayload) UnknownRunnerEventSummary() string {
 	return summary
 }
 
-// UnrecognizedEventSummary returns the canonical fallback summary for unknown
-// timeline kinds.
-func (p TimelinePayload) UnrecognizedEventSummary(kind string) string {
+// UnrecognizedEventSummary returns the canonical summary for unknown timeline
+// kinds.
+func (p timelinePayload) UnrecognizedEventSummary(kind string) string {
 	normalizedKind := strings.TrimSpace(strings.ReplaceAll(kind, "_", " "))
 	if normalizedKind == "" {
 		normalizedKind = "unknown"
@@ -363,14 +358,14 @@ func (p TimelinePayload) UnrecognizedEventSummary(kind string) string {
 }
 
 // TimelineEntrySummary returns the stable one-line summary for a timeline entry.
-func TimelineEntrySummary(kind string, payload TimelinePayload) string {
+func TimelineEntrySummary(kind string, payload timelinePayload) string {
 	switch kind {
 	case "message":
 		if text := strings.TrimSpace(payload.Text); text != "" {
 			return text
 		}
 		if strings.EqualFold(strings.TrimSpace(payload.Role), "user") {
-			if text := strings.TrimSpace(payload.PromptMessageText()); text != "" {
+			if text := strings.TrimSpace(payload.promptMessageText()); text != "" {
 				return text
 			}
 			return "user message"
@@ -427,13 +422,13 @@ func ShouldEnrichActivitySummary(summary string) bool {
 	return false
 }
 
-func (p TimelinePayload) summaryHints() ([]string, []string) {
-	if len(p.Blocks) == 0 {
+func (p timelinePayload) summaryHints() ([]string, []string) {
+	if len(p.blocks) == 0 {
 		return nil, nil
 	}
-	textHints := make([]string, 0, len(p.Blocks))
-	toolHints := make([]string, 0, len(p.Blocks))
-	for _, block := range p.Blocks {
+	textHints := make([]string, 0, len(p.blocks))
+	toolHints := make([]string, 0, len(p.blocks))
+	for _, block := range p.blocks {
 		switch strings.TrimSpace(block.Type) {
 		case "text":
 			if txt := strings.TrimSpace(block.Text); txt != "" {
@@ -473,7 +468,7 @@ func normalizeTimelineSummaryHints(hints []string) []string {
 	return out
 }
 
-func timelineContentBlocks(data map[string]interface{}) []TimelineContentBlock {
+func timelineContentBlocks(data map[string]interface{}) []timelineContentBlock {
 	if data == nil {
 		return nil
 	}
@@ -495,13 +490,13 @@ func timelineContentBlocks(data map[string]interface{}) []TimelineContentBlock {
 		return nil
 	}
 
-	blocks := make([]TimelineContentBlock, 0, len(rawItems))
+	blocks := make([]timelineContentBlock, 0, len(rawItems))
 	for _, rawItem := range rawItems {
 		block, ok := rawItem.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		blocks = append(blocks, TimelineContentBlock{
+		blocks = append(blocks, timelineContentBlock{
 			Type:    timelineString(block, "type"),
 			Text:    timelineString(block, "text"),
 			Content: timelineString(block, "content"),

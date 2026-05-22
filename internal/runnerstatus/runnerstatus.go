@@ -1,7 +1,7 @@
 // Package runnerstatus provides types and functions for reading and validating
 // the runner status file (.agency/state/runner_status.json).
 //
-// The runner status file is the contract between agency and runners (claude/codex).
+// The runner status file is the contract between agency and supported runners.
 // Runners update this file at milestones to communicate their state.
 package runnerstatus
 
@@ -10,18 +10,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 )
 
-// State represents the runner's current state.
-type State string
+// state represents the runner's current state.
+type state string
 
 // Valid runner state values.
 const (
-	StateRunning   State = "running"
-	StateWaiting   State = "waiting"
-	StateSucceeded State = "succeeded"
-	StateFailed    State = "failed"
+	StateRunning   state = "running"
+	StateWaiting   state = "waiting"
+	StateSucceeded state = "succeeded"
+	StateFailed    state = "failed"
 )
 
 // Common runner reasons.
@@ -37,7 +36,7 @@ const SchemaVersion = "2.0"
 // RunnerStatus represents the contents of .agency/state/runner_status.json.
 type RunnerStatus struct {
 	SchemaVersion string   `json:"schema_version"`
-	State         State    `json:"state"`
+	State         state    `json:"state"`
 	UpdatedAt     string   `json:"updated_at"`
 	Reason        string   `json:"reason,omitempty"`
 	Summary       string   `json:"summary"`
@@ -112,41 +111,4 @@ func (s *RunnerStatus) Validate() error {
 	}
 
 	return nil
-}
-
-// Age returns the duration since the status was last updated.
-// If UpdatedAt cannot be parsed, returns 0.
-func (s *RunnerStatus) Age() time.Duration {
-	if s == nil || s.UpdatedAt == "" {
-		return 0
-	}
-
-	t, err := time.Parse(time.RFC3339, s.UpdatedAt)
-	if err != nil {
-		return 0
-	}
-
-	return time.Since(t)
-}
-
-// NewInitial creates a new RunnerStatus with initial "running" state.
-func NewInitial() *RunnerStatus {
-	return &RunnerStatus{
-		SchemaVersion: SchemaVersion,
-		State:         StateRunning,
-		UpdatedAt:     time.Now().UTC().Format(time.RFC3339),
-		Summary:       "Starting work",
-		Questions:     []string{},
-		HowToTest:     "",
-	}
-}
-
-// IsValid returns true if the state is one of the known valid values.
-func (s State) IsValid() bool {
-	switch s {
-	case StateRunning, StateWaiting, StateSucceeded, StateFailed:
-		return true
-	default:
-		return false
-	}
 }

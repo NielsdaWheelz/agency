@@ -112,7 +112,6 @@ func TestExecClient_HasSession(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			runner := newFakeRunner(tt.responses...)
@@ -196,7 +195,6 @@ func TestExecClient_NewSession(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			runner := newFakeRunner(tt.responses...)
@@ -225,15 +223,7 @@ func TestExecClient_NewSession(t *testing.T) {
 			expectedArgs := append(tt.wantArgsPrefix, tt.wantArgsTail...)
 			assert.Equal(t, expectedArgs, call.Args)
 
-			// Verify "--" separator is present
-			found := false
-			for _, arg := range call.Args {
-				if arg == "--" {
-					found = true
-					break
-				}
-			}
-			assert.True(t, found, "call.Args missing '--' separator")
+			assert.Contains(t, call.Args, "--", "call.Args missing '--' separator")
 		})
 	}
 }
@@ -273,6 +263,54 @@ func TestExecClient_NewSession_EnvUsesProcessEnvironmentNotArgv(t *testing.T) {
 	}
 }
 
+func TestAttachSessionCommand(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		session    string
+		insideTmux bool
+		wantSubcmd string
+		wantArgs   []string
+		wantErr    bool
+	}{
+		{
+			name:       "outside tmux",
+			session:    "agency_abc123",
+			insideTmux: false,
+			wantSubcmd: "attach-session",
+			wantArgs:   []string{"attach-session", "-t", "agency_abc123"},
+		},
+		{
+			name:       "inside tmux",
+			session:    "agency_abc123",
+			insideTmux: true,
+			wantSubcmd: "switch-client",
+			wantArgs:   []string{"switch-client", "-t", "agency_abc123"},
+		},
+		{
+			name:    "missing session name",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gotSubcmd, gotArgs, err := attachSessionCommand(tt.session, tt.insideTmux)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantSubcmd, gotSubcmd)
+			assert.Equal(t, tt.wantArgs, gotArgs)
+		})
+	}
+}
+
 func TestExecClient_KillSession(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -303,7 +341,6 @@ func TestExecClient_KillSession(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			runner := newFakeRunner(tt.responses...)
@@ -326,20 +363,18 @@ func TestExecClient_KillSession(t *testing.T) {
 	}
 }
 
-func TestExecClient_SendKeys(t *testing.T) {
+func TestExecClient_InterruptSession(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name      string
 		session   string
-		keys      []Key
 		responses []fakeResponse
 		wantErr   bool
 		wantArgs  []string
 	}{
 		{
-			name:    "send C-c",
+			name:    "interrupt success",
 			session: "agency_abc",
-			keys:    []Key{KeyCtrlC},
 			responses: []fakeResponse{
 				{Result: exec.CmdResult{ExitCode: 0}},
 			},
@@ -347,26 +382,8 @@ func TestExecClient_SendKeys(t *testing.T) {
 			wantArgs: []string{"send-keys", "-t", "agency_abc", "C-c"},
 		},
 		{
-			name:    "send multiple keys",
+			name:    "interrupt failure",
 			session: "agency_abc",
-			keys:    []Key{KeyCtrlC, Key("Enter")},
-			responses: []fakeResponse{
-				{Result: exec.CmdResult{ExitCode: 0}},
-			},
-			wantErr:  false,
-			wantArgs: []string{"send-keys", "-t", "agency_abc", "C-c", "Enter"},
-		},
-		{
-			name:      "empty keys",
-			session:   "agency_abc",
-			keys:      []Key{},
-			responses: []fakeResponse{},
-			wantErr:   true,
-		},
-		{
-			name:    "send failure",
-			session: "agency_abc",
-			keys:    []Key{KeyCtrlC},
 			responses: []fakeResponse{
 				{Result: exec.CmdResult{ExitCode: 1, Stderr: "no session"}},
 			},
@@ -376,24 +393,17 @@ func TestExecClient_SendKeys(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			runner := newFakeRunner(tt.responses...)
 			client := NewExecClient(runner)
 
-			err := client.SendKeys(context.Background(), tt.session, tt.keys)
+			err := client.InterruptSession(context.Background(), tt.session)
 
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
-			}
-
-			// For empty keys, no command should be run
-			if len(tt.keys) == 0 {
-				assert.Empty(t, runner.calls, "expected 0 calls for empty keys")
-				return
 			}
 
 			require.Len(t, runner.calls, 1)
@@ -438,7 +448,6 @@ func TestExecClient_CaptureScrollback(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			runner := newFakeRunner(tt.responses...)
@@ -477,7 +486,7 @@ func TestExecClient_PipePane(t *testing.T) {
 			responses: []fakeResponse{
 				{Result: exec.CmdResult{ExitCode: 0}},
 			},
-			wantArgs: []string{"pipe-pane", "-o", "-t", "agency_abc123:0.0", "cat >> '/tmp/agent'\\''s log.txt'"},
+			wantArgs: []string{"pipe-pane", "-o", "-t", "agency_abc123:0.0", "cat >> '/tmp/agent'\"'\"'s log.txt'"},
 		},
 		{
 			name:    "pipe failure",
@@ -492,7 +501,6 @@ func TestExecClient_PipePane(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			runner := newFakeRunner(tt.responses...)
@@ -589,7 +597,6 @@ func TestExecClient_ListAttachedClients(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			runner := newFakeRunner(tt.responses...)
@@ -640,7 +647,6 @@ func TestExecClient_ErrorFormatting(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			runner := newFakeRunner(fakeResponse{

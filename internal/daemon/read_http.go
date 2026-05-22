@@ -24,7 +24,7 @@ func getOrCreateRequestID(r *http.Request) string {
 func (s *Server) writeAPIResponse(w http.ResponseWriter, requestID string, data interface{}) {
 	requestID = resolveOrGenerateRequestID(requestID)
 	setRequestIDHeader(w, requestID)
-	resp := APIResponse{
+	resp := apiResponse{
 		OK:           true,
 		APIVersion:   APIVersion,
 		BuildVersion: daemonBuildVersion(),
@@ -39,7 +39,7 @@ func (s *Server) writeAPIResponse(w http.ResponseWriter, requestID string, data 
 func (s *Server) writeAPIError(w http.ResponseWriter, status int, requestID, code, message, hint string, details interface{}) {
 	requestID = resolveOrGenerateRequestID(requestID)
 	setRequestIDHeader(w, requestID)
-	resp := APIResponse{
+	resp := apiResponse{
 		OK:           false,
 		APIVersion:   APIVersion,
 		BuildVersion: daemonBuildVersion(),
@@ -110,15 +110,12 @@ func readAmbiguousCandidates(err error) ([]string, bool) {
 }
 
 func (s *Server) loadRunnerStatusForInvocation(record *resolvedInvocation) (*runnerstatus.RunnerStatus, error) {
-	if s == nil || s.Store == nil || record == nil || record.Meta == nil {
-		return nil, nil
-	}
-	invocationRoot := s.Store.InvocationDir(record.RepoID, record.InvocationID)
+	invocationRoot := s.store.InvocationDir(record.RepoID, record.InvocationID)
 	return runnerstatus.Load(invocationRoot)
 }
 
 func getRepoIDsForQuery(s *Server, repoID string) ([]string, error) {
-	idx, err := s.Store.LoadRepoIndex()
+	idx, err := s.store.LoadRepoIndex()
 	if err != nil {
 		return nil, err
 	}
@@ -142,20 +139,6 @@ func getRepoIDsForQuery(s *Server, repoID string) ([]string, error) {
 
 func writeRepoLookupError(w http.ResponseWriter, s *Server, requestID string, err error, notFoundHint string) {
 	switch e := err.(type) {
-	case *ids.ErrRepoAmbiguous:
-		candidates := make([]string, len(e.Candidates))
-		for i, c := range e.Candidates {
-			candidates[i] = c.RepoID
-		}
-		s.writeAPIError(
-			w,
-			http.StatusConflict,
-			requestID,
-			string(errors.ERepoIDAmbiguous),
-			e.Error(),
-			"use a more specific name, repo key, or full repo id",
-			AmbiguousDetails{Candidates: candidates},
-		)
 	case *ids.ErrRepoNotFound:
 		s.writeAPIError(
 			w,

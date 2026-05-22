@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	stderrors "errors"
 	"fmt"
 	"io"
 	"net"
@@ -23,72 +22,63 @@ type Client struct {
 	httpClient *http.Client
 }
 
-// DaemonReadError carries the full daemon read API error envelope for consumers
-// that need hint and structured details (e.g., ambiguity candidates).
-// It wraps an AgencyError so errors.GetCode and errors.AsAgencyError still work.
-type DaemonReadError struct {
-	AgencyErr  *errors.AgencyError
-	Hint       string
-	RawDetails json.RawMessage
+type rawAPIResponse struct {
+	OK           bool            `json:"ok"`
+	APIVersion   int             `json:"api_version"`
+	BuildVersion string          `json:"build_version,omitempty"`
+	GitSHA       string          `json:"git_sha,omitempty"`
+	RequestID    string          `json:"request_id,omitempty"`
+	Data         json.RawMessage `json:"data,omitempty"`
+	ErrorCode    string          `json:"error_code,omitempty"`
+	Message      string          `json:"message,omitempty"`
+	Hint         string          `json:"hint,omitempty"`
+	Details      json.RawMessage `json:"details,omitempty"`
 }
 
-func (e *DaemonReadError) Error() string { return e.AgencyErr.Error() }
-func (e *DaemonReadError) Unwrap() error { return e.AgencyErr }
+// DaemonReadError carries the full daemon read API error envelope for consumers
+// that need structured details (e.g., ambiguity candidates).
+// It wraps an AgencyError so errors.GetCode and errors.AsAgencyError still work.
+type DaemonReadError struct {
+	agencyErr  *errors.AgencyError
+	rawDetails json.RawMessage
+}
+
+func (e *DaemonReadError) Error() string { return e.agencyErr.Error() }
+func (e *DaemonReadError) Unwrap() error { return e.agencyErr }
 
 // DaemonActionError carries a daemon mutation/control-plane failure envelope.
 // It wraps an AgencyError so common error helpers still work, while preserving
 // the raw response for command-specific details such as conflict files.
 type DaemonActionError struct {
-	AgencyErr   *errors.AgencyError
-	RequestID   string
-	RawResponse json.RawMessage
+	agencyErr   *errors.AgencyError
+	rawResponse json.RawMessage
 }
 
-func (e *DaemonActionError) Error() string { return e.AgencyErr.Error() }
-func (e *DaemonActionError) Unwrap() error { return e.AgencyErr }
+func (e *DaemonActionError) Error() string { return e.agencyErr.Error() }
+func (e *DaemonActionError) Unwrap() error { return e.agencyErr }
 
 // DecodeResponse unmarshals the raw daemon error response into v.
 func (e *DaemonActionError) DecodeResponse(v any) error {
-	if len(e.RawResponse) == 0 {
+	if len(e.rawResponse) == 0 {
 		return io.EOF
 	}
-	return json.Unmarshal(e.RawResponse, v)
+	return json.Unmarshal(e.rawResponse, v)
 }
 
-// Candidates extracts candidate strings from RawDetails when the details
+// Candidates extracts candidate strings from the raw details when they
 // contain a "candidates" array (e.g., daemon AmbiguousDetails).
 func (e *DaemonReadError) Candidates() []string {
-	if len(e.RawDetails) == 0 {
+	if len(e.rawDetails) == 0 {
 		return nil
 	}
-	var ad struct {
-		Candidates []string `json:"candidates"`
-	}
-	if err := json.Unmarshal(e.RawDetails, &ad); err != nil {
+	var ad daemon.AmbiguousDetails
+	if err := json.Unmarshal(e.rawDetails, &ad); err != nil {
 		return nil
 	}
 	return ad.Candidates
 }
 
-// AsDaemonReadError extracts a DaemonReadError from an error chain.
-func AsDaemonReadError(err error) (*DaemonReadError, bool) {
-	var dre *DaemonReadError
-	if stderrors.As(err, &dre) {
-		return dre, true
-	}
-	return nil, false
-}
-
-// AsDaemonActionError extracts a DaemonActionError from an error chain.
-func AsDaemonActionError(err error) (*DaemonActionError, bool) {
-	var dae *DaemonActionError
-	if stderrors.As(err, &dae) {
-		return dae, true
-	}
-	return nil, false
-}
-
-func (c *Client) newJSONRequest(ctx context.Context, method, rawURL string, reqBody any) (*http.Request, error) {
+func (c *Client) doHTTPRequest(ctx context.Context, method, rawURL string, reqBody any) (*http.Response, error) {
 	var bodyReader io.Reader
 	if reqBody != nil {
 		body, err := json.Marshal(reqBody)
@@ -104,14 +94,6 @@ func (c *Client) newJSONRequest(ctx context.Context, method, rawURL string, reqB
 	}
 	if reqBody != nil {
 		req.Header.Set("Content-Type", "application/json")
-	}
-	return req, nil
-}
-
-func (c *Client) doHTTPRequest(ctx context.Context, method, rawURL string, reqBody any) (*http.Response, error) {
-	req, err := c.newJSONRequest(ctx, method, rawURL, reqBody)
-	if err != nil {
-		return nil, err
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -173,13 +155,12 @@ func (c *Client) doActionRequest(ctx context.Context, method, rawURL string, req
 			details["request_id"] = envelope.RequestID
 		}
 		return &DaemonActionError{
-			AgencyErr: &errors.AgencyError{
+			agencyErr: &errors.AgencyError{
 				Code:    code,
 				Msg:     message,
 				Details: details,
 			},
-			RequestID:   envelope.RequestID,
-			RawResponse: append(json.RawMessage(nil), body...),
+			rawResponse: append(json.RawMessage(nil), body...),
 		}
 	}
 	if respBody == nil {
@@ -188,21 +169,21 @@ func (c *Client) doActionRequest(ctx context.Context, method, rawURL string, req
 	return json.Unmarshal(body, respBody)
 }
 
-func (c *Client) doAPIRequest(ctx context.Context, method, rawURL string, reqBody any) (*daemon.RawAPIResponse, error) {
+func (c *Client) doAPIRequest(ctx context.Context, method, rawURL string, reqBody any) (*rawAPIResponse, error) {
 	resp, err := c.doHTTPRequest(ctx, method, rawURL, reqBody)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	var apiResp daemon.RawAPIResponse
+	var apiResp rawAPIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
 		return nil, err
 	}
 	return &apiResp, nil
 }
 
-func decodeResult[T any](apiResp *daemon.RawAPIResponse) (*daemon.Result[T], error) {
+func decodeResult[T any](apiResp *rawAPIResponse) (*daemon.Result[T], error) {
 	if !apiResp.OK {
 		details := map[string]string{}
 		if apiResp.Hint != "" {
@@ -212,13 +193,12 @@ func decodeResult[T any](apiResp *daemon.RawAPIResponse) (*daemon.Result[T], err
 			details["request_id"] = apiResp.RequestID
 		}
 		return nil, &DaemonReadError{
-			AgencyErr: &errors.AgencyError{
+			agencyErr: &errors.AgencyError{
 				Code:    errors.Code(apiResp.ErrorCode),
 				Msg:     apiResp.Message,
 				Details: details,
 			},
-			Hint:       apiResp.Hint,
-			RawDetails: append(json.RawMessage(nil), apiResp.Details...),
+			rawDetails: append(json.RawMessage(nil), apiResp.Details...),
 		}
 	}
 
@@ -267,8 +247,8 @@ func (c *Client) IsRunning(ctx context.Context) bool {
 	return err == nil && health.OK
 }
 
-// CheckAPIVersion checks if the daemon API version is compatible with the client.
-// Returns nil if compatible, error otherwise.
+// CheckAPIVersion checks if the daemon API version matches the client.
+// Returns nil if versions match, error otherwise.
 func (c *Client) CheckAPIVersion(ctx context.Context) error {
 	health, err := c.Health(ctx)
 	if err != nil {

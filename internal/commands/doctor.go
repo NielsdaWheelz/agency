@@ -5,9 +5,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -65,7 +66,7 @@ type DoctorReport struct {
 	ScriptArchive               string
 }
 
-// osEnv implements paths.Env using os.Getenv.
+// osEnv provides directory resolution environment lookups.
 type osEnv struct{}
 
 func (osEnv) Get(key string) string {
@@ -245,11 +246,7 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 	if err := checkGhAuth(ctx, cr, ghAuthEnv); err != nil {
 		return err
 	}
-	executionProfileEnvKeys := make([]string, 0, len(profileEnv))
-	for key := range profileEnv {
-		executionProfileEnvKeys = append(executionProfileEnvKeys, key)
-	}
-	sort.Strings(executionProfileEnvKeys)
+	executionProfileEnvKeys := slices.Sorted(maps.Keys(profileEnv))
 
 	executionCheckoutRoot, err := config.ResolveCheckoutRoot(repoRoot.Path, repoIdentity.RepoID, cfg.Execution.CheckoutRoot)
 	if err != nil {
@@ -474,12 +471,11 @@ func doctorCanonicalPath(pathValue, label string) (string, error) {
 
 func doctorDisplayPath(pathValue string) string {
 	cleanPath := filepath.Clean(pathValue)
-	switch {
-	case cleanPath == "/private/var":
+	if cleanPath == "/private/var" {
 		return "/var"
-	case strings.HasPrefix(cleanPath, "/private/var/"):
-		return strings.TrimPrefix(cleanPath, "/private")
-	default:
-		return cleanPath
 	}
+	if suffix, ok := strings.CutPrefix(cleanPath, "/private"); ok && strings.HasPrefix(suffix, "/var/") {
+		return suffix
+	}
+	return cleanPath
 }

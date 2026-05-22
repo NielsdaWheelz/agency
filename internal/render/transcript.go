@@ -83,11 +83,12 @@ func renderEntry(w io.Writer, entry TranscriptEntry, opts TranscriptOpts) error 
 	case "raw_log_coverage":
 		return nil // omit
 	default:
-		return nil
+		_, err := fmt.Fprintln(w, opts.style(ansiDim, payload.UnrecognizedEventSummary(entry.Kind)))
+		return err
 	}
 }
 
-func renderSessionStart(w io.Writer, entry TranscriptEntry, payload TimelinePayload, opts TranscriptOpts) error {
+func renderSessionStart(w io.Writer, entry TranscriptEntry, payload timelinePayload, opts TranscriptOpts) error {
 	var parts []string
 	if entry.Timestamp != "" {
 		parts = append(parts, entry.Timestamp)
@@ -106,7 +107,7 @@ func renderSessionStart(w io.Writer, entry TranscriptEntry, payload TimelinePayl
 	return err
 }
 
-func renderPromptSeed(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
+func renderPromptSeed(w io.Writer, payload timelinePayload, opts TranscriptOpts) error {
 	_, err := fmt.Fprintln(w, opts.style(ansiDim, "── Prompt ──"))
 	if err != nil {
 		return err
@@ -117,7 +118,7 @@ func renderPromptSeed(w io.Writer, payload TimelinePayload, opts TranscriptOpts)
 	return err
 }
 
-func renderAssistantMessage(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
+func renderAssistantMessage(w io.Writer, payload timelinePayload, opts TranscriptOpts) error {
 	_, err := fmt.Fprintln(w)
 	if err != nil {
 		return err
@@ -128,8 +129,8 @@ func renderAssistantMessage(w io.Writer, payload TimelinePayload, opts Transcrip
 	}
 
 	// Prefer content_blocks if available
-	if len(payload.Blocks) > 0 {
-		for _, block := range payload.Blocks {
+	if len(payload.blocks) > 0 {
+		for _, block := range payload.blocks {
 			switch block.Type {
 			case "text":
 				if text := block.Text; text != "" {
@@ -158,15 +159,15 @@ func renderAssistantMessage(w io.Writer, payload TimelinePayload, opts Transcrip
 		return nil
 	}
 
-	// Fallback to text field
+	// Render text-only message payloads.
 	if text := payload.Text; text != "" {
 		_, err = fmt.Fprintln(w, text)
 	}
 	return err
 }
 
-func renderUserMessage(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
-	if !payload.IsToolResultMessage() {
+func renderUserMessage(w io.Writer, payload timelinePayload, opts TranscriptOpts) error {
+	if !payload.isToolResultMessage() {
 		_, err := fmt.Fprintln(w)
 		if err != nil {
 			return err
@@ -175,19 +176,19 @@ func renderUserMessage(w io.Writer, payload TimelinePayload, opts TranscriptOpts
 		if err != nil {
 			return err
 		}
-		if text := payload.PromptMessageText(); text != "" {
+		if text := payload.promptMessageText(); text != "" {
 			_, err = fmt.Fprintln(w, text)
 		}
 		return err
 	}
 
 	// Prefer content_blocks
-	if len(payload.Blocks) > 0 {
+	if len(payload.blocks) > 0 {
 		_, err := fmt.Fprintln(w, opts.style(ansiDim, "Tool Result"))
 		if err != nil {
 			return err
 		}
-		for _, block := range payload.Blocks {
+		for _, block := range payload.blocks {
 			if content := block.Content; content != "" {
 				_, err = fmt.Fprintln(w, indentText(content, "  "))
 				if err != nil {
@@ -204,7 +205,7 @@ func renderUserMessage(w io.Writer, payload TimelinePayload, opts TranscriptOpts
 		return nil
 	}
 
-	// Fallback
+	// Render text-only tool results.
 	if text := payload.Text; text != "" {
 		_, err := fmt.Fprintln(w, opts.style(ansiDim, "Tool Result"))
 		if err != nil {
@@ -216,7 +217,7 @@ func renderUserMessage(w io.Writer, payload TimelinePayload, opts TranscriptOpts
 	return nil
 }
 
-func renderToolUse(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
+func renderToolUse(w io.Writer, payload timelinePayload, opts TranscriptOpts) error {
 	label := "▶"
 	if payload.Name != "" {
 		label += " " + payload.Name
@@ -238,7 +239,7 @@ func renderToolUse(w io.Writer, payload TimelinePayload, opts TranscriptOpts) er
 	return err
 }
 
-func renderFollowupPrompt(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
+func renderFollowupPrompt(w io.Writer, payload timelinePayload, opts TranscriptOpts) error {
 	_, err := fmt.Fprintln(w)
 	if err != nil {
 		return err
@@ -253,7 +254,7 @@ func renderFollowupPrompt(w io.Writer, payload TimelinePayload, opts TranscriptO
 	return err
 }
 
-func renderFinal(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
+func renderFinal(w io.Writer, payload timelinePayload, opts TranscriptOpts) error {
 	var parts []string
 
 	if payload.HasDurationMS {
@@ -269,11 +270,11 @@ func renderFinal(w io.Writer, payload TimelinePayload, opts TranscriptOpts) erro
 		parts = append(parts, fmt.Sprintf("$%.4f", payload.CostUSD))
 	}
 
-	if payload.Usage.HasInputTokens {
-		parts = append(parts, fmt.Sprintf("in=%d", payload.Usage.InputTokens))
+	if payload.usage.HasInputTokens {
+		parts = append(parts, fmt.Sprintf("in=%d", payload.usage.InputTokens))
 	}
-	if payload.Usage.HasOutputTokens {
-		parts = append(parts, fmt.Sprintf("out=%d", payload.Usage.OutputTokens))
+	if payload.usage.HasOutputTokens {
+		parts = append(parts, fmt.Sprintf("out=%d", payload.usage.OutputTokens))
 	}
 
 	line := "Done"
@@ -285,7 +286,7 @@ func renderFinal(w io.Writer, payload TimelinePayload, opts TranscriptOpts) erro
 	return err
 }
 
-func renderUsage(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
+func renderUsage(w io.Writer, payload timelinePayload, opts TranscriptOpts) error {
 	var parts []string
 	if payload.HasInputTokens {
 		parts = append(parts, fmt.Sprintf("in=%d", payload.InputTokens))
@@ -300,7 +301,7 @@ func renderUsage(w io.Writer, payload TimelinePayload, opts TranscriptOpts) erro
 	return err
 }
 
-func renderError(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
+func renderError(w io.Writer, payload timelinePayload, opts TranscriptOpts) error {
 	msg := payload.Message
 	if msg == "" {
 		msg = "unknown error"
@@ -309,7 +310,7 @@ func renderError(w io.Writer, payload TimelinePayload, opts TranscriptOpts) erro
 	return err
 }
 
-func renderParseError(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
+func renderParseError(w io.Writer, payload timelinePayload, opts TranscriptOpts) error {
 	reason := strings.TrimSpace(payload.Reason)
 	if reason == "" {
 		reason = "unclassified"
@@ -322,7 +323,7 @@ func renderParseError(w io.Writer, payload TimelinePayload, opts TranscriptOpts)
 	return err
 }
 
-func renderUnknown(w io.Writer, payload TimelinePayload, opts TranscriptOpts) error {
+func renderUnknown(w io.Writer, payload timelinePayload, opts TranscriptOpts) error {
 	eventType := strings.TrimSpace(payload.RunnerEventType)
 	reason := strings.TrimSpace(payload.Reason)
 	line := "Unknown runner event"
@@ -336,7 +337,7 @@ func renderUnknown(w io.Writer, payload TimelinePayload, opts TranscriptOpts) er
 	return err
 }
 
-func renderEvent(w io.Writer, entryKind string, payload TimelinePayload, opts TranscriptOpts) error {
+func renderEvent(w io.Writer, entryKind string, payload timelinePayload, opts TranscriptOpts) error {
 	kind := payload.EventKind
 	if kind == "" {
 		kind = entryKind

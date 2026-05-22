@@ -22,35 +22,33 @@ func (s *Server) beginWorktreeMerge(
 	repoID string,
 	worktreeID string,
 	attemptID string,
-	requestID string,
 	req normalizedMergeRequest,
-) (*WorktreeMergeProcess, bool, error) {
+) (*worktreeMergeProcess, bool, error) {
 	key := worktreeMergeKey(repoID, worktreeID)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if existing := s.activeMerges[key]; existing != nil {
-		if sameNormalizedMergeRequest(existing.Request, req) {
+		if sameNormalizedMergeRequest(existing.request, req) {
 			return existing, true, nil
 		}
 		return nil, false, errors.NewWithDetails(
 			errors.EWorktreeMergeActive,
 			"worktree merge is already running for this worktree",
 			map[string]string{
-				"attempt_id": existing.AttemptID,
+				"attempt_id": existing.attemptID,
 				"hint":       "wait for the active merge to finish or rerun with the same options to attach",
 			},
 		)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	proc := &WorktreeMergeProcess{
-		RepoID:     repoID,
-		WorktreeID: worktreeID,
-		AttemptID:  attemptID,
-		RequestID:  requestID,
-		Request:    req,
+	proc := &worktreeMergeProcess{
+		repoID:     repoID,
+		worktreeID: worktreeID,
+		attemptID:  attemptID,
+		request:    req,
 		ctx:        ctx,
 		cancel:     cancel,
 		done:       make(chan struct{}),
@@ -59,26 +57,26 @@ func (s *Server) beginWorktreeMerge(
 	return proc, false, nil
 }
 
-func (s *Server) activeWorktreeMerge(repoID, worktreeID string) *WorktreeMergeProcess {
+func (s *Server) activeWorktreeMerge(repoID, worktreeID string) *worktreeMergeProcess {
 	key := worktreeMergeKey(repoID, worktreeID)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.activeMerges[key]
 }
 
-func (s *Server) releaseWorktreeMerge(proc *WorktreeMergeProcess) {
+func (s *Server) releaseWorktreeMerge(proc *worktreeMergeProcess) {
 	if proc == nil {
 		return
 	}
 
-	key := worktreeMergeKey(proc.RepoID, proc.WorktreeID)
+	key := worktreeMergeKey(proc.repoID, proc.worktreeID)
 	s.mu.Lock()
 	if current := s.activeMerges[key]; current == proc {
 		delete(s.activeMerges, key)
 	}
 	s.mu.Unlock()
 
-	proc.CloseDone()
+	proc.closeDone()
 }
 
 func (s *Server) ensureWorktreeMergeInactive(repoID, worktreeID, action string) error {
@@ -90,7 +88,7 @@ func (s *Server) ensureWorktreeMergeInactive(repoID, worktreeID, action string) 
 		errors.EWorktreeMergeActive,
 		fmt.Sprintf("worktree merge is already running; cannot %s during an active merge", action),
 		map[string]string{
-			"attempt_id": proc.AttemptID,
+			"attempt_id": proc.attemptID,
 			"hint":       "wait for the active merge to finish, or rerun 'agency worktree <worktree-ref> pr merge' to attach",
 		},
 	)
@@ -98,7 +96,7 @@ func (s *Server) ensureWorktreeMergeInactive(repoID, worktreeID, action string) 
 
 func (s *Server) cancelActiveWorktreeMerges(ctx context.Context) {
 	s.mu.RLock()
-	merges := make([]*WorktreeMergeProcess, 0, len(s.activeMerges))
+	merges := make([]*worktreeMergeProcess, 0, len(s.activeMerges))
 	for _, proc := range s.activeMerges {
 		merges = append(merges, proc)
 	}

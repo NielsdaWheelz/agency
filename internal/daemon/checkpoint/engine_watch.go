@@ -90,7 +90,7 @@ func (e *Engine) tryDriftCheckpoint(ctx context.Context) {
 	}
 	e.mu.Unlock()
 
-	trigger := &TriggerEvent{Kind: TriggerDrift}
+	trigger := &TriggerEvent{Kind: triggerDrift}
 	if err := e.createCheckpointWithMetadata(ctx, trigger); err != nil {
 		_ = e.emitCheckpointFailed(err.Error())
 	}
@@ -105,7 +105,7 @@ func (e *Engine) tryCheckpoint(ctx context.Context) {
 	}
 	e.mu.Unlock()
 
-	if err := e.CreateCheckpoint(ctx); err != nil {
+	if err := e.createCheckpointInternal(ctx); err != nil {
 		_ = e.emitCheckpointFailed(err.Error())
 	}
 }

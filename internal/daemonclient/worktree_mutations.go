@@ -10,7 +10,7 @@ import (
 )
 
 // WorktreeCreate creates an integration worktree via the daemon.
-func (c *Client) WorktreeCreate(ctx context.Context, opts WorktreeCreateOpts) (*daemon.WorktreeCreateResponse, error) {
+func (c *Client) WorktreeCreate(ctx context.Context, opts daemon.WorktreeCreateRequest) (*daemon.WorktreeCreateResponse, error) {
 	if err := c.CheckAPIVersion(ctx); err != nil {
 		return nil, err
 	}
@@ -23,11 +23,10 @@ func (c *Client) WorktreeCreate(ctx context.Context, opts WorktreeCreateOpts) (*
 }
 
 // WorktreeRm removes an integration worktree via the daemon.
-func (c *Client) WorktreeRm(ctx context.Context, repoID, worktreeRef string, force bool) (*daemon.WorktreeRmResponse, error) {
+func (c *Client) WorktreeRm(ctx context.Context, repoID, worktreeRef string, req daemon.WorktreeRmRequest) (*daemon.WorktreeRmResponse, error) {
 	if err := c.CheckAPIVersion(ctx); err != nil {
 		return nil, err
 	}
-	req := daemon.WorktreeRmRequest{Force: force}
 	var result daemon.WorktreeRmResponse
 	if err := c.doActionRequest(ctx, http.MethodPost, fmt.Sprintf("%s/worktrees/%s/rm?repo_id=%s", daemonBaseURL, url.PathEscape(worktreeRef), url.QueryEscape(repoID)), req, &result); err != nil {
 		return nil, err
@@ -67,25 +66,17 @@ func (c *Client) RecreateHeaded(ctx context.Context, invocationRef, repoID strin
 	return &result, nil
 }
 
-// LandOpts holds options for landing via daemon.
-type LandOpts struct {
-	RepoID       string
-	InvocationID string
-	Apply        bool
-	RequireBase  bool
-}
-
 // Land lands sandbox changes to the integration worktree via daemon.
-func (c *Client) Land(ctx context.Context, opts LandOpts) (*daemon.LandResponse, error) {
+func (c *Client) Land(ctx context.Context, invocationRef, repoID string, req daemon.LandRequest) (*daemon.LandResponse, error) {
 	if err := c.CheckAPIVersion(ctx); err != nil {
 		return nil, err
 	}
-	req := daemon.LandRequest{
-		Apply:       opts.Apply,
-		RequireBase: opts.RequireBase,
+	u := fmt.Sprintf("%s/invocations/%s/land", daemonBaseURL, url.PathEscape(invocationRef))
+	if repoID != "" {
+		u += "?repo_id=" + url.QueryEscape(repoID)
 	}
 	var result daemon.LandResponse
-	if err := c.doActionRequest(ctx, http.MethodPost, fmt.Sprintf("%s/invocations/%s/land?repo_id=%s", daemonBaseURL, url.PathEscape(opts.InvocationID), url.QueryEscape(opts.RepoID)), req, &result); err != nil {
+	if err := c.doActionRequest(ctx, http.MethodPost, u, req, &result); err != nil {
 		return nil, err
 	}
 
@@ -106,7 +97,7 @@ func (c *Client) Discard(ctx context.Context, repoID, invocationID string) (*dae
 }
 
 // WorktreePRSync performs worktree-scoped branch push + PR create/update via daemon.
-func (c *Client) WorktreePRSync(ctx context.Context, worktreeRef, repoID string, opts WorktreePRSyncOpts) (*daemon.WorktreePRSyncResponse, error) {
+func (c *Client) WorktreePRSync(ctx context.Context, worktreeRef, repoID string, opts daemon.WorktreePRSyncRequest) (*daemon.WorktreePRSyncResponse, error) {
 	if err := c.CheckAPIVersion(ctx); err != nil {
 		return nil, err
 	}
@@ -122,7 +113,7 @@ func (c *Client) WorktreePRSync(ctx context.Context, worktreeRef, repoID string,
 }
 
 // WorktreePRMerge performs worktree-scoped verify + merge via daemon.
-func (c *Client) WorktreePRMerge(ctx context.Context, worktreeRef, repoID string, opts WorktreePRMergeOpts) (*daemon.WorktreePRMergeResponse, error) {
+func (c *Client) WorktreePRMerge(ctx context.Context, worktreeRef, repoID string, opts daemon.WorktreePRMergeRequest) (*daemon.WorktreePRMergeResponse, error) {
 	if err := c.CheckAPIVersion(ctx); err != nil {
 		return nil, err
 	}

@@ -59,7 +59,7 @@ func Visit(r io.Reader, maxLineBytes int, opts VisitOptions, visitFn func(Line) 
 			}
 			if visitErr := visitFn(Line{
 				Number:    lineNumber,
-				Bytes:     trimLineEndings(payload),
+				Bytes:     bytes.TrimRight(payload, "\r\n"),
 				Oversized: oversized,
 			}); visitErr != nil {
 				return visitErr
@@ -95,7 +95,7 @@ func readLogicalLine(reader *bufio.Reader, maxLineBytes int, prefixBytes int) ([
 			}
 
 			if !oversized {
-				chunkLogicalLen := logicalChunkLength(chunk)
+				chunkLogicalLen := len(bytes.TrimSuffix(bytes.TrimSuffix(chunk, []byte("\n")), []byte("\r")))
 				if logicalLen+chunkLogicalLen <= maxLineBytes {
 					line = append(line, chunk...)
 					logicalLen += chunkLogicalLen
@@ -120,32 +120,6 @@ func readLogicalLine(reader *bufio.Reader, maxLineBytes int, prefixBytes int) ([
 			return line, prefix, oversized, hasData, err
 		}
 	}
-}
-
-func logicalChunkLength(chunk []byte) int {
-	n := len(chunk)
-	if n == 0 {
-		return 0
-	}
-	if chunk[n-1] == '\n' {
-		n--
-		if n > 0 && chunk[n-1] == '\r' {
-			n--
-		}
-	}
-	return n
-}
-
-func trimLineEndings(line []byte) []byte {
-	trimmed := line
-	for len(trimmed) > 0 {
-		last := trimmed[len(trimmed)-1]
-		if last != '\n' && last != '\r' {
-			break
-		}
-		trimmed = trimmed[:len(trimmed)-1]
-	}
-	return trimmed
 }
 
 // ExtractUintField scans a JSON prefix for a numeric object field.

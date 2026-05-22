@@ -7,12 +7,9 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/fs"
 )
 
-// ClaudeMDFileName is the name of the runner protocol file.
-const ClaudeMDFileName = "CLAUDE.md"
+const claudeMDFileName = "CLAUDE.md"
 
-// ClaudeMDTemplate is the content of CLAUDE.md that instructs runners
-// to use .agency/state/runner_status.json as the only runner contract.
-const ClaudeMDTemplate = `# Agency Runner Protocol
+const claudeMDTemplate = `# Agency Runner Protocol
 
 ` + "`" + `.agency/state/runner_status.json` + "`" + ` is the only runner contract.
 
@@ -62,7 +59,7 @@ Before finishing successfully, set ` + "`" + `state` + "`" + ` to ` + "`" + `suc
 // Returns (false, nil) if the file already exists.
 // Returns (false, error) if there was an error.
 func WriteClaudeMD(fsys fs.FS, repoRoot string) (created bool, err error) {
-	claudeMDPath := filepath.Join(repoRoot, ClaudeMDFileName)
+	claudeMDPath := filepath.Join(repoRoot, claudeMDFileName)
 
 	// Check if file already exists
 	_, err = fsys.Stat(claudeMDPath)
@@ -76,7 +73,7 @@ func WriteClaudeMD(fsys fs.FS, repoRoot string) (created bool, err error) {
 	}
 
 	// File doesn't exist, create it
-	if err := fsys.WriteFile(claudeMDPath, []byte(ClaudeMDTemplate), 0644); err != nil {
+	if err := fsys.WriteFile(claudeMDPath, []byte(claudeMDTemplate), 0644); err != nil {
 		return false, err
 	}
 

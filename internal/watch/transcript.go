@@ -84,17 +84,7 @@ func (m model) renderTranscript() string {
 }
 
 func transcriptLines(content string) []string {
-	if strings.TrimSpace(content) == "" {
-		return []string{"(no transcript entries yet)"}
-	}
-	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
-	if len(lines) == 0 {
-		return []string{"(no transcript entries yet)"}
-	}
-	return lines
+	return contentLines(content, "(no transcript entries yet)")
 }
 
 func (m model) maxTranscriptScroll() int {

@@ -11,14 +11,14 @@ import (
 const daemonLifecycleOwner = "daemon"
 
 func (s *Server) nowRFC3339() string {
-	return s.Clock().UTC().Format(time.RFC3339)
+	return s.clock().UTC().Format(time.RFC3339)
 }
 
 // persistInvocationMeta applies a terminal-state update and logs — rather than
 // silently dropping — a persistence failure. Used by the fire-and-forget
 // lifecycle transitions below, which run with no error channel to a caller.
 func (s *Server) persistInvocationMeta(repoID, invocationID string, mutate func(*store.InvocationMeta)) {
-	if err := s.Store.UpdateInvocationMeta(repoID, invocationID, mutate); err != nil {
+	if err := s.store.UpdateInvocationMeta(repoID, invocationID, mutate); err != nil {
 		log.Printf("agencyd: persist invocation %s/%s lifecycle state: %v", repoID, invocationID, err)
 	}
 }
@@ -37,13 +37,13 @@ func (s *Server) requestInvocationStop(repoID, invocationID string) {
 func (s *Server) claimHeadlessInvocationStart(repoID, invocationID, runner string, pid, pgid int, promptPath, promptSHA string, runnerArgs, envKeys []string) error {
 	now := s.nowRFC3339()
 	daemonPID := os.Getpid()
-	return s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	return s.store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusRunning
 		meta.Runner = runner
 		meta.PID = &pid
 		meta.PGID = &pgid
 		meta.DaemonPID = &daemonPID
-		meta.DaemonInstanceID = s.InstanceID
+		meta.DaemonInstanceID = s.instanceID
 		meta.ClaimedAt = now
 		meta.LifecycleOwner = daemonLifecycleOwner
 		meta.PromptPath = promptPath
@@ -64,12 +64,12 @@ func (s *Server) claimHeadlessInvocationStart(repoID, invocationID, runner strin
 func (s *Server) claimHeadlessInvocationResume(repoID, invocationID string, pid, pgid int) error {
 	now := s.nowRFC3339()
 	daemonPID := os.Getpid()
-	return s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	return s.store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusRunning
 		meta.PID = &pid
 		meta.PGID = &pgid
 		meta.DaemonPID = &daemonPID
-		meta.DaemonInstanceID = s.InstanceID
+		meta.DaemonInstanceID = s.instanceID
 		meta.ClaimedAt = now
 		meta.LifecycleOwner = daemonLifecycleOwner
 		meta.FinishedAt = ""
@@ -86,7 +86,7 @@ func (s *Server) claimHeadlessInvocationResume(repoID, invocationID string, pid,
 func (s *Server) claimHeadedInvocation(repoID, invocationID, runner, sessionName string, runnerArgs, envKeys []string) error {
 	now := s.nowRFC3339()
 	daemonPID := os.Getpid()
-	return s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	return s.store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusRunning
 		meta.Runner = runner
 		meta.RunnerArgs = runnerArgs
@@ -95,7 +95,7 @@ func (s *Server) claimHeadedInvocation(repoID, invocationID, runner, sessionName
 		meta.PID = nil
 		meta.PGID = nil
 		meta.DaemonPID = &daemonPID
-		meta.DaemonInstanceID = s.InstanceID
+		meta.DaemonInstanceID = s.instanceID
 		meta.ClaimedAt = now
 		meta.LifecycleOwner = daemonLifecycleOwner
 		meta.FinishedAt = ""
@@ -210,7 +210,7 @@ func (s *Server) markInvocationOrphaned(repoID, invocationID string) {
 
 func (s *Server) writeInvocationProcessExit(repoID, invocationID string, status store.InvocationStatus, exitReason, failureReason string, exitCode int) error {
 	now := s.nowRFC3339()
-	return s.Store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	return s.store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = status
 		meta.ExitReason = exitReason
 		meta.FailureReason = failureReason
@@ -227,12 +227,12 @@ func (s *Server) clearInvocationProcess(invocationID string) {
 	defer s.mu.Unlock()
 
 	if proc, ok := s.processes[invocationID]; ok {
-		proc.CloseDone()
+		proc.closeDone()
 		delete(s.processes, invocationID)
 	}
 }
 
-func (s *Server) clearInvocationProcessIfCurrent(invocationID string, current *SupervisedProcess) {
+func (s *Server) clearInvocationProcessIfCurrent(invocationID string, current *supervisedProcess) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -241,12 +241,12 @@ func (s *Server) clearInvocationProcessIfCurrent(invocationID string, current *S
 	}
 }
 
-func (s *Server) replaceInvocationProcess(invocationID string, proc *SupervisedProcess) {
+func (s *Server) replaceInvocationProcess(invocationID string, proc *supervisedProcess) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if current, ok := s.processes[invocationID]; ok {
-		current.CloseDone()
+		current.closeDone()
 	}
 	s.processes[invocationID] = proc
 }

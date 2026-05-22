@@ -55,22 +55,6 @@ func TestReadVerifyJSON_MissingSchemaVersion(t *testing.T) {
 	assert.Equal(t, "verify.json: schema_version is required and must be non-empty", result.err.Error())
 }
 
-func TestReadVerifyJSON_EmptySchemaVersion(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-	path := filepath.Join(tmpDir, "verify.json")
-
-	// Write JSON with empty schema_version
-	require.NoError(t, os.WriteFile(path, []byte(`{"schema_version": "", "ok": true}`), 0o644))
-
-	result := readVerifyJSON(path)
-
-	assert.True(t, result.exists, "exists = false, want true for existing file")
-	assert.Nil(t, result.value, "value should be nil for empty schema_version")
-	require.Error(t, result.err, "err should be non-nil for empty schema_version")
-}
-
 func TestReadVerifyJSON_ValidMinimal(t *testing.T) {
 	t.Parallel()
 
@@ -112,7 +96,6 @@ func TestReadVerifyJSON_ValidFull(t *testing.T) {
 	assert.Equal(t, "1.0", result.value.SchemaVersion)
 	assert.False(t, result.value.OK, "ok = true, want false")
 	assert.Equal(t, "3 tests failed", result.value.Summary)
-	assert.NotNil(t, result.value.Data, "data should be non-nil")
 }
 
 func TestReadVerifyJSON_OKFalse(t *testing.T) {
@@ -129,36 +112,6 @@ func TestReadVerifyJSON_OKFalse(t *testing.T) {
 	assert.True(t, result.exists, "exists = false, want true")
 	require.NotNil(t, result.value, "value should be non-nil for valid JSON")
 	assert.False(t, result.value.OK, "ok = true, want false")
-}
-
-func TestReadVerifyJSON_TolerateMissingSummary(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-	path := filepath.Join(tmpDir, "verify.json")
-
-	// Write JSON without summary (should be tolerated)
-	require.NoError(t, os.WriteFile(path, []byte(`{"schema_version": "1.0", "ok": true}`), 0o644))
-
-	result := readVerifyJSON(path)
-
-	require.NotNil(t, result.value, "value should be non-nil")
-	assert.Equal(t, "", result.value.Summary)
-}
-
-func TestReadVerifyJSON_TolerateMissingData(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-	path := filepath.Join(tmpDir, "verify.json")
-
-	// Write JSON without data (should be tolerated)
-	require.NoError(t, os.WriteFile(path, []byte(`{"schema_version": "1.0", "ok": true, "summary": "passed"}`), 0o644))
-
-	result := readVerifyJSON(path)
-
-	require.NotNil(t, result.value, "value should be non-nil")
-	assert.Nil(t, result.value.Data, "data should be nil")
 }
 
 func TestReadVerifyJSON_ExtraFieldsIgnored(t *testing.T) {

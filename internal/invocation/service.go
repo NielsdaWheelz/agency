@@ -13,9 +13,9 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
 // SandboxMarkerFileName is the name of the marker file that identifies sandbox worktrees.
@@ -23,19 +23,19 @@ const SandboxMarkerFileName = "SANDBOX_MARKER"
 
 // Service provides invocation operations.
 type Service struct {
-	Store *store.Store
-	CR    exec.CommandRunner
-	FS    fs.FS
-	Now   func() time.Time
+	store  *store.Store
+	runner exec.CommandRunner
+	fsys   fs.FS
+	clock  func() time.Time
 }
 
 // NewService creates a new invocation service.
 func NewService(st *store.Store, cr exec.CommandRunner, fsys fs.FS, now func() time.Time) *Service {
 	return &Service{
-		Store: st,
-		CR:    cr,
-		FS:    fsys,
-		Now:   now,
+		store:  st,
+		runner: cr,
+		fsys:   fsys,
+		clock:  now,
 	}
 }
 
@@ -94,6 +94,9 @@ type CreateResult struct {
 
 	// BaseCommit is the integration branch commit at invocation start.
 	BaseCommit string
+
+	// TmuxSession is the canonical session name for headed invocations.
+	TmuxSession string
 }
 
 // Create creates a new invocation with its sandbox worktree.
@@ -113,7 +116,7 @@ type CreateResult struct {
 // On failure after any step, cleanup is performed.
 func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, error) {
 	// 1. Generate invocation_id
-	invocationID, err := core.NewRunID(s.Now())
+	invocationID, err := core.NewRunID(s.clock())
 	if err != nil {
 		return nil, errors.Wrap(errors.EInternal, "failed to generate invocation_id", err)
 	}
@@ -163,7 +166,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 	}
 
 	// 5. Create invocation directory (exclusive)
-	_, err = s.Store.EnsureInvocationDir(opts.RepoID, invocationID)
+	_, err = s.store.EnsureInvocationDir(opts.RepoID, invocationID)
 	if err != nil {
 		return nil, err
 	}
@@ -178,21 +181,21 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		if gitWorktreeCreated {
 			// Remove worktree (best-effort)
 			args := []string{"-C", opts.RepoRoot, "worktree", "remove", "--force", sandboxTreePath}
-			_, _ = s.CR.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
+			_, _ = s.runner.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
 		}
 		if branchCreated {
 			// Delete branch (best-effort)
 			args := []string{"-C", opts.RepoRoot, "branch", "-D", sandboxBranch}
-			_, _ = s.CR.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
+			_, _ = s.runner.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
 		}
 		if invocationDirCreated {
 			// Remove invocation directory (best-effort)
-			_ = s.Store.RemoveInvocationDir(opts.RepoID, invocationID)
+			_ = s.store.RemoveInvocationDir(opts.RepoID, invocationID)
 		}
 	}
 
 	// 6. Create sandbox parent directory
-	if err := s.FS.MkdirAll(filepath.Dir(sandboxTreePath), 0o700); err != nil {
+	if err := s.fsys.MkdirAll(filepath.Dir(sandboxTreePath), 0o700); err != nil {
 		cleanup()
 		return nil, errors.WrapWithDetails(
 			errors.ESandboxCreateFailed,
@@ -204,7 +207,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 
 	// 7. Capture base_commit
 	integrationBranch := opts.IntegrationWorktreeMeta.Branch
-	baseCommitResult, err := s.CR.Run(ctx, "git", []string{
+	baseCommitResult, err := s.runner.Run(ctx, "git", []string{
 		"-C", opts.RepoRoot,
 		"rev-parse", integrationBranch,
 	}, exec.RunOpts{Env: opts.Env})
@@ -239,14 +242,19 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		baseCommit,
 		opts.Runner,
 		opts.Mode,
-		s.Now(),
+		s.clock(),
 	)
 	if opts.NoIncludeUntracked {
 		meta.CheckpointIncludeUntracked = false
 	}
+	tmuxSession := ""
+	if opts.Mode == store.RunnerModeHeaded {
+		tmuxSession = tmux.SessionName(invocationID)
+		meta.TmuxSession = tmuxSession
+	}
 	meta.ClientRequestID = opts.ClientRequestID
 	meta.RequestFingerprint = opts.RequestFingerprint
-	if err := s.Store.WriteInvocationMeta(opts.RepoID, invocationID, meta); err != nil {
+	if err := s.store.WriteInvocationMeta(opts.RepoID, invocationID, meta); err != nil {
 		cleanup()
 		return nil, err
 	}
@@ -260,7 +268,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		integrationBranch,
 	}
 
-	result, err := s.CR.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
+	result, err := s.runner.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
 	if err != nil {
 		cleanup()
 		return nil, errors.WrapWithDetails(
@@ -292,7 +300,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 
 	// 10. Write SANDBOX_MARKER
 	agencyDir := filepath.Join(sandboxTreePath, ".agency")
-	if err := s.FS.MkdirAll(agencyDir, 0o755); err != nil {
+	if err := s.fsys.MkdirAll(agencyDir, 0o755); err != nil {
 		cleanup()
 		return nil, errors.WrapWithDetails(
 			errors.ESandboxCreateFailed,
@@ -304,7 +312,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 
 	markerPath := filepath.Join(agencyDir, SandboxMarkerFileName)
 	markerContent := "# This directory is a sandbox worktree.\n# Runners may execute here.\n"
-	if err := s.FS.WriteFile(markerPath, []byte(markerContent), 0o644); err != nil {
+	if err := s.fsys.WriteFile(markerPath, []byte(markerContent), 0o644); err != nil {
 		cleanup()
 		return nil, errors.WrapWithDetails(
 			errors.ESandboxCreateFailed,
@@ -332,6 +340,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		SandboxPath:   sandboxTreePath,
 		SandboxBranch: sandboxBranch,
 		BaseCommit:    baseCommit,
+		TmuxSession:   tmuxSession,
 	}, nil
 }
 
@@ -420,80 +429,10 @@ func (s *Service) validateSandboxPath(sandboxPath, integrationPath string) error
 	return nil
 }
 
-// Resolve resolves an invocation identifier (id or prefix) to a record.
-// Returns the resolved record or an error.
-func (s *Service) Resolve(repoID, input string, opts ResolveOpts) (*store.InvocationRecord, error) {
-	records, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
-	if err != nil {
-		return nil, errors.Wrap(errors.EInternal, "failed to scan invocations", err)
-	}
-
-	refs := make([]ids.InvocationRef, len(records))
-	recordMap := make(map[string]*store.InvocationRecord)
-
-	for i, r := range records {
-		status := ""
-		landingStatus := ""
-		if r.Meta != nil {
-			status = string(r.Meta.Status)
-			landingStatus = string(r.Meta.LandingStatus)
-		}
-		refs[i] = ids.InvocationRef{
-			InvocationID:          r.InvocationID,
-			RepoID:                r.RepoID,
-			IntegrationWorktreeID: r.IntegrationWorktreeID,
-			InvocationName:        r.InvocationName,
-			Status:                status,
-			LandingStatus:         landingStatus,
-			SandboxExists:         r.SandboxExists,
-			Broken:                r.Broken,
-		}
-		recordMap[r.InvocationID] = &records[i]
-	}
-
-	ref, err := ids.ResolveInvocationRef(input, refs, ids.ResolveInvocationRefOpts{
-		IncludeFinished: opts.IncludeFinished,
-		WorktreeFilter:  opts.WorktreeFilter,
-	})
-	if err != nil {
-		// Convert to agency errors
-		if _, ok := err.(*ids.ErrInvocationNotFound); ok {
-			return nil, errors.NewWithDetails(
-				errors.EInvocationNotFound,
-				"invocation not found: "+input,
-				map[string]string{"input": input},
-			)
-		}
-		if ambErr, ok := err.(*ids.ErrInvocationAmbiguous); ok {
-			candidates := make([]string, len(ambErr.Candidates))
-			for i, c := range ambErr.Candidates {
-				candidates[i] = c.InvocationID
-			}
-			return nil, errors.NewWithDetails(
-				errors.EInvocationIDAmbiguous,
-				"ambiguous invocation identifier '"+input+"' matches multiple invocations: "+strings.Join(candidates, ", "),
-				map[string]string{"input": input},
-			)
-		}
-		return nil, err
-	}
-
-	return recordMap[ref.InvocationID], nil
-}
-
-// ResolveOpts contains options for invocation resolution.
-type ResolveOpts struct {
-	// IncludeFinished allows resolving finished (landed/discarded) invocations.
-	IncludeFinished bool
-
-	// WorktreeFilter limits resolution to a specific worktree ID.
-	WorktreeFilter string
-}
-
 // checkNameUniqueness checks if an invocation name is already used by an active invocation.
 // Returns E_INVOCATION_NAME_EXISTS if the name is taken.
 func (s *Service) checkNameUniqueness(repoID, name string) error {
-	records, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
+	records, err := s.store.ScanInvocationsForRepo(repoID)
 	if err != nil {
 		return errors.Wrap(errors.EInternal, "failed to scan invocations for name check", err)
 	}

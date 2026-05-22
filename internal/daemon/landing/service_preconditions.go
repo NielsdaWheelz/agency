@@ -40,7 +40,7 @@ func (s *Service) ensureLandingBase(opts LandOpts, meta *store.InvocationMeta, h
 	)
 }
 
-func (s *Service) finalizeLand(repoID, invocationID, worktreeID string, result *LandResult) error {
+func (s *Service) finalizeLand(repoID, invocationID, worktreeID string, result *landResult) error {
 	now := s.clock().UTC().Format(time.RFC3339)
 	if err := s.store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
 		m.LandingStatus = store.LandingStatusLanded
@@ -59,7 +59,7 @@ func (s *Service) finalizeLand(repoID, invocationID, worktreeID string, result *
 		"invocation_id": invocationID,
 		"head_before":   result.IntegrationHeadBefore,
 		"head_after":    result.IntegrationHeadAfter,
-		"mode":          string(result.Mode),
+		"mode":          result.Mode,
 		"commits":       result.CommitsLanded,
 	})
 }

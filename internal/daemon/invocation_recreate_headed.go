@@ -3,8 +3,8 @@ package daemon
 import (
 	"net/http"
 	"os"
+	"slices"
 	"strings"
-	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
@@ -50,13 +50,13 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 	}
 	defer func() { _ = unlock() }()
 
-	meta, err := s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
+	meta, err := s.store.ReadInvocationMeta(record.RepoID, record.InvocationID)
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
 			s.writeHeadedError(w, http.StatusNotFound, string(errors.EInvocationNotFound), "invocation not found", "", "", requestID)
 			return
 		}
-		s.writeHeadedError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "", "", requestID)
+		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInternal), "failed to read invocation meta: "+err.Error(), "", "", requestID)
 		return
 	}
 	if meta.Mode != store.RunnerModeHeaded {
@@ -85,11 +85,12 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		return
 	}
 
-	sessionName := meta.TmuxSession
-	if sessionName == "" {
-		sessionName = tmux.SessionName(record.InvocationID)
+	sessionName, ok := headedInvocationSessionName(meta)
+	if !ok {
+		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ETmuxSessionMissing), "headed invocation is missing tmux_session", "inspect invocation metadata before recreating", "", requestID)
+		return
 	}
-	exists, err := s.TmuxClient.HasSession(ctx, sessionName)
+	exists, err := s.tmuxClient.HasSession(ctx, sessionName)
 	if err != nil && !tmux.IsNoSessionErr(err) {
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ETmuxFailed), "failed to check tmux session: "+err.Error(), "", "", requestID)
 		return
@@ -99,11 +100,11 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		_, supervised := s.processes[record.InvocationID]
 		s.mu.RUnlock()
 		if supervised {
-			if err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, meta.Runner, sessionName, append([]string(nil), meta.RunnerArgs...), append([]string(nil), meta.CustomEnvKeys...)); err != nil {
-				s.writeHeadedError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to update invocation meta: "+err.Error(), "", "", requestID)
+			if err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, meta.Runner, sessionName, slices.Clone(meta.RunnerArgs), slices.Clone(meta.CustomEnvKeys)); err != nil {
+				s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInternal), "failed to update invocation meta: "+err.Error(), "", "", requestID)
 				return
 			}
-			meta, _ = s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
+			meta, _ = s.store.ReadInvocationMeta(record.RepoID, record.InvocationID)
 			s.writeHeadedSuccess(w, record.InvocationID, meta, record.RepoID, "", requestID, true)
 			return
 		}
@@ -111,7 +112,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 			s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to restore headed supervision: "+err.Error(), "ensure tmux is still available", "", requestID)
 			return
 		}
-		meta, _ = s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
+		meta, _ = s.store.ReadInvocationMeta(record.RepoID, record.InvocationID)
 		s.writeHeadedSuccess(w, record.InvocationID, meta, record.RepoID, "", requestID, true)
 		return
 	}
@@ -170,7 +171,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		return
 	}
 	launchEnv := copyStringMap(profileEnv)
-	runnerCmd, err := config.ResolveRunnerCmd(s.Runner, s.FS, s.ConfigDir, userCfg, canonicalRunner)
+	runnerCmd, err := config.ResolveRunnerCmd(s.runner, s.fsys, s.configDir, userCfg, canonicalRunner)
 	if err != nil {
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ERunnerNotFound), "failed to resolve runner command: "+err.Error(), "ensure runner is installed and configured", "", requestID)
 		return
@@ -180,7 +181,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		return
 	}
 
-	terminalLogPath, err := s.prepareWritableInvocationLogPath(record.RepoID, record.InvocationID, "terminal")
+	terminalLogPath, err := s.prepareWritableInvocationLogPath(record.RepoID, record.InvocationID, InvocationLogKindTerminal)
 	if err != nil {
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to prepare terminal log: "+err.Error(), "", "", requestID)
 		return
@@ -192,26 +193,26 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 	}
 	_ = terminalFile.Close()
 
-	if err := s.TmuxClient.NewSession(ctx, sessionName, meta.SandboxPath, append([]string{runnerCmd}, headedRunnerArgs...), launchEnv); err != nil {
+	if err := s.tmuxClient.NewSession(ctx, sessionName, meta.SandboxPath, append([]string{runnerCmd}, headedRunnerArgs...), launchEnv); err != nil {
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to create tmux session: "+err.Error(), "ensure tmux is installed and working", "", requestID)
 		return
 	}
 	target := sessionName + ":0.0"
-	if scrollback, err := s.TmuxClient.CaptureScrollback(ctx, target); err != nil {
+	if scrollback, err := s.tmuxClient.CaptureScrollback(ctx, target); err != nil {
 		s.recordInvocationWarning(record.RepoID, record.InvocationID, "recreate_headed_tmux_capture_failed", err.Error(), map[string]any{
 			"target": target,
 		})
 	} else if scrollback != "" {
 		f, err := os.OpenFile(terminalLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 		if err != nil {
-			_ = s.TmuxClient.KillSession(ctx, sessionName)
+			_ = s.tmuxClient.KillSession(ctx, sessionName)
 			s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to append initial terminal capture: "+err.Error(), "", "", requestID)
 			return
 		}
 		_, writeErr := f.WriteString(scrollback)
 		closeErr := f.Close()
 		if writeErr != nil || closeErr != nil {
-			_ = s.TmuxClient.KillSession(ctx, sessionName)
+			_ = s.tmuxClient.KillSession(ctx, sessionName)
 			if writeErr != nil {
 				s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to append initial terminal capture: "+writeErr.Error(), "", "", requestID)
 				return
@@ -220,31 +221,27 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 			return
 		}
 	}
-	if err := s.TmuxClient.PipePane(ctx, target, terminalLogPath); err != nil {
-		_ = s.TmuxClient.KillSession(ctx, sessionName)
+	if err := s.tmuxClient.PipePane(ctx, target, terminalLogPath); err != nil {
+		_ = s.tmuxClient.KillSession(ctx, sessionName)
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to pipe tmux pane output: "+err.Error(), "ensure tmux pipe-pane is available", "", requestID)
 		return
 	}
 
-	runnerArgs := append([]string(nil), meta.RunnerArgs...)
-	if err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, canonicalRunner, sessionName, runnerArgs, append([]string(nil), meta.CustomEnvKeys...)); err != nil {
-		_ = s.TmuxClient.KillSession(ctx, sessionName)
-		s.writeHeadedError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to update invocation meta: "+err.Error(), "", "", requestID)
+	runnerArgs := slices.Clone(meta.RunnerArgs)
+	if err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, canonicalRunner, sessionName, runnerArgs, slices.Clone(meta.CustomEnvKeys)); err != nil {
+		_ = s.tmuxClient.KillSession(ctx, sessionName)
+		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInternal), "failed to update invocation meta: "+err.Error(), "", "", requestID)
 		return
 	}
 
-	streamLogPath := s.Store.InvocationStreamLogPath(record.RepoID, record.InvocationID)
-	parser := stream.NewParser(record.InvocationID, canonicalRunner, s.Clock)
+	streamLogPath := s.store.InvocationStreamLogPath(record.RepoID, record.InvocationID)
+	parser := stream.NewParser(record.InvocationID, canonicalRunner, s.clock)
 	parser.SetInitialSeq(loadMaxStreamSeq(streamLogPath))
-	checkpointsDir := s.Store.InvocationDir(record.RepoID, record.InvocationID)
-	eventsPath := s.Store.InvocationEventsPath(record.RepoID, record.InvocationID)
+	checkpointsDir := s.store.InvocationDir(record.RepoID, record.InvocationID)
+	eventsPath := s.store.InvocationEventsPath(record.RepoID, record.InvocationID)
 	cpConfig := checkpoint.DefaultConfig()
 	cpConfig.IncludeUntracked = meta.CheckpointIncludeUntracked
 	cpConfig.Env = prSyncNonInteractiveEnv(launchEnv)
-	if s.CheckpointDebounceOverride != nil {
-		cpConfig.DebounceInterval = *s.CheckpointDebounceOverride
-		cpConfig.DriftInterval = *s.CheckpointDebounceOverride
-	}
 	cpEngine := checkpoint.NewEngineWithWriter(
 		record.InvocationID,
 		record.RepoID,
@@ -253,69 +250,42 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		checkpointsDir,
 		eventsPath,
 		cpConfig,
-		s.Runner,
-		s.FS,
-		s.Clock,
-		s.InvocationEvents,
+		s.runner,
+		s.fsys,
+		s.clock,
+		s.invocationEvents,
 	)
-	cpEngine.SetGitIgnoredDirs(checkpoint.ReadGitIgnoredDirs(meta.SandboxPath))
-	triggerCh := make(chan checkpoint.TriggerEvent, 32)
-	cpEngine.SetTriggerChannel(triggerCh)
-
-	proc := &SupervisedProcess{
-		InvocationID:          record.InvocationID,
-		RepoID:                record.RepoID,
-		IntegrationWorktreeID: meta.IntegrationWorktreeID,
-		Mode:                  "headed",
-		TmuxSession:           sessionName,
-		SandboxPath:           meta.SandboxPath,
-		StreamLogFile:         streamLogPath,
-		Runner:                canonicalRunner,
-		RepoRoot:              repoRoot,
-		RunnerArgs:            runnerArgs,
-		Env:                   copyStringMap(launchEnv),
-		NoIncludeUntracked:    !meta.CheckpointIncludeUntracked,
-		Parser:                parser,
-		CheckpointEngine:      cpEngine,
+	s.configureCheckpointIgnoredDirs(daemonOwnedContext(ctx), record.RepoID, record.InvocationID, cpEngine, meta.SandboxPath, cpConfig.Env)
+	proc := &supervisedProcess{
+		invocationID:          record.InvocationID,
+		repoID:                record.RepoID,
+		integrationWorktreeID: meta.IntegrationWorktreeID,
+		mode:                  "headed",
+		tmuxSession:           sessionName,
+		sandboxPath:           meta.SandboxPath,
+		runner:                canonicalRunner,
+		repoRoot:              repoRoot,
+		runnerArgs:            runnerArgs,
+		env:                   copyStringMap(launchEnv),
+		noIncludeUntracked:    !meta.CheckpointIncludeUntracked,
+		parser:                parser,
+		checkpointEngine:      cpEngine,
 		done:                  make(chan struct{}),
 	}
-	parser.SetCheckpointNotify(func(n stream.CheckpointNotification) {
-		trigger := checkpoint.TriggerEvent{
-			Kind:      checkpoint.TriggerToolEnd,
-			ToolName:  n.ToolName,
-			ToolNames: n.ToolNames,
-			Seq:       n.Seq,
-		}
-		select {
-		case triggerCh <- trigger:
-			return
-		default:
-		}
-
-		timer := time.NewTimer(250 * time.Millisecond)
-		defer timer.Stop()
-		select {
-		case triggerCh <- trigger:
-		case <-timer.C:
-			s.recordInvocationWarning(record.RepoID, record.InvocationID, "checkpoint_trigger_dropped", "checkpoint trigger queue full; dropped semantic trigger", map[string]any{
-				"seq":       n.Seq,
-				"tool_name": n.ToolName,
-			})
-		}
-	})
+	s.attachCheckpointTriggers(record.RepoID, record.InvocationID, parser, cpEngine)
 	parser.SetFinalNotify(func(n stream.FinalNotification) {
 		s.handleSuccessfulFinalNotification(proc, n)
 	})
 	parser.SetSessionStartNotify(func(n stream.SessionStartNotification) {
-		proc.SetResumeSessionID(n.SessionID)
+		proc.setResumeSessionID(n.SessionID)
 	})
 
-	if _, err := s.InvocationEvents.Append(eventsPath, record.InvocationID, "agency.headed_recreated", map[string]any{
+	if _, err := s.invocationEvents.Append(eventsPath, record.InvocationID, "agency.headed_recreated", map[string]any{
 		"tmux_session": sessionName,
 	}, eventlog.AppendOptions{}); err != nil {
-		_ = s.TmuxClient.KillSession(ctx, sessionName)
+		_ = s.tmuxClient.KillSession(ctx, sessionName)
 		s.failInvocationStart(record.RepoID, record.InvocationID, "event_append_failed", true)
-		s.writeHeadedError(w, http.StatusInternalServerError, "E_INTERNAL", "failed to append recreate event: "+err.Error(), "", "", requestID)
+		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInternal), "failed to append recreate event: "+err.Error(), "", "", requestID)
 		return
 	}
 
@@ -324,6 +294,6 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 	go s.runOutputFlushLoop(proc)
 	go s.runCheckpointLoop(proc)
 
-	meta, _ = s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
+	meta, _ = s.store.ReadInvocationMeta(record.RepoID, record.InvocationID)
 	s.writeHeadedSuccess(w, record.InvocationID, meta, record.RepoID, "", requestID, false)
 }

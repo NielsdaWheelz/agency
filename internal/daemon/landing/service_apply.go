@@ -12,7 +12,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
-func (s *Service) landApply(ctx context.Context, opts LandOpts, meta *store.InvocationMeta, integrationPath, headBefore string) (*LandResult, error) {
+func (s *Service) landApply(ctx context.Context, opts LandOpts, meta *store.InvocationMeta, integrationPath, headBefore string) (*landResult, error) {
 	patchPath, err := s.prepareApplyPatch(ctx, opts, meta)
 	if err != nil {
 		return nil, err
@@ -31,8 +31,8 @@ func (s *Service) landApply(ctx context.Context, opts LandOpts, meta *store.Invo
 		return nil, errors.Wrap(errors.ELandFailed, "failed to capture new integration HEAD", err)
 	}
 
-	return &LandResult{
-		Mode:                  ModeApplyPatch,
+	return &landResult{
+		Mode:                  modeApplyPatch,
 		IntegrationHeadBefore: headBefore,
 		IntegrationHeadAfter:  headAfter,
 		CommitsLanded:         1,

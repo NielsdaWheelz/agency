@@ -29,6 +29,22 @@ func (e *Engine) getGitDir(ctx context.Context) (string, error) {
 	return gitDir, nil
 }
 
+// DiscoverGitIgnoredDirs returns gitignored directories using git's own
+// exclude-standard resolution.
+func DiscoverGitIgnoredDirs(ctx context.Context, runner exec.CommandRunner, sandboxPath string, env map[string]string) (map[string]bool, error) {
+	result, err := runner.Run(ctx, "git", []string{
+		"-C", sandboxPath,
+		"ls-files", "--others", "--ignored", "--exclude-standard", "--directory",
+	}, exec.RunOpts{Env: env})
+	if err != nil {
+		return nil, err
+	}
+	if result.ExitCode != 0 {
+		return nil, fmt.Errorf("git ls-files ignored dirs failed: %s", result.Stderr)
+	}
+	return parseGitIgnoredDirs(sandboxPath, result.Stdout), nil
+}
+
 func (e *Engine) checkDenylist(ctx context.Context) ([]string, error) {
 	result, err := e.runner.Run(ctx, "git", []string{
 		"-C", e.sandboxPath,
@@ -62,7 +78,7 @@ func (e *Engine) checkDenylist(ctx context.Context) ([]string, error) {
 }
 
 func matchesDenylist(basename string) bool {
-	for _, pattern := range DenylistPatterns {
+	for _, pattern := range denylistPatterns {
 		if pattern == basename {
 			return true
 		}

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/NielsdaWheelz/agency/internal/daemonclient"
+	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 )
@@ -46,7 +46,7 @@ func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		repoID = repoCtx.RepoID
 	}
 
-	result, fetchErr := ns.client.ListWorktrees(ctx, daemonclient.ListWorktreesOpts{
+	worktrees, fetchErr := ns.client.DrainWorktrees(ctx, daemon.ListWorktreesParams{
 		RepoID: repoID,
 		State:  state,
 	})
@@ -56,14 +56,14 @@ func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	if opts.JSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(result.Data.Worktrees)
+		return enc.Encode(worktrees)
 	}
-	if len(result.Data.Worktrees) == 0 {
+	if len(worktrees) == 0 {
 		_, _ = fmt.Fprintln(stdout, "No integration worktrees found.")
 		return nil
 	}
 
-	for _, wt := range result.Data.Worktrees {
+	for _, wt := range worktrees {
 		worktreeName := wt.WorktreeName
 		worktreeLabel := wt.WorktreeID
 		if worktreeName != "" {

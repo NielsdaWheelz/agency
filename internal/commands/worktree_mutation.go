@@ -85,7 +85,9 @@ func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		}
 	}
 
-	if _, err := ns.client.WorktreeRm(ctx, repoCtx.RepoID, opts.WorktreeRef, opts.Force); err != nil {
+	if _, err := ns.client.WorktreeRm(ctx, repoCtx.RepoID, opts.WorktreeRef, daemon.WorktreeRmRequest{
+		Force: opts.Force,
+	}); err != nil {
 		return err
 	}
 
@@ -126,7 +128,7 @@ func WorktreePRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 		return fail(err)
 	}
 
-	resp, err := ns.client.WorktreePRSync(ctx, opts.WorktreeRef, repoCtx.RepoID, daemonclient.WorktreePRSyncOpts{
+	resp, err := ns.client.WorktreePRSync(ctx, opts.WorktreeRef, repoCtx.RepoID, daemon.WorktreePRSyncRequest{
 		AllowDirty:     opts.AllowDirty,
 		ForceWithLease: opts.ForceWithLease,
 	})
@@ -263,7 +265,7 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 		agencyConfigPath = filepath.Join(cwd, agencyConfigPath)
 	}
 
-	resp, err := ns.client.WorktreePRMerge(ctx, opts.WorktreeRef, repoCtx.RepoID, daemonclient.WorktreePRMergeOpts{
+	resp, err := ns.client.WorktreePRMerge(ctx, opts.WorktreeRef, repoCtx.RepoID, daemon.WorktreePRMergeRequest{
 		Strategy:         strategy,
 		ConfirmationMode: confirmationMode,
 		Confirmed:        confirmed,

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"maps"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
@@ -18,7 +19,7 @@ func (s *Server) resolveExecutionContext(repoRoot, repoID, agencyConfigPath, pro
 	if err != nil {
 		return executionContext{}, err
 	}
-	agencyCfg, err := config.ResolveAgencyConfig(s.FS, repoRoot, s.ConfigDir, repoID, strings.TrimSpace(agencyConfigPath))
+	agencyCfg, err := config.ResolveAgencyConfig(s.fsys, repoRoot, s.configDir, repoID, strings.TrimSpace(agencyConfigPath))
 	if err != nil {
 		return executionContext{}, err
 	}
@@ -51,13 +52,11 @@ func envForLaunch(profileEnv, requestEnv map[string]string) map[string]string {
 	if len(profileEnv) == 0 && len(requestEnv) == 0 {
 		return nil
 	}
-	env := make(map[string]string, len(profileEnv)+len(requestEnv))
-	for k, v := range profileEnv {
-		env[k] = v
+	env := maps.Clone(profileEnv)
+	if env == nil {
+		env = make(map[string]string, len(requestEnv))
 	}
-	for k, v := range requestEnv {
-		env[k] = v
-	}
+	maps.Copy(env, requestEnv)
 	return env
 }
 

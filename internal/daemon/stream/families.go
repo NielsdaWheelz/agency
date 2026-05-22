@@ -3,16 +3,15 @@ package stream
 import "strings"
 
 const (
-	ActionFamilyCommandExecution = "command_execution"
-	ActionFamilyFileRead         = "file_read"
-	ActionFamilyFileChange       = "file_change"
-	ActionFamilySearch           = "search"
-	ActionFamilyWebAction        = "web_action"
-	ActionFamilyToolActivity     = "tool_activity"
+	actionFamilyCommandExecution = "command_execution"
+	actionFamilyFileRead         = "file_read"
+	actionFamilyFileChange       = "file_change"
+	actionFamilySearch           = "search"
+	actionFamilyWebAction        = "web_action"
 
-	MessageFamilyAssistant  = "assistant"
-	MessageFamilyPrompt     = "prompt"
-	MessageFamilyToolResult = "tool_result"
+	messageFamilyAssistant  = "assistant"
+	messageFamilyPrompt     = "prompt"
+	messageFamilyToolResult = "tool_result"
 )
 
 const unparsedEventPreviewBytes = 4096
@@ -20,23 +19,23 @@ const unparsedEventPreviewBytes = 4096
 func actionFamilyForToolName(name string) string {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "bash", "shell", "command", "command_execution":
-		return ActionFamilyCommandExecution
+		return actionFamilyCommandExecution
 	case "read":
-		return ActionFamilyFileRead
+		return actionFamilyFileRead
 	case "edit", "write", "multiedit", "notebookedit", "filechange", "file_change":
-		return ActionFamilyFileChange
+		return actionFamilyFileChange
 	case "glob", "grep", "search":
-		return ActionFamilySearch
+		return actionFamilySearch
 	case "websearch", "webfetch", "browser":
-		return ActionFamilyWebAction
+		return actionFamilyWebAction
 	default:
-		return ActionFamilyToolActivity
+		return "tool_activity"
 	}
 }
 
-func newUnknownRunnerEvent(rawType, reason string, line []byte) *NormalizedEvent {
-	event := &NormalizedEvent{
-		Kind: EventKindUnknown,
+func newUnknownRunnerEvent(rawType, reason string, line []byte) *normalizedEvent {
+	event := &normalizedEvent{
+		Kind: eventKindUnknown,
 		Data: map[string]interface{}{},
 	}
 

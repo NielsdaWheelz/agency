@@ -37,7 +37,7 @@ func TestHandleWorktreeRebase_DirtyWorktreeRejected(t *testing.T) {
 
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 
 	_ = setupWorktreeMutationReadyState(t, env)
 	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{
@@ -64,7 +64,7 @@ func TestHandleWorktreeRebase_RebaseConflictAbortsAndReturnsTypedError(t *testin
 
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 
 	_ = setupWorktreeMutationReadyState(t, env)
 	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
@@ -97,7 +97,7 @@ func TestHandleWorktreeRebase_FetchFailureReturnsTypedError(t *testing.T) {
 
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 
 	_ = setupWorktreeMutationReadyState(t, env)
 	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}
@@ -127,7 +127,7 @@ func TestHandleWorktreeRebase_Success(t *testing.T) {
 
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 
 	_ = setupWorktreeMutationReadyState(t, env)
 	fakeRunner.Responses["git status --porcelain --untracked-files=all"] = testutil.FakeResponse{Stdout: "", ExitCode: 0}

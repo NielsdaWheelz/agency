@@ -43,7 +43,7 @@ type InitResult struct {
 	AgencyJSONSource string
 	AgencyJSONState  string // "created" or "overwritten"
 	ScriptsCreated   []string
-	GitignoreState   scaffold.GitignoreResult
+	GitignoreState   string
 	ClaudeMDState    string // "created", "exists", or "skipped"
 }
 
@@ -134,21 +134,22 @@ func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 	}
 
 	// Create stub scripts (never overwrite existing)
-	stubsResult, err := scaffold.CreateStubs(fsys, configRoot)
+	scriptsCreated, err := scaffold.CreateStubs(fsys, configRoot)
 	if err != nil {
 		return errors.Wrap(errors.ENoRepo, "failed to create stub scripts", err)
 	}
 
 	// Handle .gitignore
-	var gitignoreState scaffold.GitignoreResult
+	var gitignoreState string
 	if !opts.RepoConfig || opts.NoGitignore {
-		gitignoreState = scaffold.GitignoreSkipped
+		gitignoreState = "skipped"
 	} else {
 		gitignorePath := filepath.Join(repoRoot.Path, ".gitignore")
-		gitignoreState, err = scaffold.EnsureGitignore(fsys, gitignorePath)
+		result, err := scaffold.EnsureGitignore(fsys, gitignorePath)
 		if err != nil {
 			return errors.Wrap(errors.ENoRepo, "failed to update .gitignore", err)
 		}
+		gitignoreState = string(result)
 	}
 
 	// Create CLAUDE.md (runner protocol file)
@@ -170,7 +171,7 @@ func Init(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, op
 		AgencyJSONPath:   agencyJSONPath,
 		AgencyJSONSource: agencyJSONSource,
 		AgencyJSONState:  agencyJSONState,
-		ScriptsCreated:   stubsResult.Created,
+		ScriptsCreated:   scriptsCreated,
 		GitignoreState:   gitignoreState,
 		ClaudeMDState:    claudeMDState,
 	}

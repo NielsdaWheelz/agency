@@ -270,7 +270,7 @@ func (s *Store) EnsureInvocationDir(repoID, invocationID string) (string, error)
 
 	// Ensure parent directories exist (invocations/)
 	parentDir := s.InvocationsDir(repoID)
-	if err := s.FS.MkdirAll(parentDir, 0o700); err != nil {
+	if err := s.fsys.MkdirAll(parentDir, 0o700); err != nil {
 		return "", errors.WrapWithDetails(
 			errors.EInvocationCreateFailed,
 			"failed to create invocations directory",
@@ -302,7 +302,7 @@ func (s *Store) EnsureInvocationDir(repoID, invocationID string) (string, error)
 // EnsureInvocationLogsDir creates the invocation-owned logs directory.
 func (s *Store) EnsureInvocationLogsDir(repoID, invocationID string) (string, error) {
 	logsDir := s.InvocationLogsDir(repoID, invocationID)
-	if err := s.FS.MkdirAll(logsDir, 0o700); err != nil {
+	if err := s.fsys.MkdirAll(logsDir, 0o700); err != nil {
 		return "", errors.WrapWithDetails(
 			errors.EInvocationCreateFailed,
 			"failed to create invocation logs directory",
@@ -310,7 +310,7 @@ func (s *Store) EnsureInvocationLogsDir(repoID, invocationID string) (string, er
 			map[string]string{"logs_dir": logsDir},
 		)
 	}
-	if err := s.FS.Chmod(logsDir, 0o700); err != nil {
+	if err := s.fsys.Chmod(logsDir, 0o700); err != nil {
 		return "", errors.WrapWithDetails(
 			errors.EInvocationCreateFailed,
 			"failed to enforce invocation logs directory permissions",
@@ -321,31 +321,11 @@ func (s *Store) EnsureInvocationLogsDir(repoID, invocationID string) (string, er
 	return logsDir, nil
 }
 
-// PrepareInvocationLogPath ensures the invocation-owned logs directory exists
-// before returning the canonical path.
-func (s *Store) PrepareInvocationLogPath(repoID, invocationID, kind string) (string, error) {
-	if _, err := s.EnsureInvocationLogsDir(repoID, invocationID); err != nil {
-		return "", err
-	}
-	switch kind {
-	case "stderr":
-		return s.InvocationStderrLogPath(repoID, invocationID), nil
-	case "stream":
-		return s.InvocationStreamLogPath(repoID, invocationID), nil
-	case "hooks":
-		return s.InvocationHooksLogPath(repoID, invocationID), nil
-	case "terminal":
-		return s.InvocationTerminalLogPath(repoID, invocationID), nil
-	default:
-		return s.InvocationRawLogPath(repoID, invocationID), nil
-	}
-}
-
 // WriteInvocationMeta writes the meta.json for an invocation atomically.
 func (s *Store) WriteInvocationMeta(repoID, invocationID string, meta *InvocationMeta) error {
 	metaPath := s.InvocationMetaPath(repoID, invocationID)
 
-	if err := fs.WriteJSONAtomic(metaPath, meta, 0o600); err != nil {
+	if err := fs.WriteJSONAtomic(s.fsys, metaPath, meta, 0o600); err != nil {
 		return errors.WrapWithDetails(
 			errors.EMetaWriteFailed,
 			"failed to write invocation meta.json atomically",
@@ -374,7 +354,7 @@ func (s *Store) UpdateInvocationMeta(repoID, invocationID string, updateFn func(
 	updateFn(meta)
 
 	// Write back atomically
-	if err := fs.WriteJSONAtomic(metaPath, meta, 0o600); err != nil {
+	if err := fs.WriteJSONAtomic(s.fsys, metaPath, meta, 0o600); err != nil {
 		return errors.WrapWithDetails(
 			errors.EMetaWriteFailed,
 			"failed to write invocation meta.json atomically",
@@ -392,7 +372,7 @@ func (s *Store) UpdateInvocationMeta(repoID, invocationID string, updateFn func(
 func (s *Store) ReadInvocationMeta(repoID, invocationID string) (*InvocationMeta, error) {
 	metaPath := s.InvocationMetaPath(repoID, invocationID)
 
-	data, err := s.FS.ReadFile(metaPath)
+	data, err := s.fsys.ReadFile(metaPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, errors.NewWithDetails(

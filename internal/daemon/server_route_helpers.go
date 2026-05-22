@@ -3,13 +3,12 @@ package daemon
 import (
 	"net/http"
 	"strings"
+
+	"github.com/NielsdaWheelz/agency/internal/errors"
 )
 
 func trimRoutePrefix(path, prefix string) (string, bool) {
-	if !strings.HasPrefix(path, prefix) {
-		return "", false
-	}
-	return strings.TrimPrefix(path, prefix), true
+	return strings.CutPrefix(path, prefix)
 }
 
 func routePathEquals(path, route string) bool {
@@ -30,6 +29,14 @@ func (s *Server) requireMethod(w http.ResponseWriter, r *http.Request, method st
 	if r.Method == method {
 		return true
 	}
-	s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+	s.writeError(w, http.StatusMethodNotAllowed, string(errors.EMethodNotAllowed), "method not allowed", "")
+	return false
+}
+
+func (s *Server) requireAPIResponseMethod(w http.ResponseWriter, r *http.Request, method string) bool {
+	if r.Method == method {
+		return true
+	}
+	s.writeAPIError(w, http.StatusMethodNotAllowed, getOrCreateRequestID(r), string(errors.EMethodNotAllowed), "method not allowed", "", nil)
 	return false
 }

@@ -63,7 +63,7 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	insideManagedTree, err := s.isInsideAgencyManagedTree(repoRoot)
 	if err != nil {
-		s.writeWorktreeError(w, http.StatusInternalServerError, "E_INTERNAL",
+		s.writeWorktreeError(w, http.StatusInternalServerError, string(errors.EInternal),
 			"failed to inspect managed worktrees: "+err.Error(), "")
 		return
 	}
@@ -75,7 +75,7 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Derive git root via git rev-parse --show-toplevel
-	gitRoot, err := git.GetRepoRoot(ctx, s.Runner, repoRoot, nil)
+	gitRoot, err := git.GetRepoRoot(ctx, s.runner, repoRoot, nil)
 	if err != nil {
 		s.writeWorktreeError(w, http.StatusBadRequest, string(errors.ENoRepo),
 			"repo_root is not inside a git repository: "+err.Error(), "")
@@ -84,7 +84,7 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 	repoRoot = gitRoot.Path
 
 	// Derive repo identity.
-	originInfo := git.GetOriginInfo(ctx, s.Runner, repoRoot, nil)
+	originInfo := git.GetOriginInfo(ctx, s.runner, repoRoot, nil)
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot, originInfo.URL)
 	execCtx, err := s.resolveExecutionContext(repoRoot, repoIdentity.RepoID, "", "")
 	if err != nil {
@@ -110,7 +110,7 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if record, exists, conflict, err := s.findWorktreeByIdempotencyKey(repoIdentity.RepoID, req.IdempotencyKey, fingerprint); err != nil {
-		s.writeWorktreeError(w, http.StatusInternalServerError, "E_INTERNAL",
+		s.writeWorktreeError(w, http.StatusInternalServerError, string(errors.EInternal),
 			"failed to scan worktrees for idempotency: "+err.Error(), "")
 		return
 	} else if exists {
@@ -126,7 +126,7 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 				"inspect worktree state before retrying")
 			return
 		}
-		s.recordWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey, record.WorktreeID, fingerprint, record.Meta.TreePath, record.Meta.Branch)
+		s.recordWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey, record.WorktreeID, fingerprint)
 		s.writeWorktreeSuccess(w, record.WorktreeID, record.Meta.TreePath, record.Meta.Branch, repoIdentity.RepoID, record.Meta.ExecutionProfile, record.Meta.CheckoutRoot)
 		return
 	}
@@ -142,7 +142,7 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 				"repository is locked by another operation", "wait for the other operation to complete")
 			return
 		}
-		s.writeWorktreeError(w, http.StatusInternalServerError, "E_INTERNAL",
+		s.writeWorktreeError(w, http.StatusInternalServerError, string(errors.EInternal),
 			"failed to acquire repo lock: "+err.Error(), "")
 		return
 	}
@@ -164,7 +164,7 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if record, exists, conflict, err := s.findWorktreeByIdempotencyKey(repoIdentity.RepoID, req.IdempotencyKey, fingerprint); err != nil {
-		s.writeWorktreeError(w, http.StatusInternalServerError, "E_INTERNAL",
+		s.writeWorktreeError(w, http.StatusInternalServerError, string(errors.EInternal),
 			"failed to scan worktrees for idempotency: "+err.Error(), "")
 		return
 	} else if exists {
@@ -180,26 +180,26 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 				"inspect worktree state before retrying")
 			return
 		}
-		s.recordWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey, record.WorktreeID, fingerprint, record.Meta.TreePath, record.Meta.Branch)
+		s.recordWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey, record.WorktreeID, fingerprint)
 		s.writeWorktreeSuccess(w, record.WorktreeID, record.Meta.TreePath, record.Meta.Branch, repoIdentity.RepoID, record.Meta.ExecutionProfile, record.Meta.CheckoutRoot)
 		return
 	}
 
 	// Ensure repo is registered.
 	if err := s.ensureRepoRegistered(repoIdentity, repoRoot); err != nil {
-		s.writeWorktreeError(w, http.StatusInternalServerError, "E_INTERNAL",
+		s.writeWorktreeError(w, http.StatusInternalServerError, string(errors.EInternal),
 			"failed to register repo: "+err.Error(), "")
 		return
 	}
 
 	// Write/update repo.json.
 	if err := s.ensureRepoRecord(repoIdentity, repoRoot, originInfo); err != nil {
-		s.writeWorktreeError(w, http.StatusInternalServerError, "E_INTERNAL",
+		s.writeWorktreeError(w, http.StatusInternalServerError, string(errors.EInternal),
 			"failed to write repo.json: "+err.Error(), "")
 		return
 	}
 
-	wtSvc := integrationworktree.NewService(s.Store, s.Runner, s.FS, s.Clock)
+	wtSvc := integrationworktree.NewService(s.store, s.runner, s.fsys, s.clock)
 	createResult, err := wtSvc.Create(ctx, integrationworktree.CreateOpts{
 		Name:               req.Name,
 		RepoRoot:           repoRoot,
@@ -218,18 +218,18 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Record idempotency entry.
-	s.recordWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey, createResult.WorktreeID, fingerprint, createResult.TreePath, createResult.Branch)
+	s.recordWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey, createResult.WorktreeID, fingerprint)
 
 	// Return success.
 	s.writeWorktreeSuccess(w, createResult.WorktreeID, createResult.TreePath, createResult.Branch, repoIdentity.RepoID, execCtx.Profile, execCtx.CheckoutRoot)
 }
 
-func (s *Server) writeIdempotentWorktreeCreate(w http.ResponseWriter, repoID string, entry WorktreeIdempotencyEntry) bool {
-	if entry.WorktreeID == "" {
+func (s *Server) writeIdempotentWorktreeCreate(w http.ResponseWriter, repoID string, entry worktreeIdempotencyEntry) bool {
+	if entry.worktreeID == "" {
 		return false
 	}
-	if meta, err := s.Store.ReadIntegrationWorktreeMeta(repoID, entry.WorktreeID); err == nil && meta != nil {
-		s.writeWorktreeSuccess(w, entry.WorktreeID, meta.TreePath, meta.Branch, repoID, meta.ExecutionProfile, meta.CheckoutRoot)
+	if meta, err := s.store.ReadIntegrationWorktreeMeta(repoID, entry.worktreeID); err == nil && meta != nil {
+		s.writeWorktreeSuccess(w, entry.worktreeID, meta.TreePath, meta.Branch, repoID, meta.ExecutionProfile, meta.CheckoutRoot)
 		return true
 	}
 	return false
@@ -254,7 +254,7 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 		return
 	}
 
-	wtSvc := integrationworktree.NewService(s.Store, s.Runner, s.FS, s.Clock)
+	wtSvc := integrationworktree.NewService(s.store, s.runner, s.fsys, s.clock)
 	record, err := wtSvc.Resolve(repoID, worktreeRef, true)
 	if err != nil {
 		code := errors.CodeOr(err, errors.EInternal)
@@ -275,9 +275,9 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 	}
 
 	// Load repo record to get repo_root
-	repoRecord, exists, err := s.Store.LoadRepoRecord(repoID)
+	repoRecord, exists, err := s.store.LoadRepoRecord(repoID)
 	if err != nil {
-		s.writeWorktreeRmError(w, http.StatusInternalServerError, "E_INTERNAL",
+		s.writeWorktreeRmError(w, http.StatusInternalServerError, string(errors.EInternal),
 			"failed to load repo record: "+err.Error(), "")
 		return
 	}
@@ -295,7 +295,7 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 		}
 	}
 	if repoRoot == "" {
-		s.writeWorktreeRmError(w, http.StatusInternalServerError, "E_INTERNAL",
+		s.writeWorktreeRmError(w, http.StatusInternalServerError, string(errors.EInternal),
 			"repo root is not accessible from repo.json", "")
 		return
 	}
@@ -309,13 +309,13 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 				"repository is locked by another operation", "wait for the other operation to complete")
 			return
 		}
-		s.writeWorktreeRmError(w, http.StatusInternalServerError, "E_INTERNAL",
+		s.writeWorktreeRmError(w, http.StatusInternalServerError, string(errors.EInternal),
 			"failed to acquire repo lock: "+err.Error(), "")
 		return
 	}
 	defer func() { _ = unlock() }()
 
-	latestMeta, err := s.Store.ReadIntegrationWorktreeMeta(repoID, record.WorktreeID)
+	latestMeta, err := s.store.ReadIntegrationWorktreeMeta(repoID, record.WorktreeID)
 	if err != nil {
 		code := errors.CodeOr(err, errors.EWorktreeBroken)
 		s.writeWorktreeRmError(w, http.StatusBadRequest, string(code), apiErrorMessage(err), "inspect or recreate the worktree")
@@ -328,7 +328,7 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 	}
 
 	treeMissing := false
-	if info, err := s.FS.Stat(record.Meta.TreePath); err != nil {
+	if info, err := s.fsys.Stat(record.Meta.TreePath); err != nil {
 		if os.IsNotExist(err) {
 			treeMissing = true
 		} else {
@@ -363,7 +363,7 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 	}
 
 	if req.Force && len(unresolved) > 0 {
-		discardSvc := landing.NewServiceWithWriter(s.Store, s.Runner, s.FS, s.Clock, s.InvocationEvents)
+		discardSvc := landing.NewService(s.store, s.runner, s.fsys, s.clock, s.invocationEvents)
 		for _, invocation := range unresolved {
 			profileEnv, err := s.executionProfileEnv(invocation.Meta.ExecutionProfile)
 			if err != nil {
@@ -386,7 +386,7 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 	}
 
 	if treeMissing {
-		if err := s.Store.UpdateIntegrationWorktreeMeta(repoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
+		if err := s.store.UpdateIntegrationWorktreeMeta(repoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
 			m.State = store.WorktreeStateArchived
 		}); err != nil {
 			s.writeWorktreeRmError(w, http.StatusInternalServerError, string(errors.EWorktreeRemoveFailed),
@@ -416,7 +416,7 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 
 	// Check if tree is dirty (unless force)
 	if !req.Force {
-		clean, err := git.IsClean(ctx, s.Runner, record.Meta.TreePath, worktreeEnv)
+		clean, err := git.IsClean(ctx, s.runner, record.Meta.TreePath, worktreeEnv)
 		if err != nil {
 			s.writeWorktreeRmError(w, http.StatusInternalServerError, string(errors.EWorktreeRemoveFailed),
 				"failed to check worktree cleanliness: "+err.Error(), "")
@@ -439,7 +439,7 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 	removeCtx, cancel := context.WithTimeout(ctx, worktreeRmGitRemoveTimeout)
 	defer cancel()
 
-	result, runErr := s.Runner.Run(removeCtx, "git", args, exec.RunOpts{Env: worktreeEnv})
+	result, runErr := s.runner.Run(removeCtx, "git", args, exec.RunOpts{Env: worktreeEnv})
 	if runErr != nil {
 		if stderrors.Is(runErr, context.DeadlineExceeded) {
 			s.writeWorktreeRmError(w, http.StatusInternalServerError, string(errors.EWorktreeRemoveFailed),
@@ -466,7 +466,7 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 	}
 
 	// Update meta.json to archived state
-	err = s.Store.UpdateIntegrationWorktreeMeta(repoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
+	err = s.store.UpdateIntegrationWorktreeMeta(repoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
 		m.State = store.WorktreeStateArchived
 	})
 	if err != nil {
@@ -482,14 +482,14 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 // ensureRepoRecord writes/updates repo.json for the repo.
 func (s *Server) ensureRepoRecord(repoIdentity identity.RepoIdentity, repoRoot string, originInfo git.OriginInfo) error {
 	// Check if repo record exists
-	existing, exists, err := s.Store.LoadRepoRecord(repoIdentity.RepoID)
+	existing, exists, err := s.store.LoadRepoRecord(repoIdentity.RepoID)
 	if err != nil {
 		return err
 	}
 
 	// Create repo directory if needed
-	repoDir := s.Store.RepoDir(repoIdentity.RepoID)
-	if err := s.FS.MkdirAll(repoDir, 0o700); err != nil {
+	repoDir := s.store.RepoDir(repoIdentity.RepoID)
+	if err := s.fsys.MkdirAll(repoDir, 0o700); err != nil {
 		return fmt.Errorf("failed to create repo directory: %w", err)
 	}
 
@@ -506,10 +506,10 @@ func (s *Server) ensureRepoRecord(repoIdentity identity.RepoIdentity, repoRoot s
 
 	var rec store.RepoRecord
 	if exists {
-		rec = s.Store.UpsertRepoRecord(&existing, input)
+		rec = s.store.UpsertRepoRecord(&existing, input)
 	} else {
-		rec = s.Store.UpsertRepoRecord(nil, input)
+		rec = s.store.UpsertRepoRecord(nil, input)
 	}
 
-	return s.Store.SaveRepoRecord(rec)
+	return s.store.SaveRepoRecord(rec)
 }

@@ -10,8 +10,8 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
-// NewRootCmd creates the root cobra command for agency.
-func NewRootCmd() *cobra.Command {
+// newRootCmd creates the root cobra command for agency.
+func newRootCmd() *cobra.Command {
 	repoCmd := newRepoCmd()
 	repoCmd.GroupID = "workflow"
 
@@ -101,7 +101,7 @@ Setup commands like init and doctor operate on one checkout path. If you omit
 // Execute runs the root command with the given output writers.
 // This is the main entry point from main.go.
 func Execute(stdout, stderr io.Writer) (bool, error) {
-	rootCmd := NewRootCmd()
+	rootCmd := newRootCmd()
 	rootCmd.SetOut(stdout)
 	rootCmd.SetErr(stderr)
 	rootCmd.SetArgs(os.Args[1:])

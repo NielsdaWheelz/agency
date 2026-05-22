@@ -2,7 +2,7 @@ package daemon
 
 import "encoding/json"
 
-// ControlPlaneStartRequest is the request body for POST /invocations/start_headless.
+// ControlPlaneStartRequest is the request body for POST /invocations/start_headless and /invocations/start_headed.
 type ControlPlaneStartRequest struct {
 	// RepoRoot is the absolute path to the repository root.
 	RepoRoot string `json:"repo_root"`
@@ -160,18 +160,14 @@ type HealthResponse struct {
 	UptimeSeconds    int64  `json:"uptime_seconds"`
 }
 
-// ErrorResponse is a generic error response.
-type ErrorResponse struct {
+// errorResponse is a generic error response.
+type errorResponse struct {
 	OK        bool   `json:"ok"`
 	RequestID string `json:"request_id,omitempty"`
 	ErrorCode string `json:"error_code"`
 	Message   string `json:"message"`
 	Hint      string `json:"hint,omitempty"`
 }
-
-// ControlPlaneStartHeadedRequest is the request body for POST /invocations/start_headed.
-// This endpoint creates and starts a headed (tmux) invocation end-to-end.
-type ControlPlaneStartHeadedRequest = ControlPlaneStartRequest
 
 // ControlPlaneStartHeadedResponse is the response body for POST /invocations/start_headed.
 type ControlPlaneStartHeadedResponse struct {

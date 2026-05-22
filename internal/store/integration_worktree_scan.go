@@ -3,9 +3,10 @@
 package store
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 )
 
 // IntegrationWorktreeRecord represents a discovered integration worktree with its parsed metadata.
@@ -35,8 +36,8 @@ type IntegrationWorktreeRecord struct {
 // Returns records sorted by created_at ascending, then worktree_id.
 // Missing directories result in empty slice (not error).
 // Corrupt meta.json results in an IntegrationWorktreeRecord with Broken=true.
-func ScanIntegrationWorktreesForRepo(dataDir, repoID string) ([]IntegrationWorktreeRecord, error) {
-	worktreesDir := filepath.Join(dataDir, "repos", repoID, "integration_worktrees")
+func (s *Store) ScanIntegrationWorktreesForRepo(repoID string) ([]IntegrationWorktreeRecord, error) {
+	worktreesDir := s.integrationWorktreesDir(repoID)
 
 	entries, err := os.ReadDir(worktreesDir)
 	if err != nil {
@@ -91,22 +92,25 @@ func ScanIntegrationWorktreesForRepo(dataDir, repoID string) ([]IntegrationWorkt
 	}
 
 	// Sort by created_at ascending, then worktree_id
-	sort.Slice(records, func(i, j int) bool {
+	slices.SortFunc(records, func(a, b IntegrationWorktreeRecord) int {
 		// Broken records sort last
-		if records[i].Broken != records[j].Broken {
-			return !records[i].Broken // non-broken first
+		if a.Broken != b.Broken {
+			if a.Broken {
+				return 1
+			}
+			return -1
 		}
-		if records[i].Broken && records[j].Broken {
-			return records[i].WorktreeID < records[j].WorktreeID
+		if a.Broken && b.Broken {
+			return cmp.Compare(a.WorktreeID, b.WorktreeID)
 		}
 
 		// Sort by created_at ascending
-		if records[i].Meta.CreatedAt != records[j].Meta.CreatedAt {
-			return records[i].Meta.CreatedAt < records[j].Meta.CreatedAt
+		if a.Meta.CreatedAt != b.Meta.CreatedAt {
+			return cmp.Compare(a.Meta.CreatedAt, b.Meta.CreatedAt)
 		}
 
 		// Tie-breaker: worktree_id ascending
-		return records[i].WorktreeID < records[j].WorktreeID
+		return cmp.Compare(a.WorktreeID, b.WorktreeID)
 	})
 
 	return records, nil

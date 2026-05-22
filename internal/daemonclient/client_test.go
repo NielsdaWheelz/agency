@@ -3,9 +3,11 @@ package daemonclient
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"sync/atomic"
 	"testing"
@@ -15,6 +17,23 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type testAPIResponse struct {
+	OK         bool   `json:"ok"`
+	APIVersion int    `json:"api_version,omitempty"`
+	RequestID  string `json:"request_id,omitempty"`
+	Data       any    `json:"data,omitempty"`
+	ErrorCode  string `json:"error_code,omitempty"`
+	Message    string `json:"message,omitempty"`
+	Hint       string `json:"hint,omitempty"`
+	Details    any    `json:"details,omitempty"`
+}
+
+type testInvalidQueryArgumentDetails struct {
+	Param         string   `json:"param"`
+	Value         string   `json:"value"`
+	AllowedValues []string `json:"allowed_values"`
+}
 
 // startFakeDaemon starts an HTTP server on a Unix socket that responds with
 // the provided handler. Uses a short path to avoid macOS 104-byte socket limit.
@@ -37,11 +56,30 @@ func startFakeDaemon(t *testing.T, handler http.Handler) string {
 	return socketPath
 }
 
+func requireAgencyError(t *testing.T, err error, code errors.Code, msg string) *errors.AgencyError {
+	t.Helper()
+	ae, ok := errors.AsAgencyError(err)
+	require.True(t, ok)
+	assert.Equal(t, code, ae.Code)
+	if msg != "" {
+		assert.Equal(t, msg, ae.Msg)
+	}
+	return ae
+}
+
+func requireDaemonReadError(t *testing.T, err error) *DaemonReadError {
+	t.Helper()
+
+	var dre *DaemonReadError
+	require.True(t, stderrors.As(err, &dre), "error should be a DaemonReadError")
+	return dre
+}
+
 func TestDaemonClient_ReadAPIErrorPassthrough_PreservesDetails(t *testing.T) {
 	t.Parallel()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := daemon.APIResponse{
+		resp := testAPIResponse{
 			OK:        false,
 			ErrorCode: "E_WORKTREE_ID_AMBIGUOUS",
 			Message:   "worktree ref 'alpha' is ambiguous",
@@ -58,42 +96,36 @@ func TestDaemonClient_ReadAPIErrorPassthrough_PreservesDetails(t *testing.T) {
 	_, err := client.GetWorktree(context.Background(), "alpha", "repo-1")
 	require.Error(t, err)
 
-	// DaemonReadError must be extractable
-	dre, ok := AsDaemonReadError(err)
-	require.True(t, ok, "error should be a DaemonReadError")
+	// DaemonReadError must be extractable.
+	dre := requireDaemonReadError(t, err)
 
 	// error_code and message preserved exactly
-	assert.Equal(t, errors.EWorktreeIDAmbiguous, dre.AgencyErr.Code)
-	assert.Equal(t, "worktree ref 'alpha' is ambiguous", dre.AgencyErr.Msg)
+	ae := requireAgencyError(t, err, errors.EWorktreeIDAmbiguous, "worktree ref 'alpha' is ambiguous")
 
-	// hint preserved
-	assert.Equal(t, "specify the full worktree ID to disambiguate", dre.Hint)
+	// Hint remains on the wrapped AgencyError.
+	assert.Equal(t, "specify the full worktree ID to disambiguate", ae.Details["hint"])
 
 	// candidates recoverable as machine-readable data (not parsed from message)
 	candidates := dre.Candidates()
 	require.Len(t, candidates, 3)
 	assert.Equal(t, []string{"wt-001", "wt-002", "wt-003"}, candidates)
 
-	// raw details available for other structured access patterns
-	require.NotEmpty(t, dre.RawDetails)
+	// raw details remain available inside daemonclient for structured accessors.
+	require.NotEmpty(t, dre.rawDetails)
 	var raw map[string]interface{}
-	require.NoError(t, json.Unmarshal(dre.RawDetails, &raw))
+	require.NoError(t, json.Unmarshal(dre.rawDetails, &raw))
 	assert.Contains(t, raw, "candidates")
 
 	// AgencyError extractable from the canonical read method.
 	code := errors.GetCode(err)
 	assert.Equal(t, errors.EWorktreeIDAmbiguous, code)
-
-	ae, ok := errors.AsAgencyError(err)
-	require.True(t, ok)
-	assert.Equal(t, errors.EWorktreeIDAmbiguous, ae.Code)
 }
 
 func TestDaemonClient_ReadAPIErrorPassthrough_Invocation(t *testing.T) {
 	t.Parallel()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := daemon.APIResponse{
+		resp := testAPIResponse{
 			OK:        false,
 			ErrorCode: "E_INVOCATION_ID_AMBIGUOUS",
 			Message:   "invocation ref 'run' is ambiguous",
@@ -110,10 +142,9 @@ func TestDaemonClient_ReadAPIErrorPassthrough_Invocation(t *testing.T) {
 	_, err := client.GetInvocation(context.Background(), "run", "repo-1")
 	require.Error(t, err)
 
-	dre, ok := AsDaemonReadError(err)
-	require.True(t, ok)
-	assert.Equal(t, errors.EInvocationIDAmbiguous, dre.AgencyErr.Code)
-	assert.Equal(t, "use the full invocation ID", dre.Hint)
+	dre := requireDaemonReadError(t, err)
+	ae := requireAgencyError(t, err, errors.EInvocationIDAmbiguous, "")
+	assert.Equal(t, "use the full invocation ID", ae.Details["hint"])
 
 	candidates := dre.Candidates()
 	assert.Equal(t, []string{"inv-a", "inv-b"}, candidates)
@@ -123,7 +154,7 @@ func TestDaemonClient_GetWorktree_ReturnsDaemonReadError(t *testing.T) {
 	t.Parallel()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := daemon.APIResponse{
+		resp := testAPIResponse{
 			OK:        false,
 			ErrorCode: "E_WORKTREE_NOT_FOUND",
 			Message:   "worktree not found",
@@ -140,17 +171,16 @@ func TestDaemonClient_GetWorktree_ReturnsDaemonReadError(t *testing.T) {
 	_, err := client.GetWorktree(context.Background(), "alpha", "repo-1")
 	require.Error(t, err)
 
-	dre, ok := AsDaemonReadError(err)
-	require.True(t, ok)
-	assert.Equal(t, errors.EWorktreeNotFound, dre.AgencyErr.Code)
-	assert.Equal(t, "canonical read method should preserve this hint", dre.Hint)
+	_ = requireDaemonReadError(t, err)
+	ae := requireAgencyError(t, err, errors.EWorktreeNotFound, "")
+	assert.Equal(t, "canonical read method should preserve this hint", ae.Details["hint"])
 }
 
 func TestDaemonClient_ReadAPIErrorPassthrough_NoDetails(t *testing.T) {
 	t.Parallel()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := daemon.APIResponse{
+		resp := testAPIResponse{
 			OK:        false,
 			ErrorCode: "E_WORKTREE_NOT_FOUND",
 			Message:   "no worktree matches ref",
@@ -165,24 +195,23 @@ func TestDaemonClient_ReadAPIErrorPassthrough_NoDetails(t *testing.T) {
 	_, err := client.GetWorktree(context.Background(), "missing", "repo-1")
 	require.Error(t, err)
 
-	dre, ok := AsDaemonReadError(err)
-	require.True(t, ok)
-	assert.Equal(t, errors.EWorktreeNotFound, dre.AgencyErr.Code)
-	assert.Empty(t, dre.Hint)
+	dre := requireDaemonReadError(t, err)
+	ae := requireAgencyError(t, err, errors.EWorktreeNotFound, "")
+	assert.Empty(t, ae.Details["hint"])
 	assert.Nil(t, dre.Candidates())
 }
 
 func TestDaemonClient_ReadMethodsPreserveRichErrors(t *testing.T) {
 	t.Parallel()
 
-	expectedDetails := daemon.InvalidQueryArgumentDetails{
+	expectedDetails := testInvalidQueryArgumentDetails{
 		Param:         "state",
 		Value:         "bogus",
 		AllowedValues: []string{"present", "archived", "all"},
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := daemon.APIResponse{
+		resp := testAPIResponse{
 			OK:        false,
 			ErrorCode: string(errors.EInvalidArgument),
 			Message:   "invalid argument",
@@ -203,21 +232,21 @@ func TestDaemonClient_ReadMethodsPreserveRichErrors(t *testing.T) {
 		{
 			name: "ListWorktrees",
 			call: func() error {
-				_, err := client.ListWorktrees(context.Background(), ListWorktreesOpts{State: "bogus"})
+				_, err := client.ListWorktrees(context.Background(), daemon.ListWorktreesParams{State: "bogus"})
 				return err
 			},
 		},
 		{
 			name: "ListInvocations",
 			call: func() error {
-				_, err := client.ListInvocations(context.Background(), ListInvocationsOpts{State: "bogus"})
+				_, err := client.ListInvocations(context.Background(), daemon.ListInvocationsParams{State: "bogus"})
 				return err
 			},
 		},
 		{
 			name: "GetInvocationDiff",
 			call: func() error {
-				_, err := client.GetInvocationDiff(context.Background(), "inv-1", "repo-1", GetInvocationDiffOpts{})
+				_, err := client.GetInvocationDiff(context.Background(), "inv-1", "repo-1", daemon.GetDiffParams{})
 				return err
 			},
 		},
@@ -229,23 +258,9 @@ func TestDaemonClient_ReadMethodsPreserveRichErrors(t *testing.T) {
 			},
 		},
 		{
-			name: "GetInvocationLogsOffset",
-			call: func() error {
-				_, err := client.GetInvocationLogsOffset(context.Background(), "inv-1", "repo-1", GetInvocationLogsOffsetOpts{})
-				return err
-			},
-		},
-		{
 			name: "GetInvocationTimeline",
 			call: func() error {
-				_, err := client.GetInvocationTimeline(context.Background(), "inv-1", "repo-1", GetInvocationTimelineOpts{})
-				return err
-			},
-		},
-		{
-			name: "ListCheckpoints",
-			call: func() error {
-				_, err := client.ListCheckpoints(context.Background(), "inv-1", "repo-1", ListCheckpointsOpts{})
+				_, err := client.GetInvocationTimeline(context.Background(), "inv-1", "repo-1", daemon.GetTimelineParams{})
 				return err
 			},
 		},
@@ -270,17 +285,51 @@ func TestDaemonClient_ReadMethodsPreserveRichErrors(t *testing.T) {
 			err := tt.call()
 			require.Error(t, err)
 
-			dre, ok := AsDaemonReadError(err)
-			require.True(t, ok, "error should preserve the daemon read envelope")
-			assert.Equal(t, errors.EInvalidArgument, dre.AgencyErr.Code)
-			assert.Equal(t, "invalid argument", dre.AgencyErr.Msg)
-			assert.Equal(t, "preserve the structured read error", dre.Hint)
+			dre := requireDaemonReadError(t, err)
+			ae := requireAgencyError(t, err, errors.EInvalidArgument, "invalid argument")
+			assert.Equal(t, "preserve the structured read error", ae.Details["hint"])
 
-			var details daemon.InvalidQueryArgumentDetails
-			require.NoError(t, json.Unmarshal(dre.RawDetails, &details))
+			var details testInvalidQueryArgumentDetails
+			require.NoError(t, json.Unmarshal(dre.rawDetails, &details))
 			assert.Equal(t, expectedDetails, details)
 		})
 	}
+}
+
+func TestDaemonClient_GetInvocationDiffZeroValueUsesDaemonDefaults(t *testing.T) {
+	t.Parallel()
+
+	queries := make(chan url.Values, 2)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries <- r.URL.Query()
+		resp := testAPIResponse{
+			OK:   true,
+			Data: daemon.InvocationDiffData{},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	client := NewClient(startFakeDaemon(t, handler))
+	_, err := client.GetInvocationDiff(context.Background(), "inv-1", "repo-1", daemon.GetDiffParams{})
+	require.NoError(t, err)
+	defaultsQuery := <-queries
+	assert.Equal(t, "repo-1", defaultsQuery.Get("repo_id"))
+	assert.Empty(t, defaultsQuery.Get("include_patch"))
+	assert.Empty(t, defaultsQuery.Get("include_uncommitted"))
+	assert.Empty(t, defaultsQuery.Get("max_patch_bytes"))
+
+	_, err = client.GetInvocationDiff(context.Background(), "inv-1", "repo-1", daemon.GetDiffParams{
+		ExcludePatch:       true,
+		ExcludeUncommitted: true,
+		MaxPatchBytes:      1000,
+	})
+	require.NoError(t, err)
+	overrideQuery := <-queries
+	assert.Equal(t, "repo-1", overrideQuery.Get("repo_id"))
+	assert.Equal(t, "false", overrideQuery.Get("include_patch"))
+	assert.Equal(t, "false", overrideQuery.Get("include_uncommitted"))
+	assert.Equal(t, "1000", overrideQuery.Get("max_patch_bytes"))
 }
 
 func TestDaemonClient_ControlPlaneStartPreservesClientRequestID(t *testing.T) {
@@ -307,9 +356,9 @@ func TestDaemonClient_ControlPlaneStartPreservesClientRequestID(t *testing.T) {
 	})
 
 	client := NewClient(startFakeDaemon(t, handler))
-	_, err := client.ControlPlaneStartHeadless(context.Background(), ControlPlaneStartOpts{ClientRequestID: "headless-req"})
+	_, err := client.ControlPlaneStartHeadless(context.Background(), daemon.ControlPlaneStartRequest{ClientRequestID: "headless-req"})
 	require.NoError(t, err)
-	_, err = client.ControlPlaneStartHeaded(context.Background(), ControlPlaneStartHeadedOpts{ClientRequestID: "headed-req"})
+	_, err = client.ControlPlaneStartHeaded(context.Background(), daemon.ControlPlaneStartRequest{ClientRequestID: "headed-req"})
 	require.NoError(t, err)
 
 	assert.Equal(t, "headless-req", seen["/invocations/start_headless"])
@@ -333,7 +382,7 @@ func TestDaemonClient_SubmitFollowUpPreservesClientRequestID(t *testing.T) {
 	})
 
 	client := NewClient(startFakeDaemon(t, handler))
-	_, err := client.SubmitFollowUp(context.Background(), "inv-1", "repo-1", SubmitFollowUpOpts{ClientRequestID: "followup-req"})
+	_, err := client.SubmitFollowUp(context.Background(), "inv-1", "repo-1", daemon.ControlPlaneFollowUpRequest{ClientRequestID: "followup-req"})
 	require.NoError(t, err)
 
 	assert.Equal(t, "followup-req", seen)
@@ -347,11 +396,11 @@ func TestDaemonClient_MutationsCheckAPIVersionBeforeRequest(t *testing.T) {
 		call func(*Client) error
 	}{
 		{name: "ControlPlaneStartHeadless", call: func(c *Client) error {
-			_, err := c.ControlPlaneStartHeadless(context.Background(), ControlPlaneStartOpts{})
+			_, err := c.ControlPlaneStartHeadless(context.Background(), daemon.ControlPlaneStartRequest{})
 			return err
 		}},
 		{name: "ControlPlaneStartHeaded", call: func(c *Client) error {
-			_, err := c.ControlPlaneStartHeaded(context.Background(), ControlPlaneStartHeadedOpts{})
+			_, err := c.ControlPlaneStartHeaded(context.Background(), daemon.ControlPlaneStartRequest{})
 			return err
 		}},
 		{name: "IngestHeadedHook", call: func(c *Client) error {
@@ -359,7 +408,7 @@ func TestDaemonClient_MutationsCheckAPIVersionBeforeRequest(t *testing.T) {
 			return err
 		}},
 		{name: "SubmitFollowUp", call: func(c *Client) error {
-			_, err := c.SubmitFollowUp(context.Background(), "inv-1", "repo-1", SubmitFollowUpOpts{})
+			_, err := c.SubmitFollowUp(context.Background(), "inv-1", "repo-1", daemon.ControlPlaneFollowUpRequest{})
 			return err
 		}},
 		{name: "Stop", call: func(c *Client) error {
@@ -375,7 +424,7 @@ func TestDaemonClient_MutationsCheckAPIVersionBeforeRequest(t *testing.T) {
 			return err
 		}},
 		{name: "TaskStart", call: func(c *Client) error {
-			_, err := c.TaskStart(context.Background(), TaskStartOpts{})
+			_, err := c.TaskStart(context.Background(), daemon.TaskStartRequest{})
 			return err
 		}},
 		{name: "ArchiveTask", call: func(c *Client) error {
@@ -383,7 +432,7 @@ func TestDaemonClient_MutationsCheckAPIVersionBeforeRequest(t *testing.T) {
 			return err
 		}},
 		{name: "RetryTask", call: func(c *Client) error {
-			_, err := c.RetryTask(context.Background(), "task-1", "repo-1", TaskRetryOpts{})
+			_, err := c.RetryTask(context.Background(), "task-1", "repo-1", daemon.TaskRetryRequest{})
 			return err
 		}},
 		{name: "RegisterRepo", call: func(c *Client) error {
@@ -395,11 +444,11 @@ func TestDaemonClient_MutationsCheckAPIVersionBeforeRequest(t *testing.T) {
 			return err
 		}},
 		{name: "WorktreeCreate", call: func(c *Client) error {
-			_, err := c.WorktreeCreate(context.Background(), WorktreeCreateOpts{})
+			_, err := c.WorktreeCreate(context.Background(), daemon.WorktreeCreateRequest{})
 			return err
 		}},
 		{name: "WorktreeRm", call: func(c *Client) error {
-			_, err := c.WorktreeRm(context.Background(), "repo-1", "wt-1", false)
+			_, err := c.WorktreeRm(context.Background(), "repo-1", "wt-1", daemon.WorktreeRmRequest{})
 			return err
 		}},
 		{name: "CheckpointApply", call: func(c *Client) error {
@@ -411,7 +460,7 @@ func TestDaemonClient_MutationsCheckAPIVersionBeforeRequest(t *testing.T) {
 			return err
 		}},
 		{name: "Land", call: func(c *Client) error {
-			_, err := c.Land(context.Background(), LandOpts{RepoID: "repo-1", InvocationID: "inv-1"})
+			_, err := c.Land(context.Background(), "inv-1", "repo-1", daemon.LandRequest{})
 			return err
 		}},
 		{name: "Discard", call: func(c *Client) error {
@@ -419,11 +468,11 @@ func TestDaemonClient_MutationsCheckAPIVersionBeforeRequest(t *testing.T) {
 			return err
 		}},
 		{name: "WorktreePRSync", call: func(c *Client) error {
-			_, err := c.WorktreePRSync(context.Background(), "wt-1", "repo-1", WorktreePRSyncOpts{})
+			_, err := c.WorktreePRSync(context.Background(), "wt-1", "repo-1", daemon.WorktreePRSyncRequest{})
 			return err
 		}},
 		{name: "WorktreePRMerge", call: func(c *Client) error {
-			_, err := c.WorktreePRMerge(context.Background(), "wt-1", "repo-1", WorktreePRMergeOpts{})
+			_, err := c.WorktreePRMerge(context.Background(), "wt-1", "repo-1", daemon.WorktreePRMergeRequest{})
 			return err
 		}},
 		{name: "WorktreeRebase", call: func(c *Client) error {
@@ -433,7 +482,6 @@ func TestDaemonClient_MutationsCheckAPIVersionBeforeRequest(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -457,15 +505,17 @@ func TestDaemonClient_MutationsCheckAPIVersionBeforeRequest(t *testing.T) {
 	}
 }
 
-func TestDaemonClient_GetInvocationTimeline_OrderParamSentInURL(t *testing.T) {
+func TestDaemonClient_GetInvocationTimeline_OrderControlsReturnedEntries(t *testing.T) {
 	t.Parallel()
 
-	var capturedPath string
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedPath = r.URL.String()
-		resp := daemon.APIResponse{
+		entryID := "oldest"
+		if r.URL.Query().Get("order") == "desc" {
+			entryID = "newest"
+		}
+		resp := testAPIResponse{
 			OK:   true,
-			Data: daemon.InvocationTimelineData{Entries: []daemon.TimelineEntryDTO{}},
+			Data: daemon.InvocationTimelineData{Entries: []daemon.TimelineEntryDTO{{EntryID: entryID}}},
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
@@ -474,37 +524,18 @@ func TestDaemonClient_GetInvocationTimeline_OrderParamSentInURL(t *testing.T) {
 	socketPath := startFakeDaemon(t, handler)
 	client := NewClient(socketPath)
 
-	_, err := client.GetInvocationTimeline(context.Background(), "inv-1", "repo-1", GetInvocationTimelineOpts{
+	desc, err := client.GetInvocationTimeline(context.Background(), "inv-1", "repo-1", daemon.GetTimelineParams{
 		Limit: 1,
 		Order: "desc",
 	})
 	require.NoError(t, err)
+	require.Len(t, desc.Data.Entries, 1)
+	assert.Equal(t, "newest", desc.Data.Entries[0].EntryID)
 
-	assert.Contains(t, capturedPath, "order=desc", "Order param must be sent in URL")
-	assert.Contains(t, capturedPath, "limit=1")
-}
-
-func TestDaemonClient_GetInvocationTimeline_OrderOmittedWhenEmpty(t *testing.T) {
-	t.Parallel()
-
-	var capturedPath string
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedPath = r.URL.String()
-		resp := daemon.APIResponse{
-			OK:   true,
-			Data: daemon.InvocationTimelineData{Entries: []daemon.TimelineEntryDTO{}},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	})
-
-	socketPath := startFakeDaemon(t, handler)
-	client := NewClient(socketPath)
-
-	_, err := client.GetInvocationTimeline(context.Background(), "inv-1", "repo-1", GetInvocationTimelineOpts{
+	defaultOrder, err := client.GetInvocationTimeline(context.Background(), "inv-1", "repo-1", daemon.GetTimelineParams{
 		Limit: 10,
 	})
 	require.NoError(t, err)
-
-	assert.NotContains(t, capturedPath, "order=", "Order param must not be sent when empty")
+	require.Len(t, defaultOrder.Data.Entries, 1)
+	assert.Equal(t, "oldest", defaultOrder.Data.Entries[0].EntryID)
 }

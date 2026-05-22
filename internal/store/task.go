@@ -3,9 +3,10 @@
 package store
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -96,9 +97,9 @@ type TaskRecord struct {
 
 // EnsureTaskDir creates the task record directory with exclusive semantics.
 func (s *Store) EnsureTaskDir(repoID, taskID string) (string, error) {
-	taskDir := s.TaskDir(repoID, taskID)
-	parentDir := s.TasksDir(repoID)
-	if err := s.FS.MkdirAll(parentDir, 0o700); err != nil {
+	taskDir := s.taskDir(repoID, taskID)
+	parentDir := s.tasksDir(repoID)
+	if err := s.fsys.MkdirAll(parentDir, 0o700); err != nil {
 		return "", errors.WrapWithDetails(
 			errors.ETaskCreateFailed,
 			"failed to create tasks directory",
@@ -126,8 +127,8 @@ func (s *Store) EnsureTaskDir(repoID, taskID string) (string, error) {
 
 // WriteTaskMeta writes a task meta.json atomically.
 func (s *Store) WriteTaskMeta(repoID, taskID string, meta *TaskMeta) error {
-	metaPath := s.TaskMetaPath(repoID, taskID)
-	if err := fs.WriteJSONAtomic(metaPath, meta, 0o600); err != nil {
+	metaPath := s.taskMetaPath(repoID, taskID)
+	if err := fs.WriteJSONAtomic(s.fsys, metaPath, meta, 0o600); err != nil {
 		return errors.WrapWithDetails(
 			errors.EMetaWriteFailed,
 			"failed to write task meta.json atomically",
@@ -150,8 +151,8 @@ func (s *Store) UpdateTaskMeta(repoID, taskID string, updateFn func(*TaskMeta)) 
 
 // ReadTaskMeta reads and parses a task meta.json.
 func (s *Store) ReadTaskMeta(repoID, taskID string) (*TaskMeta, error) {
-	metaPath := s.TaskMetaPath(repoID, taskID)
-	data, err := s.FS.ReadFile(metaPath)
+	metaPath := s.taskMetaPath(repoID, taskID)
+	data, err := s.fsys.ReadFile(metaPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, errors.NewWithDetails(
@@ -186,12 +187,12 @@ func (s *Store) ReadTaskMeta(repoID, taskID string) (*TaskMeta, error) {
 // RemoveTaskDir removes a task record directory. It is intended for failed
 // creation cleanup before external side effects have committed.
 func (s *Store) RemoveTaskDir(repoID, taskID string) error {
-	return fs.SafeRemoveAll(s.TaskDir(repoID, taskID), s.DataDir)
+	return fs.SafeRemoveAll(s.taskDir(repoID, taskID), s.DataDir)
 }
 
 // ScanTasksForRepo discovers tasks for a single repo_id.
-func ScanTasksForRepo(dataDir, repoID string) ([]TaskRecord, error) {
-	tasksDir := filepath.Join(dataDir, "repos", repoID, "tasks")
+func (s *Store) ScanTasksForRepo(repoID string) ([]TaskRecord, error) {
+	tasksDir := s.tasksDir(repoID)
 	entries, err := os.ReadDir(tasksDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -235,24 +236,34 @@ func ScanTasksForRepo(dataDir, repoID string) ([]TaskRecord, error) {
 		records = append(records, record)
 	}
 
-	sort.Slice(records, func(i, j int) bool {
-		if records[i].Broken != records[j].Broken {
-			return !records[i].Broken
+	slices.SortFunc(records, func(a, b TaskRecord) int {
+		if a.Broken != b.Broken {
+			if a.Broken {
+				return 1
+			}
+			return -1
 		}
-		if records[i].Broken && records[j].Broken {
-			return records[i].TaskID > records[j].TaskID
+		if a.Broken && b.Broken {
+			return cmp.Compare(b.TaskID, a.TaskID)
 		}
-		if records[i].Meta.CreatedAt != records[j].Meta.CreatedAt {
-			return records[i].Meta.CreatedAt > records[j].Meta.CreatedAt
+		if a.Meta.CreatedAt != b.Meta.CreatedAt {
+			return cmp.Compare(b.Meta.CreatedAt, a.Meta.CreatedAt)
 		}
-		return records[i].TaskID > records[j].TaskID
+		return cmp.Compare(b.TaskID, a.TaskID)
 	})
 
 	return records, nil
 }
 
 func validateTaskMeta(meta TaskMeta, repoID, taskID, metaPath string) error {
-	if meta.SchemaVersion == "" || meta.TaskID == "" || meta.Name == "" || meta.RepoID == "" || meta.RepoRoot == "" ||
+	if meta.SchemaVersion == "" {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			"task meta.json missing schema_version",
+			map[string]string{"meta_path": metaPath},
+		)
+	}
+	if meta.TaskID == "" || meta.Name == "" || meta.RepoID == "" || meta.RepoRoot == "" ||
 		meta.BaseBranch == "" || meta.State == "" || meta.Mode == "" || meta.Runner == "" || meta.CreatedAt == "" || meta.UpdatedAt == "" {
 		return errors.NewWithDetails(
 			errors.EStoreCorrupt,

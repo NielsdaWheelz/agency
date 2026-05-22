@@ -11,18 +11,13 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/fs"
 )
 
-func realCommandDeps(ctx context.Context) (context.Context, exec.CommandRunner, fs.FS, string, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, nil, nil, "", errors.Wrap(errors.EInternal, "failed to get cwd", err)
-	}
-
-	return ctx, exec.NewRealRunner(), fs.NewRealFS(), cwd, nil
-}
-
 func realCommandDepsFromCmd(cmd *cobra.Command) (context.Context, exec.CommandRunner, fs.FS, string, error) {
 	if cmd == nil {
 		return nil, nil, nil, "", errors.New(errors.EInternal, "command context is required")
 	}
-	return realCommandDeps(cmd.Context())
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, nil, nil, "", errors.Wrap(errors.EInternal, "failed to get cwd", err)
+	}
+	return cmd.Context(), exec.NewRealRunner(), fs.NewRealFS(), cwd, nil
 }

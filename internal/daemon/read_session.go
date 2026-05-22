@@ -31,14 +31,10 @@ func (s *Server) handleGetInvocationSession(w http.ResponseWriter, r *http.Reque
 		)
 		return
 	}
-	if s.TmuxClient == nil {
-		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.ETmuxFailed), "tmux client is not configured", "", nil)
+	sessionName, ok := headedInvocationSessionName(record.Meta)
+	if !ok {
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.ETmuxSessionMissing), "headed invocation is missing tmux_session", "recreate the headed session or inspect invocation metadata", nil)
 		return
-	}
-
-	sessionName := strings.TrimSpace(record.Meta.TmuxSession)
-	if sessionName == "" {
-		sessionName = tmux.SessionName(record.InvocationID)
 	}
 
 	data := InvocationSessionData{
@@ -51,7 +47,7 @@ func (s *Server) handleGetInvocationSession(w http.ResponseWriter, r *http.Reque
 		RecreateAvailable: s.invocationSessionRecreateAvailable(record),
 	}
 
-	exists, err := s.TmuxClient.HasSession(r.Context(), sessionName)
+	exists, err := s.tmuxClient.HasSession(r.Context(), sessionName)
 	if err != nil && !tmux.IsNoSessionErr(err) {
 		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.ETmuxFailed), "failed to inspect tmux session: "+err.Error(), "", nil)
 		return
@@ -61,7 +57,7 @@ func (s *Server) handleGetInvocationSession(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	clients, err := s.TmuxClient.ListAttachedClients(r.Context(), sessionName)
+	clients, err := s.tmuxClient.ListAttachedClients(r.Context(), sessionName)
 	if err != nil {
 		if tmux.IsNoSessionErr(err) {
 			s.writeAPIResponse(w, requestID, data)
@@ -101,7 +97,7 @@ func (s *Server) invocationSessionRecreateAvailable(record *resolvedInvocation) 
 	if sandboxPath == "" {
 		return false
 	}
-	info, err := s.FS.Stat(sandboxPath)
+	info, err := s.fsys.Stat(sandboxPath)
 	if err != nil {
 		return false
 	}

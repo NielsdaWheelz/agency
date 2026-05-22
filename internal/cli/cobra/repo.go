@@ -1,12 +1,9 @@
 package cobra
 
 import (
-	"strings"
-
 	"github.com/spf13/cobra"
 
 	"github.com/NielsdaWheelz/agency/internal/commands"
-	"github.com/NielsdaWheelz/agency/internal/errors"
 )
 
 func newRepoCmd() *cobra.Command {
@@ -34,46 +31,22 @@ Use:
   agency repo agency rm --yes`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			switch {
-			case len(args) == 0:
+			if len(args) == 0 {
 				_ = cmd.Help()
-				return errors.New(errors.EUsage, "specify 'add', 'ls', or a repo ref")
-			case args[0] == "add":
-				if err := validateRepoTargetFlags(cmd, "add", "json"); err != nil {
-					return err
-				}
-				if len(args) > 2 {
-					return errors.New(errors.EUsage, "too many arguments for \"agency repo add\"")
-				}
-				path := ""
-				if len(args) == 2 {
-					path = args[1]
-				}
-				return runRepoAdd(cmd, path, jsonOutput)
-			case args[0] == "ls":
-				if err := validateRepoTargetFlags(cmd, "ls", "json"); err != nil {
-					return err
-				}
-				if len(args) > 1 {
-					return errors.New(errors.EUsage, "too many arguments for \"agency repo ls\"")
-				}
-				return runRepoLS(cmd, jsonOutput)
-			default:
-				repoRef := args[0]
-				if len(args) == 1 {
-					if err := validateRepoTargetFlags(cmd, "<repo-ref>", "json"); err != nil {
-						return err
-					}
-					return runRepoShow(cmd, repoRef, jsonOutput)
-				}
-				if len(args) == 2 && args[1] == "rm" {
-					if err := validateRepoTargetFlags(cmd, "rm", "json", "yes"); err != nil {
-						return err
-					}
-					return runRepoRm(cmd, repoRef, yes, jsonOutput)
-				}
-				return errors.New(errors.EUsage, "unknown command \""+args[1]+"\" for \"agency repo\"")
 			}
+
+			if err := validateRepoTargetFlags(cmd, args); err != nil {
+				return err
+			}
+			ctx, cr, fsys, _, err := realCommandDepsFromCmd(cmd)
+			if err != nil {
+				return err
+			}
+			return commands.RepoTarget(ctx, cr, fsys, commands.RepoTargetOpts{
+				Args: args,
+				JSON: jsonOutput,
+				Yes:  yes,
+			}, cmd.OutOrStdout(), cmd.OutOrStderr())
 		},
 	}
 
@@ -83,31 +56,20 @@ Use:
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		switch len(args) {
 		case 0:
-			candidates := []string{}
-			if toComplete == "" || strings.HasPrefix("add", toComplete) {
-				candidates = append(candidates, "add\tRegister a repository")
-			}
-			if toComplete == "" || strings.HasPrefix("ls", toComplete) {
-				candidates = append(candidates, "ls\tList registered repositories")
-			}
+			candidates := completeStaticValues([]string{
+				commands.RepoActionAdd + "\tRegister a repository",
+				commands.RepoActionLS + "\tList registered repositories",
+			}, toComplete)
 			if len(candidates) > 0 {
 				return candidates, cobra.ShellCompDirectiveNoFileComp
 			}
 			repoRefs, directive := completeRepoRefs(cmd, args, toComplete)
 			return repoRefs, directive
 		case 1:
-			if args[0] == "add" || args[0] == "ls" {
+			if args[0] == commands.RepoActionAdd || args[0] == commands.RepoActionLS {
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
-			values := []string{"rm"}
-			candidates := make([]string, 0, len(values))
-			for _, value := range values {
-				if toComplete != "" && !strings.HasPrefix(value, toComplete) {
-					continue
-				}
-				candidates = append(candidates, value)
-			}
-			return candidates, cobra.ShellCompDirectiveNoFileComp
+			return completeStaticValues(repoTargetActionCompletions(), toComplete), cobra.ShellCompDirectiveNoFileComp
 		default:
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
@@ -116,63 +78,16 @@ Use:
 	return cmd
 }
 
-func validateRepoTargetFlags(cmd *cobra.Command, action string, allowed ...string) error {
-	allowedFlags := make(map[string]bool, len(allowed))
-	for _, flag := range allowed {
-		allowedFlags[flag] = true
+func repoTargetActionCompletions() []string {
+	return []string{
+		commands.RepoTargetActionRm,
 	}
-	for _, flag := range []string{"json", "yes"} {
-		if cmd.Flags().Changed(flag) && !allowedFlags[flag] {
-			return errors.New(errors.EUsage, "--"+flag+" is not valid for agency repo "+action)
-		}
+}
+
+func validateRepoTargetFlags(cmd *cobra.Command, args []string) error {
+	targetFlags := []string{"json", "yes"}
+	if policy, ok := commands.RepoTargetFlagPolicy(args); ok {
+		return validateChangedTargetFlags(cmd, "repo", policy.Action, targetFlags, policy.AllowedFlags...)
 	}
 	return nil
-}
-
-func runRepoAdd(cmd *cobra.Command, path string, jsonOutput bool) error {
-	ctx, cr, fsys, _, err := realCommandDeps(cmd.Context())
-	if err != nil {
-		return err
-	}
-
-	return commands.RepoAdd(ctx, cr, fsys, commands.RepoAddOpts{
-		Path: path,
-		JSON: jsonOutput,
-	}, cmd.OutOrStdout(), cmd.OutOrStderr())
-}
-
-func runRepoLS(cmd *cobra.Command, jsonOutput bool) error {
-	ctx, cr, fsys, _, err := realCommandDeps(cmd.Context())
-	if err != nil {
-		return err
-	}
-
-	return commands.RepoLS(ctx, cr, fsys, commands.RepoLSOpts{
-		JSON: jsonOutput,
-	}, cmd.OutOrStdout(), cmd.OutOrStderr())
-}
-
-func runRepoShow(cmd *cobra.Command, repoRef string, jsonOutput bool) error {
-	ctx, cr, fsys, _, err := realCommandDeps(cmd.Context())
-	if err != nil {
-		return err
-	}
-
-	return commands.RepoShow(ctx, cr, fsys, commands.RepoShowOpts{
-		RepoRef: repoRef,
-		JSON:    jsonOutput,
-	}, cmd.OutOrStdout(), cmd.OutOrStderr())
-}
-
-func runRepoRm(cmd *cobra.Command, repoRef string, yes bool, jsonOutput bool) error {
-	ctx, cr, fsys, _, err := realCommandDeps(cmd.Context())
-	if err != nil {
-		return err
-	}
-
-	return commands.RepoRm(ctx, cr, fsys, commands.RepoRmOpts{
-		RepoRef: repoRef,
-		Yes:     yes,
-		JSON:    jsonOutput,
-	}, cmd.OutOrStdout(), cmd.OutOrStderr())
 }

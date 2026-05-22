@@ -7,6 +7,7 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
+	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
 const (
@@ -22,6 +23,10 @@ type ServiceConfig struct {
 	ExePath string // absolute path to the agency binary
 	DataDir string // agency data directory (for log paths)
 	HomeDir string // user home directory (for service file paths)
+}
+
+func daemonLogPath(cfg ServiceConfig) string {
+	return store.NewStore(nil, cfg.DataDir, nil).DaemonLogPath()
 }
 
 // Manager abstracts OS-level service installation.

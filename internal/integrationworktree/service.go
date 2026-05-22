@@ -14,7 +14,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/ids"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
@@ -24,19 +23,19 @@ const IntegrationMarkerFileName = "INTEGRATION_MARKER"
 
 // Service provides integration worktree operations.
 type Service struct {
-	Store *store.Store
-	CR    exec.CommandRunner
-	FS    fs.FS
-	Now   func() time.Time
+	store  *store.Store
+	runner exec.CommandRunner
+	fsys   fs.FS
+	clock  func() time.Time
 }
 
 // NewService creates a new integration worktree service.
 func NewService(st *store.Store, cr exec.CommandRunner, fsys fs.FS, now func() time.Time) *Service {
 	return &Service{
-		Store: st,
-		CR:    cr,
-		FS:    fsys,
-		Now:   now,
+		store:  st,
+		runner: cr,
+		fsys:   fsys,
+		clock:  now,
 	}
 }
 
@@ -101,7 +100,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 	}
 
 	// Check name uniqueness
-	records, err := store.ScanIntegrationWorktreesForRepo(s.Store.DataDir, opts.RepoID)
+	records, err := s.store.ScanIntegrationWorktreesForRepo(opts.RepoID)
 	if err != nil {
 		return nil, errors.Wrap(errors.EInternal, "failed to scan integration worktrees", err)
 	}
@@ -126,7 +125,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 	}
 
 	// Generate worktree_id
-	worktreeID, err := core.NewRunID(s.Now())
+	worktreeID, err := core.NewRunID(s.clock())
 	if err != nil {
 		return nil, errors.Wrap(errors.EInternal, "failed to generate worktree_id", err)
 	}
@@ -138,7 +137,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 	treePath := filepath.Join(opts.CheckoutRoot, "worktrees", opts.Name+"-"+core.ShortID(worktreeID))
 
 	// Create record directory with exclusive semantics
-	_, err = s.Store.EnsureIntegrationWorktreeDir(opts.RepoID, worktreeID)
+	_, err = s.store.EnsureIntegrationWorktreeDir(opts.RepoID, worktreeID)
 	if err != nil {
 		return nil, err
 	}
@@ -153,20 +152,20 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		if gitWorktreeCreated {
 			// Remove worktree (best-effort)
 			args := []string{"-C", opts.RepoRoot, "worktree", "remove", "--force", treePath}
-			_, _ = s.CR.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
+			_, _ = s.runner.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
 		}
 		if branchCreated {
 			// Delete branch (best-effort)
 			args := []string{"-C", opts.RepoRoot, "branch", "-D", branch}
-			_, _ = s.CR.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
+			_, _ = s.runner.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
 		}
 		if recordDirCreated {
 			// Remove record directory (best-effort)
-			_ = s.Store.RemoveIntegrationWorktreeDir(opts.RepoID, worktreeID)
+			_ = s.store.RemoveIntegrationWorktreeDir(opts.RepoID, worktreeID)
 		}
 	}
 
-	if err := s.FS.MkdirAll(filepath.Dir(treePath), 0o700); err != nil {
+	if err := s.fsys.MkdirAll(filepath.Dir(treePath), 0o700); err != nil {
 		cleanup()
 		return nil, errors.WrapWithDetails(
 			errors.EWorktreeCreateFailed,
@@ -186,11 +185,11 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		treePath,
 		opts.CheckoutRoot,
 		opts.ExecutionProfile,
-		s.Now(),
+		s.clock(),
 	)
 	meta.IdempotencyKey = opts.IdempotencyKey
 	meta.RequestFingerprint = opts.RequestFingerprint
-	if err := s.Store.WriteIntegrationWorktreeMeta(opts.RepoID, worktreeID, meta); err != nil {
+	if err := s.store.WriteIntegrationWorktreeMeta(opts.RepoID, worktreeID, meta); err != nil {
 		cleanup()
 		return nil, err
 	}
@@ -204,7 +203,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		opts.BaseBranch,
 	}
 
-	result, err := s.CR.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
+	result, err := s.runner.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
 	if err != nil {
 		cleanup()
 		return nil, errors.WrapWithDetails(
@@ -236,7 +235,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 
 	// Create .agency/ directory
 	agencyDir := filepath.Join(treePath, ".agency")
-	if err := s.FS.MkdirAll(agencyDir, 0o755); err != nil {
+	if err := s.fsys.MkdirAll(agencyDir, 0o755); err != nil {
 		cleanup()
 		return nil, errors.WrapWithDetails(
 			errors.EWorktreeCreateFailed,
@@ -249,7 +248,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 	// Write INTEGRATION_MARKER.
 	markerPath := filepath.Join(agencyDir, IntegrationMarkerFileName)
 	markerContent := "# This directory is an integration worktree.\n# Runners must not execute here.\n"
-	if err := s.FS.WriteFile(markerPath, []byte(markerContent), 0o644); err != nil {
+	if err := s.fsys.WriteFile(markerPath, []byte(markerContent), 0o644); err != nil {
 		cleanup()
 		return nil, errors.WrapWithDetails(
 			errors.EWorktreeCreateFailed,
@@ -266,106 +265,10 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 	}, nil
 }
 
-// RemoveOpts contains options for removing an integration worktree.
-type RemoveOpts struct {
-	// RepoRoot is the absolute path to the git repository root.
-	RepoRoot string
-
-	// Force forces removal even if the worktree is dirty.
-	Force bool
-
-	// Env is the noninteractive Git environment for this worktree's profile.
-	Env map[string]string
-}
-
-// Remove removes an integration worktree.
-//
-// Operations:
-//  1. Run git worktree remove [--force] <tree_path>
-//  2. Set state = archived in meta.json
-//
-// Does not delete the record directory or meta.json.
-func (s *Service) Remove(ctx context.Context, repoID, worktreeID string, opts RemoveOpts) error {
-	// Read meta to get tree path
-	meta, err := s.Store.ReadIntegrationWorktreeMeta(repoID, worktreeID)
-	if err != nil {
-		return err
-	}
-
-	// Check if already archived
-	if meta.State == store.WorktreeStateArchived {
-		return errors.NewWithDetails(
-			errors.EWorktreeNotFound,
-			"worktree is already archived",
-			map[string]string{"worktree_id": worktreeID},
-		)
-	}
-
-	if !opts.Force {
-		clean, err := git.IsClean(ctx, s.CR, meta.TreePath, opts.Env)
-		if err != nil {
-			return err
-		}
-		if !clean {
-			return errors.NewWithDetails(
-				errors.EDirtyWorktree,
-				"worktree has uncommitted changes; commit/stash your changes or use --force",
-				map[string]string{
-					"worktree_id": worktreeID,
-					"tree_path":   meta.TreePath,
-					"hint":        "commit or stash your changes, or rerun with --force",
-				},
-			)
-		}
-	}
-
-	// Build git worktree remove command
-	args := []string{"-C", opts.RepoRoot, "worktree", "remove"}
-	if opts.Force {
-		args = append(args, "--force")
-	}
-	args = append(args, meta.TreePath)
-
-	result, runErr := s.CR.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
-	if runErr != nil {
-		return errors.WrapWithDetails(
-			errors.EWorktreeRemoveFailed,
-			"failed to execute git worktree remove",
-			runErr,
-			map[string]string{"command": "git " + strings.Join(args, " ")},
-		)
-	}
-
-	if result.ExitCode != 0 {
-		stderr := strings.TrimSpace(result.Stderr)
-		return errors.NewWithDetails(
-			errors.EWorktreeRemoveFailed,
-			"git worktree remove failed: "+stderr,
-			map[string]string{
-				"command":   "git " + strings.Join(args, " "),
-				"exit_code": fmt.Sprintf("%d", result.ExitCode),
-				"stderr":    stderr,
-			},
-		)
-	}
-
-	// Update meta to archived state
-	err = s.Store.UpdateIntegrationWorktreeMeta(repoID, worktreeID, func(m *store.IntegrationWorktreeMeta) {
-		m.State = store.WorktreeStateArchived
-	})
-	if err != nil {
-		// Log but don't fail - the worktree is already removed
-		// The meta file will show present but tree is gone
-		return err
-	}
-
-	return nil
-}
-
 // Resolve resolves a worktree identifier (name, id, or prefix) to a record.
 // Returns the resolved record or an error.
 func (s *Service) Resolve(repoID, input string, includeArchived bool) (*store.IntegrationWorktreeRecord, error) {
-	records, err := store.ScanIntegrationWorktreesForRepo(s.Store.DataDir, repoID)
+	records, err := s.store.ScanIntegrationWorktreesForRepo(repoID)
 	if err != nil {
 		return nil, errors.Wrap(errors.EInternal, "failed to scan integration worktrees", err)
 	}

@@ -58,7 +58,7 @@ func newRealEngine(t *testing.T, repoDir string) (*Engine, string) {
 	cfg := DefaultConfig()
 	cfg.IncludeUntracked = true
 
-	e := NewEngine(
+	e := newEngineForTest(
 		"test-inv-integration",
 		"test-repo",
 		repoDir,
@@ -73,11 +73,6 @@ func newRealEngine(t *testing.T, repoDir string) (*Engine, string) {
 	return e, checkpointsDir
 }
 
-// ---------------------------------------------------------------------------
-// Integration tests (require real git)
-// ---------------------------------------------------------------------------
-
-// 4.1 TestEngine_createCheckpointInternal_RealGit
 func TestEngine_createCheckpointInternal_RealGit(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -116,10 +111,9 @@ func TestEngine_createCheckpointInternal_RealGit(t *testing.T) {
 	// Verify events.jsonl has checkpoint_created event
 	events := readEvents(t, e.eventsPath)
 	require.Len(t, events, 1)
-	assert.Equal(t, EventKindCheckpointCreated, events[0].Kind)
+	assert.Equal(t, eventKindCheckpointCreated, events[0].Kind)
 }
 
-// 4.2 TestApplier_Apply_RealGit
 func TestApplier_Apply_RealGit(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -150,9 +144,9 @@ func TestApplier_Apply_RealGit(t *testing.T) {
 	// Apply checkpoint 1
 	eventsDir := t.TempDir()
 	eventsPath := filepath.Join(eventsDir, "events.jsonl")
-	applier := NewApplier("test-inv-integration", repoDir, checkpointsDir, eventsPath, cr, fs.NewRealFS(), time.Now)
+	applier := newApplierForTest("test-inv-integration", repoDir, checkpointsDir, eventsPath, cr, fs.NewRealFS(), time.Now)
 
-	_, err = applier.Apply(ctx, 1)
+	_, err = applier.ApplyWithOptions(ctx, 1, ApplyOptions{})
 	require.NoError(t, err, "Apply(1)")
 
 	// Verify file matches state 1
@@ -161,7 +155,7 @@ func TestApplier_Apply_RealGit(t *testing.T) {
 	assert.Equal(t, "# State 1\n", string(data), "after apply(1)")
 
 	// Apply checkpoint 2
-	_, err = applier.Apply(ctx, 2)
+	_, err = applier.ApplyWithOptions(ctx, 2, ApplyOptions{})
 	require.NoError(t, err, "Apply(2)")
 
 	// Verify file matches state 2
@@ -170,7 +164,6 @@ func TestApplier_Apply_RealGit(t *testing.T) {
 	assert.Equal(t, "# State 2\n", string(data), "after apply(2)")
 }
 
-// 4.3 TestApplier_Apply_CleansUntrackedFiles
 func TestApplier_Apply_CleansUntrackedFiles(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -188,23 +181,20 @@ func TestApplier_Apply_CleansUntrackedFiles(t *testing.T) {
 	untrackedPath := filepath.Join(repoDir, "untracked-new-file.txt")
 	require.NoError(t, os.WriteFile(untrackedPath, []byte("untracked content\n"), 0o644))
 	// Verify it exists
-	_, err := os.Stat(untrackedPath)
-	require.False(t, os.IsNotExist(err), "untracked file should exist before apply")
+	require.FileExists(t, untrackedPath, "untracked file should exist before apply")
 
 	// Apply checkpoint
 	eventsDir := t.TempDir()
 	eventsPath := filepath.Join(eventsDir, "events.jsonl")
-	applier := NewApplier("test-inv-integration", repoDir, checkpointsDir, eventsPath, exec.NewRealRunner(), fs.NewRealFS(), time.Now)
+	applier := newApplierForTest("test-inv-integration", repoDir, checkpointsDir, eventsPath, exec.NewRealRunner(), fs.NewRealFS(), time.Now)
 
-	_, err = applier.Apply(ctx, 1)
+	_, err := applier.ApplyWithOptions(ctx, 1, ApplyOptions{})
 	require.NoError(t, err, "Apply()")
 
 	// Verify untracked file was removed
-	_, err = os.Stat(untrackedPath)
-	assert.True(t, os.IsNotExist(err), "untracked file should have been removed by apply")
+	assert.NoFileExists(t, untrackedPath, "untracked file should have been removed by apply")
 }
 
-// 4.3.1 TestApplier_Apply_RemovesTrackedFilesAddedAfterCheckpoint
 func TestApplier_Apply_RemovesTrackedFilesAddedAfterCheckpoint(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -232,16 +222,14 @@ func TestApplier_Apply_RemovesTrackedFilesAddedAfterCheckpoint(t *testing.T) {
 	// Apply checkpoint 1.
 	eventsDir := t.TempDir()
 	eventsPath := filepath.Join(eventsDir, "events.jsonl")
-	applier := NewApplier("test-inv-integration", repoDir, checkpointsDir, eventsPath, cr, fs.NewRealFS(), time.Now)
-	_, err := applier.Apply(ctx, 1)
+	applier := newApplierForTest("test-inv-integration", repoDir, checkpointsDir, eventsPath, cr, fs.NewRealFS(), time.Now)
+	_, err := applier.ApplyWithOptions(ctx, 1, ApplyOptions{})
 	require.NoError(t, err, "Apply(1)")
 
 	// Exact restore must remove files that were tracked only after the checkpoint.
-	_, statErr := os.Stat(postCheckpointTracked)
-	assert.True(t, os.IsNotExist(statErr), "tracked file introduced after checkpoint should be removed")
+	assert.NoFileExists(t, postCheckpointTracked, "tracked file introduced after checkpoint should be removed")
 }
 
-// 4.4 TestEngine_isDirty_RealGit
 func TestEngine_isDirty_RealGit(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -284,7 +272,6 @@ func TestEngine_isDirty_RealGit(t *testing.T) {
 	assert.True(t, dirty, "expected dirty workspace with untracked file")
 }
 
-// 4.5 TestEngine_DenylistIntegration_RealGit
 func TestEngine_DenylistIntegration_RealGit(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -312,14 +299,13 @@ func TestEngine_DenylistIntegration_RealGit(t *testing.T) {
 	events := readEvents(t, e.eventsPath)
 	foundDenylist := false
 	for _, ev := range events {
-		if ev.Kind == EventKindCheckpointDenylistTriggered {
+		if ev.Kind == eventKindCheckpointDenylistTriggered {
 			foundDenylist = true
 		}
 	}
 	assert.True(t, foundDenylist, "expected denylist_triggered event")
 }
 
-// 4.6 TestEngine_MultipleCheckpoints_RealGit
 func TestEngine_MultipleCheckpoints_RealGit(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -366,7 +352,6 @@ func TestEngine_MultipleCheckpoints_RealGit(t *testing.T) {
 	}
 }
 
-// 4.7 TestEngine_SkipsDuplicate_RealGit
 func TestEngine_SkipsDuplicate_RealGit(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -394,7 +379,6 @@ func TestEngine_SkipsDuplicate_RealGit(t *testing.T) {
 	assert.NotEmpty(t, cpFile.Checkpoints[0].TreeSHA, "expected TreeSHA to be populated")
 }
 
-// 4.8 TestEngine_FinalCheckpoint_SkipsDuplicateOnShutdown
 func TestEngine_FinalCheckpoint_SkipsDuplicateOnShutdown(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -424,7 +408,6 @@ func TestEngine_FinalCheckpoint_SkipsDuplicateOnShutdown(t *testing.T) {
 	assert.Len(t, cpFile.Checkpoints, 2, "expected 2 checkpoints after modified final")
 }
 
-// 4.9 TestEngine_CreateSemanticCheckpoint_RealGit
 func TestEngine_CreateSemanticCheckpoint_RealGit(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -466,7 +449,6 @@ func TestEngine_CreateSemanticCheckpoint_RealGit(t *testing.T) {
 	assert.Equal(t, 0, result.ExitCode, "snapshot ref should exist")
 }
 
-// 4.10 TestEngine_SemanticCheckpoints_NoRateLimit_RealGit
 func TestEngine_SemanticCheckpoints_NoRateLimit_RealGit(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -573,7 +555,6 @@ func TestEngine_CreateSemanticCheckpoint_PersistsAuthoritativeChangedPaths_RealG
 	assert.NotContains(t, secondPathStrings, "docs/note.txt", "checkpoint 2 paths should reflect delta from checkpoint 1, not cumulative workspace state")
 }
 
-// 4.11 TestEngine_pruneCheckpoints_RealGit
 func TestEngine_pruneCheckpoints_RealGit(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -589,7 +570,7 @@ func TestEngine_pruneCheckpoints_RealGit(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.IncludeUntracked = true
 
-	e := NewEngine(
+	e := newEngineForTest(
 		"test-inv-prune",
 		"test-repo",
 		repoDir, repoDir,
@@ -687,23 +668,10 @@ func TestEngine_setupInitialWatches_SkipsGitIgnoredDirs(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(fullDir, "file.go"), []byte("package main"), 0o644))
 	}
 
-	// Compute gitignored dirs using git ls-files (full-fidelity approach)
-	lsResult, err := cr.Run(ctx, "git", []string{
-		"-C", repoDir,
-		"ls-files", "--others", "--ignored", "--exclude-standard", "--directory",
-	}, exec.RunOpts{})
+	// Compute gitignored dirs using git's full exclude-standard behavior.
+	gitIgnoredDirs, err := DiscoverGitIgnoredDirs(ctx, cr, repoDir, nil)
 	require.NoError(t, err)
-	require.Equal(t, 0, lsResult.ExitCode, "git ls-files failed: %s", lsResult.Stderr)
-
-	gitIgnoredDirs := ParseGitIgnoredDirs(repoDir, lsResult.Stdout)
 	require.NotEmpty(t, gitIgnoredDirs, "expected gitignored dirs to be computed")
-
-	// Also verify the in-process ReadGitIgnoredDirs approach (used by daemon handler)
-	inProcessIgnored := ReadGitIgnoredDirs(repoDir)
-	require.NotEmpty(t, inProcessIgnored, "expected ReadGitIgnoredDirs to find dirs")
-	assert.True(t, inProcessIgnored[filepath.Join(repoDir, "node_modules")], "ReadGitIgnoredDirs: node_modules")
-	assert.True(t, inProcessIgnored[filepath.Join(repoDir, ".venv")], "ReadGitIgnoredDirs: .venv")
-	assert.True(t, inProcessIgnored[filepath.Join(repoDir, "build")], "ReadGitIgnoredDirs: build")
 
 	// Verify git-based parsing got the right dirs
 	assert.True(t, gitIgnoredDirs[filepath.Join(repoDir, "node_modules")], "node_modules should be gitignored")

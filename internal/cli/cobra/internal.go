@@ -27,6 +27,7 @@ func newInternalHeadedHookCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    "headed-hook",
 		Hidden: true,
+		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return commands.HeadedHook(context.Background(), fs.NewRealFS(), commands.HeadedHookOpts{
 				RepoID:          repoID,

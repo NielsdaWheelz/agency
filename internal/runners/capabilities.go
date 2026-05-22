@@ -19,36 +19,32 @@ const (
 	launchTokenSandboxPath = "{sandbox_path}"
 )
 
-// FollowUpMode describes how a runner accepts follow-up messages in headless mode.
-type FollowUpMode string
+// followUpMode describes how a runner accepts follow-up messages in headless mode.
+type followUpMode string
 
 const (
 	// FollowUpModeStdin delivers messages via the runner's stdin pipe in real time (JSONL).
-	FollowUpModeStdin FollowUpMode = "stdin"
+	FollowUpModeStdin followUpMode = "stdin"
 
 	// FollowUpModeResume queues messages and delivers them by resuming the session.
-	FollowUpModeResume FollowUpMode = "resume"
+	FollowUpModeResume followUpMode = "resume"
 )
 
-// InitialPromptMode describes how a runner expects the first prompt in headless mode.
-type InitialPromptMode string
+// initialPromptMode describes how a runner expects the first prompt in headless mode.
+type initialPromptMode string
 
 const (
-	// InitialPromptPositional passes the initial prompt as a CLI positional argument.
-	InitialPromptPositional InitialPromptMode = "positional"
+	initialPromptPositional initialPromptMode = "positional"
 
 	// InitialPromptStdin passes the initial prompt as the first stdin JSONL message.
-	InitialPromptStdin InitialPromptMode = "stdin"
+	InitialPromptStdin initialPromptMode = "stdin"
 )
 
-// Capability defines launch/validation policy for a runner identity.
-type Capability struct {
-	ID                 string
-	SupportsHeadless   bool
-	SupportsHeaded     bool
-	HasSemanticAdapter bool
-	FollowUpMode       FollowUpMode // how follow-up messages are delivered in headless mode
-	InitialPromptMode  InitialPromptMode
+// capability defines launch/validation policy for a runner identity.
+type capability struct {
+	id                string
+	followUpMode      followUpMode // how follow-up messages are delivered in headless mode
+	initialPromptMode initialPromptMode
 
 	reservedArgs         []string // flags reserved in both headless and headed modes
 	reservedHeadlessArgs []string // flags reserved only in headless mode (permission/approval)
@@ -66,15 +62,12 @@ var canonicalIDs = []string{
 	RunnerDroid,
 }
 
-var capabilityByID = map[string]Capability{
+var capabilityByID = map[string]capability{
 	RunnerClaudeCode: {
-		ID:                 RunnerClaudeCode,
-		SupportsHeadless:   true,
-		SupportsHeaded:     true,
-		HasSemanticAdapter: true,
-		FollowUpMode:       FollowUpModeResume,
-		InitialPromptMode:  InitialPromptPositional,
-		reservedArgs:       []string{"--output-format", "--input-format", "-p", "--print", "--verbose", "-c", "--continue", "-r", "--resume", "--settings", "--bare", "--dangerously-skip-permissions"},
+		id:                RunnerClaudeCode,
+		followUpMode:      FollowUpModeResume,
+		initialPromptMode: initialPromptPositional,
+		reservedArgs:      []string{"--output-format", "--input-format", "-p", "--print", "--verbose", "-c", "--continue", "-r", "--resume", "--settings", "--bare", "--dangerously-skip-permissions"},
 		headlessTemplate: []string{
 			"-p",
 			"--output-format", "stream-json",
@@ -95,12 +88,9 @@ var capabilityByID = map[string]Capability{
 		headedTemplate: []string{launchTokenExtraArgs},
 	},
 	RunnerCodex: {
-		ID:                   RunnerCodex,
-		SupportsHeadless:     true,
-		SupportsHeaded:       true,
-		HasSemanticAdapter:   true,
-		FollowUpMode:         FollowUpModeResume,
-		InitialPromptMode:    InitialPromptPositional,
+		id:                   RunnerCodex,
+		followUpMode:         FollowUpModeResume,
+		initialPromptMode:    initialPromptPositional,
 		reservedArgs:         []string{"exec", "resume", "--json", "-C", "--cd", "--last"},
 		reservedHeadlessArgs: []string{"-a", "--ask-for-approval", "-s", "--sandbox", "--full-auto", "--dangerously-bypass-approvals-and-sandbox", "--yolo"},
 		headlessTemplate: []string{
@@ -130,34 +120,25 @@ var capabilityByID = map[string]Capability{
 		headedTemplate: []string{launchTokenExtraArgs, "--enable", "codex_hooks"},
 	},
 	RunnerAmp: {
-		ID:                RunnerAmp,
-		SupportsHeadless:  true,
-		SupportsHeaded:    true,
-		FollowUpMode:      FollowUpModeStdin,
-		InitialPromptMode: InitialPromptStdin,
+		id:                RunnerAmp,
+		followUpMode:      FollowUpModeStdin,
+		initialPromptMode: InitialPromptStdin,
 		reservedArgs:      []string{"-x", "--execute", "--stream-json", "--stream-json-input"},
 		headlessTemplate:  []string{"-x", "--stream-json", "--stream-json-input", launchTokenExtraArgs},
 		headedTemplate:    []string{launchTokenExtraArgs},
-		// TODO: verify upstream amp CLI auto-approve flags for headless mode.
 	},
 	RunnerOpenCode: {
-		ID:                   RunnerOpenCode,
-		SupportsHeadless:     true,
-		SupportsHeaded:       true,
-		FollowUpMode:         FollowUpModeResume,
-		InitialPromptMode:    InitialPromptPositional,
+		id:                   RunnerOpenCode,
+		initialPromptMode:    initialPromptPositional,
 		reservedArgs:         []string{"run"},
 		reservedHeadlessArgs: []string{"--mode"},
 		headlessTemplate:     []string{"run", "--mode", "auto", launchTokenExtraArgs, launchTokenPrompt},
 		headedTemplate:       []string{launchTokenExtraArgs},
 	},
 	RunnerCursor: {
-		ID:                   RunnerCursor,
-		SupportsHeadless:     true,
-		SupportsHeaded:       true,
-		HasSemanticAdapter:   true,
-		FollowUpMode:         FollowUpModeResume,
-		InitialPromptMode:    InitialPromptPositional,
+		id:                   RunnerCursor,
+		followUpMode:         FollowUpModeResume,
+		initialPromptMode:    initialPromptPositional,
 		reservedArgs:         []string{"-p", "--print", "--output-format", "--resume", "--continue", "--workspace"},
 		reservedHeadlessArgs: []string{"--force", "-f", "--yolo", "--trust"},
 		headlessTemplate: []string{
@@ -177,28 +158,16 @@ var capabilityByID = map[string]Capability{
 			launchTokenPrompt,
 		},
 		headedTemplate: []string{launchTokenExtraArgs},
-		// TODO: verify upstream cursor/agent CLI sandbox/approval flags for headless mode.
 	},
 	RunnerDroid: {
-		ID:                RunnerDroid,
-		SupportsHeadless:  true,
-		SupportsHeaded:    true,
-		FollowUpMode:      FollowUpModeStdin,
-		InitialPromptMode: InitialPromptStdin,
-		reservedArgs:      []string{"exec", "--output-format", "--input-format"},
-		headlessTemplate:  []string{"exec", "--output-format", "stream-json", "--input-format", "stream-json", launchTokenExtraArgs},
-		headedTemplate:    []string{launchTokenExtraArgs},
-		// TODO: verify upstream droid CLI auto-approve flags for headless mode.
+		id:                   RunnerDroid,
+		followUpMode:         FollowUpModeStdin,
+		initialPromptMode:    InitialPromptStdin,
+		reservedArgs:         []string{"exec", "--output-format", "--input-format"},
+		reservedHeadlessArgs: []string{"--auto", "--skip-permissions-unsafe"},
+		headlessTemplate:     []string{"exec", "--auto", "medium", "--output-format", "stream-json", "--input-format", "stream-json", launchTokenExtraArgs},
+		headedTemplate:       []string{launchTokenExtraArgs},
 	},
-}
-
-var canonicalByInput = map[string]string{
-	RunnerClaudeCode: RunnerClaudeCode,
-	RunnerCodex:      RunnerCodex,
-	RunnerAmp:        RunnerAmp,
-	RunnerOpenCode:   RunnerOpenCode,
-	RunnerCursor:     RunnerCursor,
-	RunnerDroid:      RunnerDroid,
 }
 
 // CanonicalIDs returns the supported canonical runner IDs in stable order.
@@ -211,8 +180,7 @@ func CanonicalIDs() []string {
 // Canonicalize validates a canonical runner ID.
 func Canonicalize(runner string) (string, error) {
 	input := strings.TrimSpace(runner)
-	canonical, ok := canonicalByInput[input]
-	if !ok {
+	if _, ok := capabilityByID[input]; !ok {
 		return "", errors.NewWithDetails(
 			errors.ERunnerNotFound,
 			"unrecognized runner: "+input,
@@ -222,33 +190,30 @@ func Canonicalize(runner string) (string, error) {
 			},
 		)
 	}
-	return canonical, nil
+	return input, nil
 }
 
-// Resolve resolves a runner input to its canonical capability.
-func Resolve(runner string) (Capability, error) {
+func resolve(runner string) (capability, error) {
 	canonical, err := Canonicalize(runner)
 	if err != nil {
-		return Capability{}, err
+		return capability{}, err
 	}
-	capability, ok := capabilityByID[canonical]
-	if !ok {
-		return Capability{}, errors.NewWithDetails(
-			errors.ERunnerNotFound,
-			"unrecognized runner: "+runner,
-			map[string]string{
-				"runner": runner,
-				"valid":  strings.Join(canonicalIDs, ", "),
-			},
-		)
+	return capabilityByID[canonical], nil
+}
+
+// FollowUpPolicy returns the headless follow-up delivery mode for a runner.
+func FollowUpPolicy(runner string) (followUpMode, initialPromptMode, error) {
+	capability, err := resolve(runner)
+	if err != nil {
+		return "", "", err
 	}
-	return capability, nil
+	return capability.followUpMode, capability.initialPromptMode, nil
 }
 
 // ValidateArgs rejects user-supplied args that conflict with universal reserved flags.
 // Use ValidateHeadlessArgs for headless invocations to also check permission flags.
 func ValidateArgs(runner string, args []string) error {
-	capability, err := Resolve(runner)
+	capability, err := resolve(runner)
 	if err != nil {
 		return err
 	}
@@ -258,7 +223,7 @@ func ValidateArgs(runner string, args []string) error {
 // ValidateHeadlessArgs rejects user-supplied args that conflict with any reserved flag,
 // including headless-only permission/approval flags that Agency injects for autonomous operation.
 func ValidateHeadlessArgs(runner string, args []string) error {
-	capability, err := Resolve(runner)
+	capability, err := resolve(runner)
 	if err != nil {
 		return err
 	}
@@ -268,7 +233,7 @@ func ValidateHeadlessArgs(runner string, args []string) error {
 	return validateAgainst(capability, args, all)
 }
 
-func validateAgainst(capability Capability, args, reserved []string) error {
+func validateAgainst(capability capability, args, reserved []string) error {
 	for _, arg := range args {
 		for _, r := range reserved {
 			if arg == r || strings.HasPrefix(arg, r+"=") {
@@ -276,7 +241,7 @@ func validateAgainst(capability Capability, args, reserved []string) error {
 					errors.ERunnerArgConflict,
 					"reserved flag '"+r+"' cannot be passed via runner_args",
 					map[string]string{
-						"runner": capability.ID,
+						"runner": capability.id,
 						"flag":   r,
 					},
 				)
@@ -288,7 +253,7 @@ func validateAgainst(capability Capability, args, reserved []string) error {
 
 // BuildHeadlessArgs builds canonical headless argv for a runner.
 func BuildHeadlessArgs(runner, prompt, sandboxPath string, extraArgs []string) ([]string, error) {
-	capability, err := Resolve(runner)
+	capability, err := resolve(runner)
 	if err != nil {
 		return nil, err
 	}
@@ -299,16 +264,6 @@ func BuildHeadlessArgs(runner, prompt, sandboxPath string, extraArgs []string) (
 			map[string]string{"field": "prompt"},
 		)
 	}
-	if !capability.SupportsHeadless {
-		return nil, errors.NewWithDetails(
-			errors.EInvocationInvalidMode,
-			"runner '"+capability.ID+"' does not support headless mode",
-			map[string]string{
-				"runner": capability.ID,
-				"mode":   "headless",
-			},
-		)
-	}
 	return renderLaunchTemplate(capability.headlessTemplate, prompt, sandboxPath, extraArgs)
 }
 
@@ -316,7 +271,7 @@ func BuildHeadlessArgs(runner, prompt, sandboxPath string, extraArgs []string) (
 // resumeSessionID is optional; when provided, runners that support explicit
 // session targeting use it instead of generic "last session" semantics.
 func BuildResumeArgs(runner, prompt, resumeSessionID string, extraArgs []string) ([]string, error) {
-	capability, err := Resolve(runner)
+	capability, err := resolve(runner)
 	if err != nil {
 		return nil, err
 	}
@@ -330,9 +285,9 @@ func BuildResumeArgs(runner, prompt, resumeSessionID string, extraArgs []string)
 	if len(capability.resumeTemplate) == 0 {
 		return nil, errors.NewWithDetails(
 			errors.EInvocationInvalidMode,
-			"runner '"+capability.ID+"' does not support session-resume follow-up mode",
+			"runner '"+capability.id+"' does not support session-resume follow-up mode",
 			map[string]string{
-				"runner": capability.ID,
+				"runner": capability.id,
 				"mode":   "resume",
 			},
 		)
@@ -343,7 +298,7 @@ func BuildResumeArgs(runner, prompt, resumeSessionID string, extraArgs []string)
 	}
 
 	resumeSessionID = strings.TrimSpace(resumeSessionID)
-	if capability.ID == RunnerCodex && resumeSessionID != "" {
+	if capability.id == RunnerCodex && resumeSessionID != "" {
 		for i := range args {
 			if args[i] == "--last" {
 				args[i] = resumeSessionID
@@ -351,7 +306,7 @@ func BuildResumeArgs(runner, prompt, resumeSessionID string, extraArgs []string)
 			}
 		}
 	}
-	if (capability.ID == RunnerCursor || capability.ID == RunnerClaudeCode) && resumeSessionID != "" {
+	if (capability.id == RunnerCursor || capability.id == RunnerClaudeCode) && resumeSessionID != "" {
 		rewritten := make([]string, 0, len(args)+1)
 		replaced := false
 		for _, arg := range args {
@@ -369,7 +324,7 @@ func BuildResumeArgs(runner, prompt, resumeSessionID string, extraArgs []string)
 
 // SupportsResumeTurns reports whether runner has a configured resume launch template.
 func SupportsResumeTurns(runner string) bool {
-	capability, err := Resolve(runner)
+	capability, err := resolve(runner)
 	if err != nil {
 		return false
 	}
@@ -378,48 +333,11 @@ func SupportsResumeTurns(runner string) bool {
 
 // BuildHeadedArgs builds canonical headed argv for a runner.
 func BuildHeadedArgs(runner string, extraArgs []string) ([]string, error) {
-	capability, err := Resolve(runner)
+	capability, err := resolve(runner)
 	if err != nil {
 		return nil, err
 	}
-	if !capability.SupportsHeaded {
-		return nil, errors.NewWithDetails(
-			errors.EInvocationInvalidMode,
-			"runner '"+capability.ID+"' does not support headed mode",
-			map[string]string{
-				"runner": capability.ID,
-				"mode":   "headed",
-			},
-		)
-	}
 	return renderLaunchTemplate(capability.headedTemplate, "", "", extraArgs)
-}
-
-// ResolveFollowUpMode returns the FollowUpMode for a runner.
-func ResolveFollowUpMode(runner string) (FollowUpMode, error) {
-	capability, err := Resolve(runner)
-	if err != nil {
-		return "", err
-	}
-	return capability.FollowUpMode, nil
-}
-
-// ResolveInitialPromptMode returns how the runner expects the first headless prompt.
-func ResolveInitialPromptMode(runner string) (InitialPromptMode, error) {
-	capability, err := Resolve(runner)
-	if err != nil {
-		return "", err
-	}
-	return capability.InitialPromptMode, nil
-}
-
-// HasSemanticAdapter reports whether semantic parsing is supported for runner.
-func HasSemanticAdapter(runner string) bool {
-	capability, err := Resolve(runner)
-	if err != nil {
-		return false
-	}
-	return capability.HasSemanticAdapter
 }
 
 func renderLaunchTemplate(template []string, prompt, sandboxPath string, extraArgs []string) ([]string, error) {

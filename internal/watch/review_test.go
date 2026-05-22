@@ -59,7 +59,7 @@ func TestReviewPage_FromWorkspaceOpensFullInvocationReview(t *testing.T) {
 	})))
 
 	m := newModel(context.Background(), client, RunOptions{})
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Repos: []daemon.RepoDTO{
 			{RepoID: "repo-1", RepoKey: "github.com/acme/one"},
 		},
@@ -182,7 +182,7 @@ func TestReviewPage_FromHistoryOpensTurnScopedReview(t *testing.T) {
 
 	m := newModel(context.Background(), client, RunOptions{InitialPage: InitialPageHistory, InvocationID: "inv-1", RepoID: "repo-1"})
 	m.page = pageHistory
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Invocations: []daemon.InvocationDTO{
 			{
 				InvocationID: "inv-1",

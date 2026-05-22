@@ -2,13 +2,14 @@ package daemon
 
 import (
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
-func parseListWorktreesParams(r *http.Request) (ListWorktreesParams, *InvalidQueryArgumentDetails) {
+func parseListWorktreesParams(r *http.Request) (ListWorktreesParams, *invalidQueryArgumentDetails) {
 	params := ListWorktreesParams{
 		State: "present",
 		Limit: 100,
@@ -19,7 +20,7 @@ func parseListWorktreesParams(r *http.Request) (ListWorktreesParams, *InvalidQue
 	}
 	if state := r.URL.Query().Get("state"); state != "" {
 		if !isValidWorktreeState(state) {
-			return params, &InvalidQueryArgumentDetails{
+			return params, &invalidQueryArgumentDetails{
 				Param:         "state",
 				Value:         state,
 				AllowedValues: validWorktreeStates,
@@ -30,7 +31,7 @@ func parseListWorktreesParams(r *http.Request) (ListWorktreesParams, *InvalidQue
 	if limit := r.URL.Query().Get("limit"); limit != "" {
 		l, err := strconv.Atoi(limit)
 		if err != nil || l < 1 || l > 500 {
-			return params, &InvalidQueryArgumentDetails{
+			return params, &invalidQueryArgumentDetails{
 				Param: "limit",
 				Value: limit,
 			}
@@ -42,7 +43,7 @@ func parseListWorktreesParams(r *http.Request) (ListWorktreesParams, *InvalidQue
 	return params, nil
 }
 
-func parseListInvocationsParams(r *http.Request) (ListInvocationsParams, *InvalidQueryArgumentDetails) {
+func parseListInvocationsParams(r *http.Request) (ListInvocationsParams, *invalidQueryArgumentDetails) {
 	params := ListInvocationsParams{
 		State: "all",
 		Mode:  "all",
@@ -57,7 +58,7 @@ func parseListInvocationsParams(r *http.Request) (ListInvocationsParams, *Invali
 	}
 	if state := r.URL.Query().Get("state"); state != "" {
 		if !isValidInvocationState(state) {
-			return params, &InvalidQueryArgumentDetails{
+			return params, &invalidQueryArgumentDetails{
 				Param:         "state",
 				Value:         state,
 				AllowedValues: validInvocationStates,
@@ -67,7 +68,7 @@ func parseListInvocationsParams(r *http.Request) (ListInvocationsParams, *Invali
 	}
 	if mode := r.URL.Query().Get("mode"); mode != "" {
 		if !isValidInvocationMode(mode) {
-			return params, &InvalidQueryArgumentDetails{
+			return params, &invalidQueryArgumentDetails{
 				Param:         "mode",
 				Value:         mode,
 				AllowedValues: validInvocationModes,
@@ -78,7 +79,7 @@ func parseListInvocationsParams(r *http.Request) (ListInvocationsParams, *Invali
 	if limit := r.URL.Query().Get("limit"); limit != "" {
 		l, err := strconv.Atoi(limit)
 		if err != nil || l < 1 || l > 500 {
-			return params, &InvalidQueryArgumentDetails{
+			return params, &invalidQueryArgumentDetails{
 				Param: "limit",
 				Value: limit,
 			}
@@ -90,20 +91,16 @@ func parseListInvocationsParams(r *http.Request) (ListInvocationsParams, *Invali
 	return params, nil
 }
 
-func parseGetDiffParams(r *http.Request) (GetDiffParams, *InvalidQueryArgumentDetails) {
-	params := GetDiffParams{
-		IncludePatch:       true,
-		MaxPatchBytes:      2097152,
-		IncludeUncommitted: true,
-	}
+func parseGetDiffParams(r *http.Request) (GetDiffParams, *invalidQueryArgumentDetails) {
+	params := GetDiffParams{}
 
 	if includePatch := r.URL.Query().Get("include_patch"); includePatch == "0" || includePatch == "false" {
-		params.IncludePatch = false
+		params.ExcludePatch = true
 	}
 	if maxPatch := r.URL.Query().Get("max_patch_bytes"); maxPatch != "" {
 		m, err := strconv.Atoi(maxPatch)
-		if err != nil || m < 1 || m > 5242880 {
-			return params, &InvalidQueryArgumentDetails{
+		if err != nil || m < 1 || m > maxDiffPatchBytes {
+			return params, &invalidQueryArgumentDetails{
 				Param: "max_patch_bytes",
 				Value: maxPatch,
 			}
@@ -111,7 +108,7 @@ func parseGetDiffParams(r *http.Request) (GetDiffParams, *InvalidQueryArgumentDe
 		params.MaxPatchBytes = m
 	}
 	if includeUncommitted := r.URL.Query().Get("include_uncommitted"); includeUncommitted == "0" || includeUncommitted == "false" {
-		params.IncludeUncommitted = false
+		params.ExcludeUncommitted = true
 	}
 	params.TurnID = strings.TrimSpace(r.URL.Query().Get("turn"))
 	params.TurnStartID = strings.TrimSpace(r.URL.Query().Get("turn_start"))
@@ -120,18 +117,18 @@ func parseGetDiffParams(r *http.Request) (GetDiffParams, *InvalidQueryArgumentDe
 	return params, nil
 }
 
-func parseGetLogsParams(r *http.Request) (GetLogsParams, *InvalidQueryArgumentDetails) {
+func parseGetLogsParams(r *http.Request) (GetLogsParams, *invalidQueryArgumentDetails) {
 	params := GetLogsParams{
-		Kind:  "raw",
+		Kind:  InvocationLogKindRaw,
 		Limit: 65536,
 	}
 
 	if kind := r.URL.Query().Get("kind"); kind != "" {
-		if !isValidInvocationLogKind(kind) {
-			return params, &InvalidQueryArgumentDetails{
+		if !slices.Contains(invocationLogKinds, kind) {
+			return params, &invalidQueryArgumentDetails{
 				Param:         "kind",
 				Value:         kind,
-				AllowedValues: validInvocationLogKinds,
+				AllowedValues: InvocationLogKinds(),
 			}
 		}
 		params.Kind = kind
@@ -140,7 +137,7 @@ func parseGetLogsParams(r *http.Request) (GetLogsParams, *InvalidQueryArgumentDe
 	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
 		o, err := strconv.ParseInt(offsetStr, 10, 64)
 		if err != nil || o < 0 {
-			return params, &InvalidQueryArgumentDetails{
+			return params, &invalidQueryArgumentDetails{
 				Param: "offset",
 				Value: offsetStr,
 			}
@@ -150,7 +147,7 @@ func parseGetLogsParams(r *http.Request) (GetLogsParams, *InvalidQueryArgumentDe
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
 		l, err := strconv.Atoi(limitStr)
 		if err != nil || l < 1 || l > MaxLogChunk {
-			return params, &InvalidQueryArgumentDetails{
+			return params, &invalidQueryArgumentDetails{
 				Param: "limit",
 				Value: limitStr,
 			}
@@ -161,21 +158,45 @@ func parseGetLogsParams(r *http.Request) (GetLogsParams, *InvalidQueryArgumentDe
 	return params, nil
 }
 
+func parseListCheckpointsParams(r *http.Request) (ListCheckpointsParams, *invalidQueryArgumentDetails) {
+	params := ListCheckpointsParams{Limit: 100}
+	if limit := r.URL.Query().Get("limit"); limit != "" {
+		parsed, err := strconv.Atoi(limit)
+		if err != nil || parsed < 1 || parsed > 500 {
+			return params, &invalidQueryArgumentDetails{
+				Param: "limit",
+				Value: limit,
+			}
+		}
+		params.Limit = parsed
+	}
+	params.Cursor = r.URL.Query().Get("cursor")
+	return params, nil
+}
+
 var (
-	validWorktreeStates     = []string{"present", "archived", "all"}
-	validInvocationStates   = []string{"unresolved", "finished", "all"}
-	validInvocationModes    = []string{"headed", "headless", "all"}
-	validInvocationLogKinds = []string{"raw", "stderr", "stream", "hooks", "terminal"}
+	validWorktreeStates = []string{
+		string(store.WorktreeStatePresent),
+		string(store.WorktreeStateArchived),
+		readFilterAll,
+	}
+	validInvocationStates = []string{
+		invocationStateFilterUnresolved,
+		invocationStateFilterFinished,
+		readFilterAll,
+	}
+	validInvocationModes = []string{
+		string(store.RunnerModeHeaded),
+		string(store.RunnerModeHeadless),
+		readFilterAll,
+	}
 )
 
-func isValidInvocationLogKind(kind string) bool {
-	for _, valid := range validInvocationLogKinds {
-		if kind == valid {
-			return true
-		}
-	}
-	return false
-}
+const (
+	readFilterAll                   = "all"
+	invocationStateFilterUnresolved = "unresolved"
+	invocationStateFilterFinished   = "finished"
+)
 
 func isValidWorktreeState(state string) bool {
 	for _, valid := range validWorktreeStates {
@@ -206,11 +227,11 @@ func isValidInvocationMode(mode string) bool {
 
 func matchesWorktreeState(state store.WorktreeState, filter string) bool {
 	switch filter {
-	case "all":
+	case readFilterAll:
 		return true
-	case "archived":
+	case string(store.WorktreeStateArchived):
 		return state == store.WorktreeStateArchived
-	case "present":
+	case string(store.WorktreeStatePresent):
 		return state == store.WorktreeStatePresent
 	}
 	return false
@@ -218,9 +239,9 @@ func matchesWorktreeState(state store.WorktreeState, filter string) bool {
 
 func matchesInvocationState(status store.InvocationStatus, landing store.LandingStatus, filter string) bool {
 	switch filter {
-	case "all":
+	case readFilterAll:
 		return true
-	case "unresolved":
+	case invocationStateFilterUnresolved:
 		switch status {
 		case store.InvocationStatusStarting, store.InvocationStatusRunning, store.InvocationStatusStopping:
 			return true
@@ -228,7 +249,7 @@ func matchesInvocationState(status store.InvocationStatus, landing store.Landing
 			return landing != store.LandingStatusLanded && landing != store.LandingStatusDiscarded
 		}
 		return false
-	case "finished":
+	case invocationStateFilterFinished:
 		switch status {
 		case store.InvocationStatusFinished, store.InvocationStatusFailed:
 			return true
@@ -240,11 +261,11 @@ func matchesInvocationState(status store.InvocationStatus, landing store.Landing
 
 func matchesInvocationMode(mode store.RunnerMode, filter string) bool {
 	switch filter {
-	case "all":
+	case readFilterAll:
 		return true
-	case "headed":
+	case string(store.RunnerModeHeaded):
 		return mode == store.RunnerModeHeaded
-	case "headless":
+	case string(store.RunnerModeHeadless):
 		return mode == store.RunnerModeHeadless
 	}
 	return false

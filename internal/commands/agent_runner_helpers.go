@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
@@ -44,7 +45,7 @@ func resolveAgentRunner(input, defaultRunner string) (string, error) {
 		runner = strings.TrimSpace(defaultRunner)
 	}
 	if runner == "" {
-		runner = runners.RunnerClaudeCode
+		return "", errors.New(errors.EUsage, "runner is required; pass --runner or set defaults.runner")
 	}
 
 	canonicalRunner, err := runners.Canonicalize(runner)
@@ -90,17 +91,30 @@ func resolveStartRunnerAndArgs(ctx context.Context, fsys fs.FS, cwd string, ns *
 	}
 
 	if repoID == "" {
-		repoID, err = repoIDForRepoRoot(ctx, ns.client, repoRoot)
+		repo, err := ns.client.RegisterRepo(ctx, repoRoot)
 		if err != nil {
 			return "", nil, err
 		}
+		repoID = repo.Data.RepoID
 	}
 
 	agencyConfigPath := strings.TrimSpace(opts.AgencyConfigPath)
 	if agencyConfigPath != "" && !filepath.IsAbs(agencyConfigPath) {
 		agencyConfigPath = filepath.Join(cwd, agencyConfigPath)
 	}
-	shouldResolveAgencyConfig := shouldResolveStartAgencyConfig(fsys, ns.dirs.ConfigDir, repoRoot, repoID, agencyConfigPath)
+	shouldResolveAgencyConfig := agencyConfigPath != ""
+	if !shouldResolveAgencyConfig {
+		repoAgencyConfigPath := filepath.Join(repoRoot, "agency.json")
+		if _, err := fsys.Stat(repoAgencyConfigPath); err == nil || !os.IsNotExist(err) {
+			shouldResolveAgencyConfig = true
+		}
+	}
+	if !shouldResolveAgencyConfig {
+		localAgencyConfigPath := config.LocalAgencyConfigPath(ns.dirs.ConfigDir, repoID)
+		if _, err := fsys.Stat(localAgencyConfigPath); err == nil || !os.IsNotExist(err) {
+			shouldResolveAgencyConfig = true
+		}
+	}
 
 	model := strings.TrimSpace(opts.Model)
 	effort := strings.TrimSpace(opts.Effort)
@@ -143,21 +157,6 @@ func resolveStartRunnerAndArgs(ctx context.Context, fsys fs.FS, cwd string, ns *
 	return runner, runnerArgs, nil
 }
 
-func shouldResolveStartAgencyConfig(fsys fs.FS, configDir, repoRoot, repoID, agencyConfigPath string) bool {
-	if agencyConfigPath != "" {
-		return true
-	}
-	repoAgencyConfigPath := filepath.Join(repoRoot, "agency.json")
-	if _, err := fsys.Stat(repoAgencyConfigPath); err == nil || !os.IsNotExist(err) {
-		return true
-	}
-	localAgencyConfigPath := config.LocalAgencyConfigPath(configDir, repoID)
-	if _, err := fsys.Stat(localAgencyConfigPath); err == nil || !os.IsNotExist(err) {
-		return true
-	}
-	return false
-}
-
 func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, model, effort, permissionMode string, headless bool) ([]string, error) {
 	canonicalRunner, err := runners.Canonicalize(runner)
 	if err != nil {
@@ -193,7 +192,7 @@ func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, model, effor
 				},
 			)
 		}
-		return append([]string(nil), runnerArgs...), nil
+		return slices.Clone(runnerArgs), nil
 	}
 	if !supportsEffort && effort != "" {
 		return nil, errors.NewWithDetails(
@@ -218,7 +217,7 @@ func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, model, effor
 		)
 	}
 
-	out := append([]string(nil), runnerArgs...)
+	out := slices.Clone(runnerArgs)
 	switch canonicalRunner {
 	case runners.RunnerClaudeCode:
 		for _, arg := range runnerArgs {

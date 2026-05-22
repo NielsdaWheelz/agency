@@ -18,10 +18,10 @@ type LockInfo struct {
 	Cmd       string    `json:"cmd,omitempty"`
 }
 
-// ErrLocked indicates a non-stale lock is held by someone else.
+// ErrLocked indicates the repo lock is held or the lock file cannot be trusted.
 type ErrLocked struct {
 	RepoID string
-	Info   *LockInfo // nil if lock file is unreadable
+	Info   *LockInfo // nil if lock metadata is unreadable or invalid
 	Path   string
 }
 
@@ -36,19 +36,16 @@ func (e *ErrLocked) Error() string {
 // RepoLock provides repo-level locking for mutating commands.
 type RepoLock struct {
 	DataDir    string
-	StaleAfter time.Duration
 	Now        func() time.Time
 	IsPIDAlive func(pid int) bool
 }
 
 // NewRepoLock returns a RepoLock with default settings:
-// - StaleAfter: 2h
 // - Now: time.Now
 // - IsPIDAlive: platform impl (best-effort)
 func NewRepoLock(dataDir string) RepoLock {
 	return RepoLock{
 		DataDir:    dataDir,
-		StaleAfter: 2 * time.Hour,
 		Now:        time.Now,
 		IsPIDAlive: isPIDAlive,
 	}
@@ -61,7 +58,7 @@ func (l RepoLock) lockPath(repoID string) string {
 
 // Lock acquires the repo lock and returns an unlock function.
 // - cmd is stored in the lock file for debugging (may be empty).
-// - if already locked and not stale: returns *ErrLocked.
+// - if already locked, unreadable, or not stale: returns *ErrLocked.
 func (l RepoLock) Lock(repoID string, cmd string) (unlock func() error, err error) {
 	lockPath := l.lockPath(repoID)
 	maxRetries := 3
@@ -111,21 +108,7 @@ func (l RepoLock) Lock(repoID string, cmd string) (unlock func() error, err erro
 		// Try to read existing lock info
 		info, readErr := l.readLockInfo(lockPath)
 		if readErr != nil {
-			// Lock file exists but is unreadable - check mtime for staleness
-			stat, statErr := os.Stat(lockPath)
-			if statErr != nil {
-				return nil, &ErrLocked{RepoID: repoID, Path: lockPath}
-			}
-			age := l.Now().Sub(stat.ModTime())
-			if age <= l.StaleAfter {
-				// Lock is not stale by age, treat as locked (conservative)
-				return nil, &ErrLocked{RepoID: repoID, Path: lockPath}
-			}
-			// Stale by age - remove and retry
-			if removeErr := os.Remove(lockPath); removeErr != nil && !os.IsNotExist(removeErr) {
-				return nil, &ErrLocked{RepoID: repoID, Path: lockPath}
-			}
-			continue
+			return nil, &ErrLocked{RepoID: repoID, Path: lockPath}
 		}
 
 		// Check if lock is stale
@@ -159,10 +142,10 @@ func (l RepoLock) readLockInfo(path string) (*LockInfo, error) {
 }
 
 // isStale returns true if the lock should be considered stale.
-// Per S5 spec: stale detection is pid-only. A lock is stale only if the
-// owning pid is not alive. Age alone never steals the lock.
+// A lock is stale only if the owning pid is not alive. Age alone never steals
+// the lock.
 func (l RepoLock) isStale(info *LockInfo) bool {
-	// Stale only if pid is not alive (pid-only staleness per spec)
+	// Stale only if pid is not alive.
 	return !l.IsPIDAlive(info.PID)
 }
 

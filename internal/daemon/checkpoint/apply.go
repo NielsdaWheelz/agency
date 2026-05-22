@@ -22,7 +22,7 @@ type ApplyOptions struct {
 	RewindHeadToSnapshotBase bool
 
 	// BackupRefPrefix controls where pre-apply HEAD backup refs are written.
-	// Defaults to RestoreBackupRefPrefix when empty.
+	// Defaults to restoreBackupRefPrefix when empty.
 	BackupRefPrefix string
 
 	// Env overlays every git command the applier runs.
@@ -39,25 +39,6 @@ type Applier struct {
 	fsys           fs.FS
 	clock          func() time.Time
 	eventWriter    eventlog.Appender
-}
-
-// NewApplier creates a new checkpoint applier.
-func NewApplier(
-	invocationID, sandboxPath, checkpointsDir, eventsPath string,
-	runner exec.CommandRunner,
-	fsys fs.FS,
-	clock func() time.Time,
-) *Applier {
-	return NewApplierWithWriter(
-		invocationID,
-		sandboxPath,
-		checkpointsDir,
-		eventsPath,
-		runner,
-		fsys,
-		clock,
-		eventlog.NewWriter("invocation_id", clock),
-	)
 }
 
 // NewApplierWithWriter creates a checkpoint applier using a shared invocation
@@ -84,18 +65,12 @@ func NewApplierWithWriter(
 	}
 }
 
-// Apply restores the sandbox to the state at the given checkpoint.
-// Returns the applied checkpoint details on success.
-func (a *Applier) Apply(ctx context.Context, checkpointID int) (*Checkpoint, error) {
-	return a.ApplyWithOptions(ctx, checkpointID, ApplyOptions{})
-}
-
 // ApplyWithOptions restores the sandbox to the state at the given checkpoint
 // with caller-controlled restore semantics.
 func (a *Applier) ApplyWithOptions(ctx context.Context, checkpointID int, opts ApplyOptions) (*Checkpoint, error) {
 	backupPrefix := strings.TrimSpace(opts.BackupRefPrefix)
 	if backupPrefix == "" {
-		backupPrefix = RestoreBackupRefPrefix
+		backupPrefix = restoreBackupRefPrefix
 	}
 	if !strings.HasSuffix(backupPrefix, "/") {
 		backupPrefix += "/"
@@ -104,11 +79,14 @@ func (a *Applier) ApplyWithOptions(ctx context.Context, checkpointID int, opts A
 	// 1. Load checkpoints file
 	cpFile, err := a.loadCheckpoints()
 	if err != nil {
+		if errors.GetCode(err) != "" {
+			return nil, err
+		}
 		return nil, errors.Wrap(errors.ECheckpointFailed, "failed to load checkpoints", err)
 	}
 
 	// 2. Find the checkpoint
-	cp := cpFile.FindByID(checkpointID)
+	cp := cpFile.findByID(checkpointID)
 	if cp == nil {
 		return nil, errors.New(errors.ECheckpointNotFound, fmt.Sprintf("checkpoint %d not found", checkpointID))
 	}
@@ -296,23 +274,7 @@ func (a *Applier) recoverPreApplyState(preApplyHead string, env map[string]strin
 // loadCheckpoints reads checkpoints.json.
 func (a *Applier) loadCheckpoints() (*CheckpointsFile, error) {
 	cpPath := filepath.Join(a.checkpointsDir, "checkpoints.json")
-	data, err := a.fsys.ReadFile(cpPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return NewCheckpointsFile(), nil
-		}
-		return nil, err
-	}
-
-	var cpFile CheckpointsFile
-	if err := json.Unmarshal(data, &cpFile); err != nil {
-		return nil, err
-	}
-	if cpFile.SchemaVersion != SchemaVersion {
-		return nil, fmt.Errorf("unknown checkpoints.json schema_version %q", cpFile.SchemaVersion)
-	}
-
-	return &cpFile, nil
+	return LoadCheckpointsFile(a.fsys, cpPath)
 }
 
 // emitCheckpointApplied emits a checkpoint_applied event.
@@ -320,8 +282,8 @@ func (a *Applier) emitCheckpointApplied(checkpointID int, snapshotCommit string)
 	_, err := a.eventWriter.Append(
 		a.eventsPath,
 		a.invocationID,
-		string(EventKindCheckpointApplied),
-		CheckpointAppliedData(checkpointID, snapshotCommit),
+		string(eventKindCheckpointApplied),
+		checkpointAppliedData(checkpointID, snapshotCommit),
 		eventlog.AppendOptions{},
 	)
 	return err
@@ -332,31 +294,33 @@ func (a *Applier) emitCheckpointApplyStarted(checkpointID int, snapshotCommit st
 	_, err := a.eventWriter.Append(
 		a.eventsPath,
 		a.invocationID,
-		string(EventKindCheckpointApplyStarted),
-		CheckpointApplyStartedData(checkpointID, snapshotCommit, rewindHead),
+		string(eventKindCheckpointApplyStarted),
+		checkpointApplyStartedData(checkpointID, snapshotCommit, rewindHead),
 		eventlog.AppendOptions{},
 	)
 	return err
 }
 
-// LoadCheckpointsFile is a helper to load checkpoints.json from a path.
-func LoadCheckpointsFile(fsys fs.FS, checkpointsDir string) (*CheckpointsFile, error) {
-	cpPath := filepath.Join(checkpointsDir, "checkpoints.json")
-	data, err := fsys.ReadFile(cpPath)
+// LoadCheckpointsFile loads checkpoints.json from its exact file path.
+func LoadCheckpointsFile(fsys fs.FS, checkpointsPath string) (*CheckpointsFile, error) {
+	data, err := fsys.ReadFile(checkpointsPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return NewCheckpointsFile(), nil
 		}
-		return nil, err
+		return nil, errors.Wrap(errors.EStoreCorrupt, fmt.Sprintf("failed to read checkpoints.json at %s", checkpointsPath), err)
 	}
 
 	var cpFile CheckpointsFile
 	if err := json.Unmarshal(data, &cpFile); err != nil {
-		return nil, err
+		return nil, errors.Wrap(errors.EStoreCorrupt, fmt.Sprintf("invalid checkpoints.json at %s", checkpointsPath), err)
 	}
 
+	if strings.TrimSpace(cpFile.SchemaVersion) == "" {
+		return nil, errors.New(errors.EStoreCorrupt, fmt.Sprintf("checkpoints.json at %s missing schema_version", checkpointsPath))
+	}
 	if cpFile.SchemaVersion != SchemaVersion {
-		return nil, fmt.Errorf("unknown checkpoints.json schema_version %q", cpFile.SchemaVersion)
+		return nil, errors.New(errors.EStoreCorrupt, fmt.Sprintf("unknown checkpoints.json schema_version %q at %s", cpFile.SchemaVersion, checkpointsPath))
 	}
 
 	return &cpFile, nil

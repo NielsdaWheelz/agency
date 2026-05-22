@@ -4,7 +4,7 @@ package errors
 import (
 	"errors"
 	"fmt"
-	"io"
+	"maps"
 )
 
 // Code is a stable error code string.
@@ -12,8 +12,10 @@ type Code string
 
 // Error codes. Stable public contract.
 const (
-	EUsage          Code = "E_USAGE"
-	ENotImplemented Code = "E_NOT_IMPLEMENTED"
+	EUsage            Code = "E_USAGE"
+	ENotImplemented   Code = "E_NOT_IMPLEMENTED"
+	ENotFound         Code = "E_NOT_FOUND"
+	EMethodNotAllowed Code = "E_METHOD_NOT_ALLOWED"
 
 	ENoRepo                   Code = "E_NO_REPO"
 	ENoAgencyJSON             Code = "E_NO_AGENCY_JSON"
@@ -176,7 +178,6 @@ const (
 	ELandAlreadyDiscarded   Code = "E_LAND_ALREADY_DISCARDED"   // invocation has already been discarded
 	ESandboxMissing         Code = "E_SANDBOX_MISSING"          // sandbox tree no longer exists
 	EIntegrationTreeMissing Code = "E_INTEGRATION_TREE_MISSING" // integration worktree tree no longer exists
-	ELandDenylistViolation  Code = "E_LAND_DENYLIST_VIOLATION"  // denylisted files found in uncommitted changes
 
 	ESessionEnded Code = "E_SESSION_ENDED" // tmux session ended; use logs or open to view
 
@@ -212,30 +213,30 @@ func (e *AgencyError) Unwrap() error {
 	return e.Cause
 }
 
-// ExitCodeError wraps an error with an explicit process exit code.
-type ExitCodeError struct {
+// exitCodeError wraps an error with an explicit process exit code.
+type exitCodeError struct {
 	Err  error
 	Code int
 }
 
-func (e *ExitCodeError) Error() string {
+func (e *exitCodeError) Error() string {
 	if e.Err != nil {
 		return e.Err.Error()
 	}
 	return fmt.Sprintf("exit code %d", e.Code)
 }
 
-func (e *ExitCodeError) Unwrap() error {
+func (e *exitCodeError) Unwrap() error {
 	return e.Err
 }
 
-func (e *ExitCodeError) ExitCode() int {
+func (e *exitCodeError) ExitCode() int {
 	return e.Code
 }
 
 // WithExitCode wraps err with a specific process exit code.
 func WithExitCode(err error, code int) error {
-	return &ExitCodeError{Err: err, Code: code}
+	return &exitCodeError{Err: err, Code: code}
 }
 
 // New creates a new AgencyError with the given code and message.
@@ -269,12 +270,12 @@ func GetCode(err error) Code {
 	return ""
 }
 
-// CodeOr returns the error's code, or fallback if err carries no code.
-func CodeOr(err error, fallback Code) Code {
+// CodeOr returns the error's code, or defaultCode if err carries no code.
+func CodeOr(err error, defaultCode Code) Code {
 	if code := GetCode(err); code != "" {
 		return code
 	}
-	return fallback
+	return defaultCode
 }
 
 // AsAgencyError returns (*AgencyError, true) if err is or wraps an AgencyError.
@@ -291,11 +292,7 @@ func copyDetails(details map[string]string) map[string]string {
 	if len(details) == 0 {
 		return nil
 	}
-	cp := make(map[string]string, len(details))
-	for k, v := range details {
-		cp[k] = v
-	}
-	return cp
+	return maps.Clone(details)
 }
 
 // ExitCode returns the appropriate exit code for an error.
@@ -311,18 +308,4 @@ func ExitCode(err error) int {
 		return 2
 	}
 	return 1
-}
-
-// Print writes the error to w in the stable stderr format.
-// This is the default error printer and uses Format() with default options.
-//
-// Output format:
-//
-//	error_code: <CODE>
-//	<message>
-//
-//	<context>
-//	<hint>
-func Print(w io.Writer, err error) {
-	PrintWithOptions(w, err, PrintOptions{})
 }

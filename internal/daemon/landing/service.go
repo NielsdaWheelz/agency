@@ -17,23 +17,15 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
-// Mode indicates which landing strategy was used.
-type Mode string
-
 const (
-	// ModeCherryPick indicates commits were cherry-picked.
-	ModeCherryPick Mode = "cherry_pick"
-
-	// ModeApplyPatch indicates a patch was applied (no commits).
-	ModeApplyPatch Mode = "apply_patch"
-
-	// ModeCleanup indicates a prior successful land only needed cleanup retry.
-	ModeCleanup Mode = "cleanup"
+	modeCherryPick = "cherry_pick"
+	modeApplyPatch = "apply_patch"
+	modeCleanup    = "cleanup"
 )
 
-// LandResult contains the result of a successful land operation.
-type LandResult struct {
-	Mode                  Mode
+// landResult contains the result of a successful land operation.
+type landResult struct {
+	Mode                  string
 	IntegrationHeadBefore string
 	IntegrationHeadAfter  string
 	CommitsLanded         int
@@ -49,19 +41,8 @@ type Service struct {
 	eventWriter eventlog.Appender
 }
 
-// NewService creates a new landing service.
+// NewService creates a landing service.
 func NewService(
-	st *store.Store,
-	runner exec.CommandRunner,
-	fsys fs.FS,
-	clock func() time.Time,
-) *Service {
-	return NewServiceWithWriter(st, runner, fsys, clock, eventlog.NewWriter("invocation_id", clock))
-}
-
-// NewServiceWithWriter creates a landing service with a shared invocation
-// event writer.
-func NewServiceWithWriter(
 	st *store.Store,
 	runner exec.CommandRunner,
 	fsys fs.FS,
@@ -95,7 +76,7 @@ type LandOpts struct {
 
 // Land applies sandbox changes to the integration worktree.
 // All git mutations are performed under the repo lock.
-func (s *Service) Land(ctx context.Context, opts LandOpts) (*LandResult, error) {
+func (s *Service) Land(ctx context.Context, opts LandOpts) (*landResult, error) {
 	meta, err := s.store.ReadInvocationMeta(opts.RepoID, opts.InvocationID)
 	if err != nil {
 		return nil, err
@@ -131,7 +112,7 @@ func (s *Service) Land(ctx context.Context, opts LandOpts) (*LandResult, error) 
 		}); err != nil {
 			return nil, err
 		}
-		return &LandResult{Mode: ModeCleanup}, nil
+		return &landResult{Mode: modeCleanup}, nil
 	}
 	if err := s.ensureLandPathsExist(meta.SandboxPath, wtMeta.TreePath); err != nil {
 		return nil, err
@@ -194,7 +175,7 @@ func (s *Service) Land(ctx context.Context, opts LandOpts) (*LandResult, error) 
 	return result, nil
 }
 
-func (s *Service) landForState(ctx context.Context, opts LandOpts, meta *store.InvocationMeta, integrationPath, headBefore string, commitCount int) (*LandResult, error) {
+func (s *Service) landForState(ctx context.Context, opts LandOpts, meta *store.InvocationMeta, integrationPath, headBefore string, commitCount int) (*landResult, error) {
 	if commitCount > 0 {
 		return s.landCherryPick(ctx, opts, meta, integrationPath, headBefore, commitCount)
 	}
@@ -342,5 +323,5 @@ func (s *Service) syncWorktreeRunnerStatus(repoID, invocationID, worktreeID stri
 	if err := s.fsys.Chmod(statusDir, 0o700); err != nil {
 		return err
 	}
-	return fs.WriteJSONAtomic(statusPath, worktreeStatus, 0o600)
+	return fs.WriteJSONAtomic(s.fsys, statusPath, worktreeStatus, 0o600)
 }

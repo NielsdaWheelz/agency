@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/NielsdaWheelz/agency/internal/daemonclient"
+	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -136,7 +136,7 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 	idempotencyKey := uuid.New().String()
 
 	// Call daemon to create worktree
-	result, err := ns.client.WorktreeCreate(ctx, daemonclient.WorktreeCreateOpts{
+	result, err := ns.client.WorktreeCreate(ctx, daemon.WorktreeCreateRequest{
 		RepoRoot:       repoRoot,
 		Name:           opts.Name,
 		BaseBranch:     baseBranch,

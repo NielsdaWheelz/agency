@@ -2,11 +2,12 @@
 package daemon
 
 import (
+	"cmp"
 	stderrors "errors"
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
@@ -37,7 +38,7 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if routePathEquals(r.URL.Path, "/repos") {
-		if !s.requireMethod(w, r, http.MethodGet) {
+		if !s.requireAPIResponseMethod(w, r, http.MethodGet) {
 			return
 		}
 		s.handleListRepos(w, r)
@@ -46,18 +47,18 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 
 	remaining, ok := trimRoutePrefix(r.URL.Path, "/repos/")
 	if !ok {
-		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "not found", "")
+		s.writeError(w, http.StatusNotFound, string(errors.ENotFound), "not found", "")
 		return
 	}
 	if remaining != "" {
-		if !s.requireMethod(w, r, http.MethodGet) {
+		if !s.requireAPIResponseMethod(w, r, http.MethodGet) {
 			return
 		}
 		s.handleGetRepo(w, r, remaining)
 		return
 	}
 
-	s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "not found", "")
+	s.writeError(w, http.StatusNotFound, string(errors.ENotFound), "not found", "")
 }
 
 // handleRepoRegister handles POST /repos/register.
@@ -97,7 +98,7 @@ func (s *Server) handleRepoRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gitRoot, err := git.GetRepoRoot(ctx, s.Runner, absRoot, nil)
+	gitRoot, err := git.GetRepoRoot(ctx, s.runner, absRoot, nil)
 	if err != nil {
 		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.ERepoNotAGitRepo),
 			"not a git repository: "+err.Error(),
@@ -113,7 +114,7 @@ func (s *Server) handleRepoRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	originInfo := git.GetOriginInfo(ctx, s.Runner, canonicalRoot, nil)
+	originInfo := git.GetOriginInfo(ctx, s.runner, canonicalRoot, nil)
 	repoIdentity := identity.DeriveRepoIdentity(canonicalRoot, originInfo.URL)
 
 	unlock, err := s.repoLock.Lock(repoIdentity.RepoID, "repo register")
@@ -146,13 +147,13 @@ func (s *Server) handleRepoRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	idx, err := s.Store.LoadRepoIndex()
+	idx, err := s.store.LoadRepoIndex()
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to load repo index: "+err.Error(), "", nil)
 		return
 	}
 
-	rec, _, _ := s.Store.LoadRepoRecord(repoIdentity.RepoID)
+	rec, _, _ := s.store.LoadRepoRecord(repoIdentity.RepoID)
 
 	// Find the entry for this repo
 	var entry store.RepoIndexEntry
@@ -189,9 +190,9 @@ func (s *Server) handleRepoRegister(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 	requestID := getOrCreateRequestID(r)
 
-	idx, err := s.Store.LoadRepoIndex()
+	idx, err := s.store.LoadRepoIndex()
 	if err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", err.Error(), "", nil)
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), err.Error(), "", nil)
 		return
 	}
 
@@ -202,8 +203,8 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sort by last_seen_at desc for stable output
-	sort.Slice(repos, func(i, j int) bool {
-		return repos[i].LastSeenAt > repos[j].LastSeenAt
+	slices.SortFunc(repos, func(a, b RepoDTO) int {
+		return cmp.Compare(b.LastSeenAt, a.LastSeenAt)
 	})
 
 	if repos == nil {
@@ -217,9 +218,9 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetRepo(w http.ResponseWriter, r *http.Request, repoRef string) {
 	requestID := getOrCreateRequestID(r)
 
-	idx, err := s.Store.LoadRepoIndex()
+	idx, err := s.store.LoadRepoIndex()
 	if err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", err.Error(), "", nil)
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), err.Error(), "", nil)
 		return
 	}
 
@@ -271,7 +272,7 @@ func (s *Server) buildRepoDTO(entry store.RepoIndexEntry) RepoDTO {
 	}
 
 	// Load repo.json for richer info
-	rec, exists, _ := s.Store.LoadRepoRecord(entry.RepoID)
+	rec, exists, _ := s.store.LoadRepoRecord(entry.RepoID)
 	if exists {
 		dto.RepoKey = rec.RepoKey
 		dto.PreferredRoot = rec.PreferredRoot
@@ -320,7 +321,7 @@ func repoDisplayName(repoKey, preferredRoot, repoID string) string {
 }
 
 func (s *Server) repoName(repoID string) string {
-	rec, exists, _ := s.Store.LoadRepoRecord(repoID)
+	rec, exists, _ := s.store.LoadRepoRecord(repoID)
 	if exists {
 		return repoDisplayName(rec.RepoKey, rec.PreferredRoot, repoID)
 	}
@@ -329,7 +330,7 @@ func (s *Server) repoName(repoID string) string {
 
 // ensureRepoRecordWithPreferredRoot creates or updates repo.json with PreferredRoot set.
 func (s *Server) ensureRepoRecordWithPreferredRoot(repoIdentity identity.RepoIdentity, canonicalRoot string, originInfo git.OriginInfo) error {
-	existing, found, err := s.Store.LoadRepoRecord(repoIdentity.RepoID)
+	existing, found, err := s.store.LoadRepoRecord(repoIdentity.RepoID)
 	if err != nil {
 		return err
 	}
@@ -339,7 +340,7 @@ func (s *Server) ensureRepoRecordWithPreferredRoot(repoIdentity identity.RepoIde
 		existingPtr = &existing
 	}
 
-	rec := s.Store.UpsertRepoRecord(existingPtr, store.BuildRepoRecordInput{
+	rec := s.store.UpsertRepoRecord(existingPtr, store.BuildRepoRecordInput{
 		RepoKey:          repoIdentity.RepoKey,
 		RepoID:           repoIdentity.RepoID,
 		RepoRootLastSeen: canonicalRoot,
@@ -353,7 +354,7 @@ func (s *Server) ensureRepoRecordWithPreferredRoot(repoIdentity identity.RepoIde
 		},
 	})
 
-	return s.Store.SaveRepoRecord(rec)
+	return s.store.SaveRepoRecord(rec)
 }
 
 // isRootAccessible checks if a path is accessible (exists and is a directory).
@@ -373,7 +374,7 @@ func (s *Server) buildRepoRefs(idx store.RepoIndex) []ids.RepoRef {
 			RepoID: entry.RepoID,
 		}
 		// Load repo.json for RepoKey
-		rec, exists, _ := s.Store.LoadRepoRecord(entry.RepoID)
+		rec, exists, _ := s.store.LoadRepoRecord(entry.RepoID)
 		if exists {
 			ref.RepoKey = rec.RepoKey
 		} else {
@@ -385,11 +386,7 @@ func (s *Server) buildRepoRefs(idx store.RepoIndex) []ids.RepoRef {
 }
 
 func (s *Server) appendRepoEvent(repoID, kind string, data map[string]any) error {
-	writer := s.RepoEvents
-	if writer == nil {
-		writer = eventlog.NewWriter("repo_id", s.Clock)
-	}
-	_, err := writer.Append(s.Store.RepoEventsPath(repoID), repoID, kind, data, eventlog.AppendOptions{})
+	_, err := s.repoEvents.Append(s.store.RepoEventsPath(repoID), repoID, kind, data, eventlog.AppendOptions{})
 	return err
 }
 
@@ -409,7 +406,7 @@ func (s *Server) handleRepoRm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	idx, err := s.Store.LoadRepoIndex()
+	idx, err := s.store.LoadRepoIndex()
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to load repo index: "+err.Error(), "", nil)
 		return
@@ -443,7 +440,7 @@ func (s *Server) handleRepoRm(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = unlock() }()
 
-	idx, err = s.Store.LoadRepoIndex()
+	idx, err = s.store.LoadRepoIndex()
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to load repo index: "+err.Error(), "", nil)
 		return
@@ -461,7 +458,7 @@ func (s *Server) handleRepoRm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	worktrees, err := store.ScanIntegrationWorktreesForRepo(s.Store.DataDir, resolved.RepoID)
+	worktrees, err := s.store.ScanIntegrationWorktreesForRepo(resolved.RepoID)
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to scan integration worktrees: "+err.Error(), "", nil)
 		return
@@ -473,7 +470,7 @@ func (s *Server) handleRepoRm(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	invocations, err := store.ScanInvocationsForRepo(s.Store.DataDir, resolved.RepoID)
+	invocations, err := s.store.ScanInvocationsForRepo(resolved.RepoID)
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to scan invocations: "+err.Error(), "", nil)
 		return
@@ -497,7 +494,7 @@ func (s *Server) handleRepoRm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	delete(idx.Repos, repoKey)
-	if err := s.Store.SaveRepoIndex(idx); err != nil {
+	if err := s.store.SaveRepoIndex(idx); err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to update repo index: "+err.Error(), "", nil)
 		return
 	}

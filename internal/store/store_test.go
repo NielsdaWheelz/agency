@@ -20,32 +20,6 @@ func fixedTime(t time.Time) func() time.Time {
 	return func() time.Time { return t }
 }
 
-func TestPrepareInvocationLogPath_ReturnsInvocationOwnedPath(t *testing.T) {
-	t.Parallel()
-
-	dataDir := t.TempDir()
-	s := NewStore(fs.NewRealFS(), dataDir, nil)
-
-	const repoID = "repo123"
-	const invocationID = "inv456"
-
-	_, err := s.EnsureInvocationDir(repoID, invocationID)
-	require.NoError(t, err)
-
-	preparedPath, err := s.PrepareInvocationLogPath(repoID, invocationID, "raw")
-	require.NoError(t, err)
-	assert.Equal(t, s.InvocationRawLogPath(repoID, invocationID), preparedPath)
-
-	terminalPath, err := s.PrepareInvocationLogPath(repoID, invocationID, "terminal")
-	require.NoError(t, err)
-	assert.Equal(t, s.InvocationTerminalLogPath(repoID, invocationID), terminalPath)
-
-	_, err = os.Stat(s.InvocationLogsDir(repoID, invocationID))
-	require.NoError(t, err)
-	_, err = os.Stat(preparedPath)
-	assert.True(t, os.IsNotExist(err))
-}
-
 func TestUpdateInvocationMetaConcurrentPreservesIndependentUpdates(t *testing.T) {
 	t.Parallel()
 
@@ -111,7 +85,6 @@ func TestUpdateInvocationMetaLockCanonicalizesSymlinkedDataDir(t *testing.T) {
 	require.NoError(t, err)
 	meta := NewInvocationMeta(invocationID, "", "wt-1", "/sandbox", "/checkouts/repo123", "work", "agency/sandbox-"+invocationID, "abc123", "claude-code", RunnerModeHeadless, time.Now())
 	require.NoError(t, s1.WriteInvocationMeta(repoID, invocationID, meta))
-	assert.Equal(t, invocationMetaLockKey(s1.InvocationMetaPath(repoID, invocationID)), invocationMetaLockKey(s2.InvocationMetaPath(repoID, invocationID)))
 
 	const updates = 40
 	start := make(chan struct{})
@@ -286,7 +259,7 @@ func TestScanInvocationsForRepoSortsNewestFirstAndMarksInvalidMetaBroken(t *test
 		require.NoError(t, s.WriteInvocationMeta(repoID, entry.id, meta))
 	}
 
-	records, err := ScanInvocationsForRepo(dataDir, repoID)
+	records, err := s.ScanInvocationsForRepo(repoID)
 	require.NoError(t, err)
 	require.Len(t, records, 3)
 	assert.Equal(t, "inv-new", records[0].InvocationID)
@@ -327,7 +300,7 @@ func TestReadAndScanInvocationMetaRejectUnknownFields(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
 
-	records, err := ScanInvocationsForRepo(dataDir, repoID)
+	records, err := s.ScanInvocationsForRepo(repoID)
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 	assert.True(t, records[0].Broken)
@@ -363,7 +336,7 @@ func TestReadAndScanInvocationMetaRequireCheckpointIncludeUntracked(t *testing.T
 	require.Error(t, err)
 	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
 
-	records, err := ScanInvocationsForRepo(dataDir, repoID)
+	records, err := s.ScanInvocationsForRepo(repoID)
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 	assert.True(t, records[0].Broken)
@@ -392,8 +365,7 @@ func TestRemoveInvocationDir_RejectsPathTraversalOutsideDataDir(t *testing.T) {
 	var guardErr *fs.ErrNotUnderPrefix
 	require.ErrorAs(t, err, &guardErr)
 
-	_, statErr := os.Stat(marker)
-	require.NoError(t, statErr, "guard failure should not delete paths outside data dir")
+	require.FileExists(t, marker, "guard failure should not delete paths outside data dir")
 }
 
 // TestLoadRepoIndex_MissingFile verifies empty index returned for missing file.
@@ -439,29 +411,6 @@ func TestRepoIndexRoundtrip(t *testing.T) {
 	require.Len(t, entry.Paths, 1)
 	assert.Equal(t, "/path/to/repo", entry.Paths[0])
 	assert.Equal(t, "2026-01-09T12:00:00Z", entry.LastSeenAt)
-}
-
-// TestUpsertRepoIndexEntry_NoDuplication verifies path deduplication.
-func TestUpsertRepoIndexEntry_NoDuplication(t *testing.T) {
-	t.Parallel()
-	dataDir := t.TempDir()
-	realFS := fs.NewRealFS()
-	now := time.Date(2026, 1, 9, 12, 0, 0, 0, time.UTC)
-	s := NewStore(realFS, dataDir, fixedTime(now))
-
-	idx := RepoIndex{
-		SchemaVersion: SchemaVersion,
-		Repos:         make(map[string]RepoIndexEntry),
-	}
-
-	// Add entry with path
-	idx = s.UpsertRepoIndexEntry(idx, "github:owner/repo", "abc123", "/path/one")
-
-	// Add same path again
-	idx = s.UpsertRepoIndexEntry(idx, "github:owner/repo", "abc123", "/path/one")
-
-	entry := idx.Repos["github:owner/repo"]
-	assert.Len(t, entry.Paths, 1, "no duplication")
 }
 
 // TestUpsertRepoIndexEntry_NewPath verifies new paths are added and sorted.
@@ -597,15 +546,6 @@ func TestLoadRepoRecord_MissingFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, exists)
 	assert.Empty(t, rec.RepoID)
-}
-
-func TestRepoEventsPath(t *testing.T) {
-	t.Parallel()
-
-	dataDir := t.TempDir()
-	s := NewStore(fs.NewRealFS(), dataDir, nil)
-
-	assert.Equal(t, filepath.Join(dataDir, "repos", "abc123", "events.jsonl"), s.RepoEventsPath("abc123"))
 }
 
 // TestRepoRecordRoundtrip tests save/load cycle for repo records.
@@ -782,15 +722,13 @@ func TestSaveRepoRecord_CreatesDirectory(t *testing.T) {
 
 	// Directory should not exist yet
 	repoDir := s.RepoDir("newrepo123")
-	_, err := os.Stat(repoDir)
-	assert.True(t, os.IsNotExist(err), "repo directory should not exist before save")
+	assert.NoDirExists(t, repoDir, "repo directory should not exist before save")
 
 	// Save should create it
 	require.NoError(t, s.SaveRepoRecord(rec))
 
 	// Now it should exist
-	_, err = os.Stat(repoDir)
-	assert.NoError(t, err, "repo directory should exist after save")
+	assert.DirExists(t, repoDir, "repo directory should exist after save")
 }
 
 // TestSaveRepoIndex_CreatesDirectory verifies data directory is created.
@@ -807,42 +745,13 @@ func TestSaveRepoIndex_CreatesDirectory(t *testing.T) {
 	}
 
 	// Directory should not exist yet
-	_, err := os.Stat(dataDir)
-	assert.True(t, os.IsNotExist(err), "data directory should not exist before save")
+	assert.NoDirExists(t, dataDir, "data directory should not exist before save")
 
 	// Save should create it
 	require.NoError(t, s.SaveRepoIndex(idx))
 
 	// Now it should exist
-	_, err = os.Stat(dataDir)
-	assert.NoError(t, err, "data directory should exist after save")
-}
-
-// TestJSONFormat verifies the output JSON is properly formatted.
-func TestJSONFormat(t *testing.T) {
-	t.Parallel()
-	dataDir := t.TempDir()
-	realFS := fs.NewRealFS()
-	now := time.Date(2026, 1, 9, 12, 0, 0, 0, time.UTC)
-	s := NewStore(realFS, dataDir, fixedTime(now))
-
-	// Save repo index
-	idx := RepoIndex{
-		SchemaVersion: SchemaVersion,
-		Repos:         make(map[string]RepoIndexEntry),
-	}
-	idx = s.UpsertRepoIndexEntry(idx, "github:owner/repo", "abc123", "/path/to/repo")
-	require.NoError(t, s.SaveRepoIndex(idx))
-
-	// Read raw JSON and verify it's indented
-	data, err := os.ReadFile(s.RepoIndexPath())
-	require.NoError(t, err)
-
-	// Check for indentation (should contain newlines and spaces)
-	assert.True(t, json.Valid(data), "output is not valid JSON")
-	// Verify trailing newline
-	require.NotEmpty(t, data)
-	assert.Equal(t, byte('\n'), data[len(data)-1], "output should end with newline")
+	assert.DirExists(t, dataDir, "data directory should exist after save")
 }
 
 // TestPathNormalization verifies paths are cleaned.

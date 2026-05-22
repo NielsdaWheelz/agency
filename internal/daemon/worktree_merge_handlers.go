@@ -78,7 +78,7 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 		return
 	}
 	if record.Meta.State != store.WorktreeStatePresent {
-		mergeMeta, readErr := s.Store.ReadIntegrationWorktreeMerge(record.RepoID, record.WorktreeID)
+		mergeMeta, readErr := s.store.ReadIntegrationWorktreeMerge(record.RepoID, record.WorktreeID)
 		if readErr != nil {
 			code := errors.CodeOr(readErr, errors.EStoreCorrupt)
 			s.writeWorktreeMergeError(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(readErr), "inspect worktree merge state")
@@ -133,12 +133,12 @@ func (s *Server) startWorktreePRMerge(
 		return nil, 0, err
 	}
 
-	attemptID, err := core.NewRunID(s.Clock())
+	attemptID, err := core.NewRunID(s.clock())
 	if err != nil {
 		return nil, 0, errors.New(errors.EInternal, "failed to create merge attempt id")
 	}
 
-	proc, attached, err := s.beginWorktreeMerge(record.RepoID, record.WorktreeID, attemptID, requestID, req)
+	proc, attached, err := s.beginWorktreeMerge(record.RepoID, record.WorktreeID, attemptID, req)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -173,7 +173,7 @@ func (s *Server) attachWorktreePRMerge(
 	if existing == nil {
 		return nil, false, nil
 	}
-	if !sameNormalizedMergeRequest(existing.Request, req) {
+	if !sameNormalizedMergeRequest(existing.request, req) {
 		return nil, false, errors.NewWithDetails(
 			errors.EWorktreeMergeActive,
 			"worktree merge is already running for this worktree",
@@ -191,7 +191,7 @@ func (s *Server) attachWorktreePRMerge(
 }
 
 func (s *Server) readActiveWorktreeMerge(repoID, worktreeID string) (*store.IntegrationWorktreeMergeMeta, error) {
-	mergeMeta, err := s.Store.ReadIntegrationWorktreeMerge(repoID, worktreeID)
+	mergeMeta, err := s.store.ReadIntegrationWorktreeMerge(repoID, worktreeID)
 	if err != nil {
 		if errors.GetCode(err) == "" {
 			return nil, errors.New(errors.EStoreCorrupt, err.Error())
@@ -205,7 +205,7 @@ func (s *Server) readActiveWorktreeMerge(repoID, worktreeID string) (*store.Inte
 }
 
 func (s *Server) repairInterruptedWorktreeMerge(record *store.IntegrationWorktreeRecord) error {
-	staleMerge, err := s.Store.ReadIntegrationWorktreeMerge(record.RepoID, record.WorktreeID)
+	staleMerge, err := s.store.ReadIntegrationWorktreeMerge(record.RepoID, record.WorktreeID)
 	if err != nil {
 		if errors.GetCode(err) == "" {
 			return errors.New(errors.EStoreCorrupt, err.Error())
@@ -219,8 +219,8 @@ func (s *Server) repairInterruptedWorktreeMerge(record *store.IntegrationWorktre
 		return nil
 	}
 
-	now := s.Clock().UTC().Format(time.RFC3339)
-	if err := s.Store.UpdateIntegrationWorktreeMerge(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMergeMeta) {
+	now := s.clock().UTC().Format(time.RFC3339)
+	if err := s.store.UpdateIntegrationWorktreeMerge(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMergeMeta) {
 		m.Status = store.WorktreeMergeStatusFailed
 		m.UpdatedAt = now
 		m.FinishedAt = now
@@ -261,15 +261,15 @@ func (s *Server) ensureWorktreeMergeStartAllowed(record *store.IntegrationWorktr
 
 func (s *Server) persistStartedWorktreePRMerge(
 	record *store.IntegrationWorktreeRecord,
-	proc *WorktreeMergeProcess,
+	proc *worktreeMergeProcess,
 	requestID string,
 	req normalizedMergeRequest,
 ) (*store.IntegrationWorktreeMergeMeta, error) {
-	now := s.Clock()
+	now := s.clock()
 	mergeMeta := store.NewIntegrationWorktreeMergeMeta(
 		record.RepoID,
 		record.WorktreeID,
-		proc.AttemptID,
+		proc.attemptID,
 		requestID,
 		string(req.Strategy),
 		req.DeleteBranch,
@@ -277,18 +277,18 @@ func (s *Server) persistStartedWorktreePRMerge(
 		now,
 	)
 	mergeMeta.Branch = record.Meta.Branch
-	mergeMeta.MergeLogPath = filepath.Join(s.Store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "merge.log")
-	mergeMeta.VerifyLogPath = filepath.Join(s.Store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "verify.log")
-	mergeMeta.ArchiveLogPath = filepath.Join(s.Store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "archive.log")
+	mergeMeta.MergeLogPath = filepath.Join(s.store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "merge.log")
+	mergeMeta.VerifyLogPath = filepath.Join(s.store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "verify.log")
+	mergeMeta.ArchiveLogPath = filepath.Join(s.store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "archive.log")
 
-	if err := s.Store.WriteIntegrationWorktreeMerge(record.RepoID, record.WorktreeID, mergeMeta); err != nil {
+	if err := s.store.WriteIntegrationWorktreeMerge(record.RepoID, record.WorktreeID, mergeMeta); err != nil {
 		if errors.GetCode(err) == "" {
 			return nil, errors.New(errors.EMetaWriteFailed, err.Error())
 		}
 		return nil, err
 	}
 
-	if err := s.Store.UpdateIntegrationWorktreeMeta(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
+	if err := s.store.UpdateIntegrationWorktreeMeta(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
 		m.LastUsedAt = now.UTC().Format(time.RFC3339)
 	}); err != nil {
 		if errors.GetCode(err) == "" {
@@ -298,14 +298,14 @@ func (s *Server) persistStartedWorktreePRMerge(
 	}
 
 	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, mergeEventStarted, map[string]any{
-		"attempt_id":        proc.AttemptID,
+		"attempt_id":        proc.attemptID,
 		"strategy":          string(req.Strategy),
 		"confirmation_mode": req.ConfirmationMode,
 		"delete_branch":     req.DeleteBranch,
 		"branch":            record.Meta.Branch,
 	}); err != nil {
-		finishedAt := s.Clock().UTC().Format(time.RFC3339)
-		if updateErr := s.Store.UpdateIntegrationWorktreeMerge(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMergeMeta) {
+		finishedAt := s.clock().UTC().Format(time.RFC3339)
+		if updateErr := s.store.UpdateIntegrationWorktreeMerge(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMergeMeta) {
 			m.Status = store.WorktreeMergeStatusFailed
 			m.UpdatedAt = finishedAt
 			m.FinishedAt = finishedAt
@@ -323,10 +323,10 @@ func (s *Server) persistStartedWorktreePRMerge(
 	return mergeMeta, nil
 }
 
-func (s *Server) runAcceptedWorktreeMerge(proc *WorktreeMergeProcess, record *store.IntegrationWorktreeRecord) {
+func (s *Server) runAcceptedWorktreeMerge(proc *worktreeMergeProcess, record *store.IntegrationWorktreeRecord) {
 	defer s.releaseWorktreeMerge(proc)
 
-	result, err := s.runWorktreeMerge(proc.ctx, record, proc.Request)
+	result, err := s.runWorktreeMerge(proc.ctx, record, proc.request)
 	if err != nil {
 		code := errors.GetCode(err)
 		if code == "" {
@@ -345,7 +345,7 @@ func (s *Server) runAcceptedWorktreeMerge(proc *WorktreeMergeProcess, record *st
 		return
 	}
 
-	now := s.Clock().UTC().Format(time.RFC3339)
+	now := s.clock().UTC().Format(time.RFC3339)
 	if err := s.updateWorktreeMergeMeta(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMergeMeta) {
 		m.Status = store.WorktreeMergeStatusSucceeded
 		m.Stage = store.WorktreeMergeStageCompleted
@@ -363,14 +363,14 @@ func (s *Server) runAcceptedWorktreeMerge(proc *WorktreeMergeProcess, record *st
 		s.failWorktreeMerge(record.RepoID, record.WorktreeID, errors.EPersistFailed, "failed to persist merge success state: "+err.Error(), "inspect merge state and rerun worktree pr merge")
 		return
 	}
-	if err := s.Store.UpdateIntegrationWorktreeMeta(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
+	if err := s.store.UpdateIntegrationWorktreeMeta(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
 		m.LastUsedAt = now
 	}); err != nil {
 		s.failWorktreeMerge(record.RepoID, record.WorktreeID, errors.EPersistFailed, "failed to update worktree metadata after merge: "+err.Error(), "inspect merge state and rerun worktree pr merge")
 		return
 	}
 	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, mergeEventSucceeded, map[string]any{
-		"attempt_id":       proc.AttemptID,
+		"attempt_id":       proc.attemptID,
 		"branch":           result.Branch,
 		"pr_number":        result.PRNumber,
 		"pr_url":           result.PRURL,
@@ -386,15 +386,15 @@ func (s *Server) runAcceptedWorktreeMerge(proc *WorktreeMergeProcess, record *st
 }
 
 func (s *Server) updateWorktreeMergeMeta(repoID, worktreeID string, updateFn func(*store.IntegrationWorktreeMergeMeta)) error {
-	now := s.Clock().UTC().Format(time.RFC3339)
-	return s.Store.UpdateIntegrationWorktreeMerge(repoID, worktreeID, func(m *store.IntegrationWorktreeMergeMeta) {
+	now := s.clock().UTC().Format(time.RFC3339)
+	return s.store.UpdateIntegrationWorktreeMerge(repoID, worktreeID, func(m *store.IntegrationWorktreeMergeMeta) {
 		updateFn(m)
 		m.UpdatedAt = now
 	})
 }
 
 func (s *Server) failWorktreeMerge(repoID, worktreeID string, code errors.Code, message, hint string) {
-	now := s.Clock().UTC().Format(time.RFC3339)
+	now := s.clock().UTC().Format(time.RFC3339)
 	if err := s.updateWorktreeMergeMeta(repoID, worktreeID, func(m *store.IntegrationWorktreeMergeMeta) {
 		m.Status = store.WorktreeMergeStatusFailed
 		m.ErrorCode = string(code)
@@ -404,7 +404,7 @@ func (s *Server) failWorktreeMerge(repoID, worktreeID string, code errors.Code, 
 	}); err != nil {
 		log.Printf("agencyd: persist failed merge for worktree %s/%s: %v", repoID, worktreeID, err)
 	}
-	if err := s.Store.UpdateIntegrationWorktreeMeta(repoID, worktreeID, func(m *store.IntegrationWorktreeMeta) {
+	if err := s.store.UpdateIntegrationWorktreeMeta(repoID, worktreeID, func(m *store.IntegrationWorktreeMeta) {
 		m.LastUsedAt = now
 	}); err != nil {
 		log.Printf("agencyd: update worktree meta after failed merge %s/%s: %v", repoID, worktreeID, err)
@@ -436,7 +436,7 @@ func (s *Server) runWorktreeMerge(
 	}
 	env := prSyncNonInteractiveEnv(profileEnv)
 
-	if err := prSyncCheckGHAuth(ctx, s.Runner, repoRoot, env); err != nil {
+	if err := prSyncCheckGHAuth(ctx, s.runner, repoRoot, env); err != nil {
 		return nil, err
 	}
 
@@ -449,14 +449,14 @@ func (s *Server) runWorktreeMerge(
 	if err != nil {
 		return nil, err
 	}
-	agencyJSON, err := config.ResolveAgencyConfig(s.FS, repoRoot, s.ConfigDir, record.RepoID, req.AgencyConfigPath)
+	agencyJSON, err := config.ResolveAgencyConfig(s.fsys, repoRoot, s.configDir, record.RepoID, req.AgencyConfigPath)
 	if err != nil {
 		return nil, err
 	}
 
-	mergeLogPath := filepath.Join(s.Store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "merge.log")
-	plannedVerifyLogPath := filepath.Join(s.Store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "verify.log")
-	archiveLogPath := filepath.Join(s.Store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "archive.log")
+	mergeLogPath := filepath.Join(s.store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "merge.log")
+	plannedVerifyLogPath := filepath.Join(s.store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "verify.log")
+	archiveLogPath := filepath.Join(s.store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "archive.log")
 	if err := s.updateWorktreeMergeMeta(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMergeMeta) {
 		m.Branch = wtMeta.Branch
 		m.PRNumber = pr.Number
@@ -477,7 +477,7 @@ func (s *Server) runWorktreeMerge(
 			return nil, errors.Wrap(errors.EPersistFailed, "failed to persist merge verify stage", err)
 		}
 
-		clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.Runner, wtMeta.TreePath, env)
+		clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.runner, wtMeta.TreePath, env)
 		if err != nil {
 			return nil, err
 		}
@@ -499,7 +499,7 @@ func (s *Server) runWorktreeMerge(
 	}
 
 	var unlock func() error
-	deadline := s.Clock().Add(worktreeMergeRepoLockAcquireTimeout)
+	deadline := s.clock().Add(worktreeMergeRepoLockAcquireTimeout)
 	for {
 		unlock, err = s.repoLock.Lock(record.RepoID, "worktree_merge_finalize")
 		if err == nil {
@@ -509,7 +509,7 @@ func (s *Server) runWorktreeMerge(
 		if !stderrors.As(err, &lockedErr) {
 			return nil, err
 		}
-		if !s.Clock().Before(deadline) {
+		if !s.clock().Before(deadline) {
 			return nil, errors.NewWithDetails(
 				errors.ERepoLocked,
 				"repository remained locked while waiting to finalize merge",
@@ -541,7 +541,7 @@ func (s *Server) runWorktreeMerge(
 		if req.DeleteBranch {
 			skippedCommand += " --delete-branch"
 		}
-		if err := writeMergeLog(s.FS, mergeLogPath, skippedCommand, exec.CmdResult{ExitCode: 0}, nil); err != nil {
+		if err := writeMergeLog(s.fsys, mergeLogPath, skippedCommand, exec.CmdResult{ExitCode: 0}, nil); err != nil {
 			return nil, errors.WrapWithDetails(
 				errors.EPersistFailed,
 				"failed to persist merge log",
@@ -567,13 +567,13 @@ func (s *Server) runWorktreeMerge(
 		if req.DeleteBranch {
 			args = append(args, "--delete-branch")
 		}
-		result, runErr := s.Runner.Run(ctx, "gh", args, exec.RunOpts{
+		result, runErr := s.runner.Run(ctx, "gh", args, exec.RunOpts{
 			Dir: wtMeta.TreePath,
 			Env: env,
 		})
 
 		command := "gh " + strings.Join(args, " ")
-		if err := writeMergeLog(s.FS, mergeLogPath, command, result, runErr); err != nil {
+		if err := writeMergeLog(s.fsys, mergeLogPath, command, result, runErr); err != nil {
 			return nil, errors.WrapWithDetails(
 				errors.EPersistFailed,
 				"failed to persist merge log",
@@ -607,7 +607,7 @@ func (s *Server) runWorktreeMerge(
 			)
 		}
 
-		merged, err := mergeConfirmPRMerged(ctx, s.Runner, wtMeta.TreePath, ghRepo, pr.Number, env)
+		merged, err := mergeConfirmPRMerged(ctx, s.runner, wtMeta.TreePath, ghRepo, pr.Number, env)
 		if err != nil {
 			return nil, err
 		}
@@ -657,26 +657,25 @@ func (s *Server) runWorktreeMergeVerify(
 	}
 	wtMeta := record.Meta
 
-	worktreeDir := s.Store.IntegrationWorktreeDir(record.RepoID, record.WorktreeID)
-	logsDir := s.Store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID)
+	worktreeDir := s.store.IntegrationWorktreeDir(record.RepoID, record.WorktreeID)
+	logsDir := s.store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID)
 	verifyLogPath := filepath.Join(logsDir, "verify.log")
-	verifyRecordPath := s.Store.IntegrationWorktreeVerifyRecordPath(record.RepoID, record.WorktreeID)
-	verifyJSONPath := filepath.Join(wtMeta.TreePath, ".agency", "out", "verify.json")
 
 	env := buildWorktreeMergeScriptEnv(record, repoRoot, worktreeDir, pr, profileEnv)
 	runCfg := verify.RunConfig{
-		RepoID:         record.RepoID,
-		RunID:          record.WorktreeID,
-		WorkDir:        wtMeta.TreePath,
-		Script:         agencyJSON.Scripts.Verify.Path,
-		Env:            env,
-		Timeout:        agencyJSON.Scripts.Verify.Timeout,
-		LogPath:        verifyLogPath,
-		VerifyJSONPath: verifyJSONPath,
-		RecordPath:     verifyRecordPath,
+		RepoID:  record.RepoID,
+		RunID:   record.WorktreeID,
+		WorkDir: wtMeta.TreePath,
+		Script:  agencyJSON.Scripts.Verify.Path,
+		Env:     env,
+		Timeout: agencyJSON.Scripts.Verify.Timeout,
+		LogPath: verifyLogPath,
 	}
 
 	verifyRecord, runErr := verify.Run(ctx, runCfg)
+	if writeErr := s.store.WriteIntegrationWorktreeVerifyRecord(record.RepoID, record.WorktreeID, verifyRecord); writeErr != nil {
+		return "", errors.Wrap(errors.EPersistFailed, "failed to persist verify record", writeErr)
+	}
 	if permsErr := s.ensureWorktreeVerifyLogPermissions(logsDir, verifyLogPath, runErr != nil); permsErr != nil {
 		return "", permsErr
 	}
@@ -701,12 +700,12 @@ func (s *Server) runWorktreeMergeVerify(
 }
 
 func (s *Server) ensureWorktreeVerifyLogPermissions(logsDir, verifyLogPath string, allowMissing bool) error {
-	if chmodDirErr := s.FS.Chmod(logsDir, 0o700); chmodDirErr != nil {
+	if chmodDirErr := s.fsys.Chmod(logsDir, 0o700); chmodDirErr != nil {
 		if !allowMissing || !os.IsNotExist(chmodDirErr) {
 			return errors.Wrap(errors.EPersistFailed, "failed to set verify log directory permissions", chmodDirErr)
 		}
 	}
-	if chmodFileErr := s.FS.Chmod(verifyLogPath, 0o600); chmodFileErr != nil {
+	if chmodFileErr := s.fsys.Chmod(verifyLogPath, 0o600); chmodFileErr != nil {
 		if !allowMissing || !os.IsNotExist(chmodFileErr) {
 			return errors.Wrap(errors.EPersistFailed, "failed to set verify log permissions", chmodFileErr)
 		}
@@ -727,10 +726,10 @@ func (s *Server) runWorktreeArchive(
 	}
 	wtMeta := record.Meta
 
-	logsDir := s.Store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID)
+	logsDir := s.store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID)
 	archiveLogPath := filepath.Join(logsDir, "archive.log")
 	treeExists := true
-	if _, err := s.FS.Stat(wtMeta.TreePath); err != nil {
+	if _, err := s.fsys.Stat(wtMeta.TreePath); err != nil {
 		if os.IsNotExist(err) {
 			treeExists = false
 		} else {
@@ -739,13 +738,13 @@ func (s *Server) runWorktreeArchive(
 	}
 
 	if !treeExists {
-		if err := s.Store.UpdateIntegrationWorktreeMeta(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
+		if err := s.store.UpdateIntegrationWorktreeMeta(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
 			m.State = store.WorktreeStateArchived
 		}); err != nil {
 			code := errors.CodeOr(err, errors.EMetaWriteFailed)
 			return "", errors.Wrap(code, "failed to persist archived state", err)
 		}
-		if err := writeMergeLog(s.FS, archiveLogPath, "archive skipped: worktree already removed", exec.CmdResult{ExitCode: 0}, nil); err != nil {
+		if err := writeMergeLog(s.fsys, archiveLogPath, "archive skipped: worktree already removed", exec.CmdResult{ExitCode: 0}, nil); err != nil {
 			return "", errors.WrapWithDetails(
 				errors.EPersistFailed,
 				"failed to persist archive log",
@@ -759,7 +758,7 @@ func (s *Server) runWorktreeArchive(
 		return archiveLogPath, nil
 	}
 
-	worktreeDir := s.Store.IntegrationWorktreeDir(record.RepoID, record.WorktreeID)
+	worktreeDir := s.store.IntegrationWorktreeDir(record.RepoID, record.WorktreeID)
 	envList := buildWorktreeMergeScriptEnv(record, repoRoot, worktreeDir, pr, profileEnv)
 	env := make(map[string]string, len(envList))
 	for _, entry := range envList {
@@ -772,11 +771,11 @@ func (s *Server) runWorktreeArchive(
 	archiveCmd := agencyJSON.Scripts.Archive.Path
 	runCtx, cancel := context.WithTimeout(ctx, agencyJSON.Scripts.Archive.Timeout)
 	defer cancel()
-	result, runErr := s.Runner.Run(runCtx, archiveCmd, nil, exec.RunOpts{
+	result, runErr := s.runner.Run(runCtx, archiveCmd, nil, exec.RunOpts{
 		Dir: wtMeta.TreePath,
 		Env: env,
 	})
-	if err := writeMergeLog(s.FS, archiveLogPath, archiveCmd, result, runErr); err != nil {
+	if err := writeMergeLog(s.fsys, archiveLogPath, archiveCmd, result, runErr); err != nil {
 		return "", errors.WrapWithDetails(
 			errors.EPersistFailed,
 			"failed to persist archive log",
@@ -818,7 +817,7 @@ func (s *Server) runWorktreeArchive(
 	removeCtx, cancel := context.WithTimeout(ctx, worktreeMergeArchiveRemoveTimeout)
 	defer cancel()
 
-	removeResult, removeRunErr := s.Runner.Run(removeCtx, "git", removeArgs, exec.RunOpts{Env: prSyncNonInteractiveEnv(profileEnv)})
+	removeResult, removeRunErr := s.runner.Run(removeCtx, "git", removeArgs, exec.RunOpts{Env: prSyncNonInteractiveEnv(profileEnv)})
 	removeCmd := "git " + strings.Join(removeArgs, " ")
 	appendArchiveSection := func(title string, result exec.CmdResult, runErr error) {
 		logFile, err := os.OpenFile(archiveLogPath, os.O_WRONLY|os.O_APPEND, 0o600)
@@ -851,7 +850,7 @@ func (s *Server) runWorktreeArchive(
 			_, _ = fmt.Fprintln(logFile, "=== execution_error ===")
 			_, _ = fmt.Fprintln(logFile, runErr.Error())
 		}
-		_ = s.FS.Chmod(archiveLogPath, 0o600)
+		_ = s.fsys.Chmod(archiveLogPath, 0o600)
 	}
 	appendArchiveSection(removeCmd, removeResult, removeRunErr)
 	if removeRunErr != nil {
@@ -892,7 +891,7 @@ func (s *Server) runWorktreeArchive(
 		)
 	}
 
-	if err := s.Store.UpdateIntegrationWorktreeMeta(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
+	if err := s.store.UpdateIntegrationWorktreeMeta(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
 		m.State = store.WorktreeStateArchived
 	}); err != nil {
 		appendArchiveSection("metadata", exec.CmdResult{
@@ -950,13 +949,8 @@ func buildWorktreeMergeScriptEnv(
 }
 
 func (s *Server) appendWorktreeEvent(repoID, worktreeID, kind string, data map[string]any) error {
-	writer := s.WorktreeEvents
-	if writer == nil {
-		writer = eventlog.NewWriter("worktree_id", s.Clock)
-		s.WorktreeEvents = writer
-	}
-	_, err := writer.Append(
-		s.Store.IntegrationWorktreeEventsPath(repoID, worktreeID),
+	_, err := s.worktreeEvents.Append(
+		s.store.IntegrationWorktreeEventsPath(repoID, worktreeID),
 		worktreeID,
 		kind,
 		data,

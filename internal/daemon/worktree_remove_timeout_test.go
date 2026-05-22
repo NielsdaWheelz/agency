@@ -53,8 +53,9 @@ func (r *blockingFakeRunner) Run(ctx context.Context, name string, args []string
 	}
 
 	if key == r.blockKey {
+		_, ok := ctx.Deadline()
 		r.mu.Lock()
-		r.sawDeadline = r.sawDeadline || deadlineSet(ctx)
+		r.sawDeadline = r.sawDeadline || ok
 		r.Calls = append(r.Calls, key)
 		r.mu.Unlock()
 
@@ -78,17 +79,12 @@ func (r *blockingFakeRunner) SawDeadline() bool {
 	return r.sawDeadline
 }
 
-func deadlineSet(ctx context.Context) bool {
-	_, ok := ctx.Deadline()
-	return ok
-}
-
 func TestHandleWorktreeRm_BlocksGitRemoveWithDeadline(t *testing.T) {
 	t.Parallel()
 
 	env := setupWorktreeRmTimeoutEnv(t)
 	runner := newBlockingFakeRunner(env.removeCmd)
-	env.server.Runner = runner
+	env.server.runner = runner
 	t.Cleanup(runner.Release)
 
 	reqBody := []byte(`{"force":true}`)
@@ -131,7 +127,7 @@ func TestHandleWorktreeMerge_BlocksArchiveCleanupRemoveWithDeadline(t *testing.T
 
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 
 	workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, "")
 	canonicalRepoRoot := canonicalTestPath(t, repoRoot)
@@ -140,7 +136,7 @@ func TestHandleWorktreeMerge_BlocksArchiveCleanupRemoveWithDeadline(t *testing.T
 	removeCmd := "git -C " + canonicalRepoRoot + " worktree remove --force " + workspaceRoot
 	runner := newBlockingFakeRunner(removeCmd)
 	runner.Responses = fakeRunner.Responses
-	env.Server.Runner = runner
+	env.Server.runner = runner
 	t.Cleanup(runner.Release)
 
 	req := httptest.NewRequest(

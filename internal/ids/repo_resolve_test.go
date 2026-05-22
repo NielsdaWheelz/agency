@@ -281,8 +281,7 @@ func TestResolveRepoRef_EmptyRepoKey(t *testing.T) {
 func TestResolveRepoRef_MalformedGithubKey(t *testing.T) {
 	t.Parallel()
 
-	// Malformed "github:noslash" key — repoOwnerSlashName returns ""
-	// so it cannot be matched by owner/repo format in tier 2
+	// Malformed "github:noslash" key cannot be matched by owner/repo format.
 	refs := []RepoRef{
 		{RepoID: "abcdef1234567890", RepoKey: "github:noslash"},
 	}

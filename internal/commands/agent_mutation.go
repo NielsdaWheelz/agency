@@ -2,9 +2,11 @@ package commands
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
@@ -155,16 +157,15 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return fail(err)
 	}
 
-	resp, err := ns.client.Land(ctx, daemonclient.LandOpts{
-		RepoID:       repoCtx.RepoID,
-		InvocationID: opts.InvocationRef,
-		Apply:        opts.Apply,
-		RequireBase:  opts.RequireBase,
+	resp, err := ns.client.Land(ctx, opts.InvocationRef, repoCtx.RepoID, daemon.LandRequest{
+		Apply:       opts.Apply,
+		RequireBase: opts.RequireBase,
 	})
 	if err != nil {
 		if !opts.JSON {
 			var landErr *daemon.LandResponse
-			if dae, ok := daemonclient.AsDaemonActionError(err); ok {
+			var dae *daemonclient.DaemonActionError
+			if stderrors.As(err, &dae) {
 				landErr = &daemon.LandResponse{}
 				if decodeErr := dae.DecodeResponse(landErr); decodeErr != nil {
 					landErr = nil
@@ -317,7 +318,7 @@ func AgentFollowup(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 		return fail(err)
 	}
 
-	resp, err := ns.client.SubmitFollowUp(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.SubmitFollowUpOpts{
+	resp, err := ns.client.SubmitFollowUp(ctx, opts.InvocationRef, repoCtx.RepoID, daemon.ControlPlaneFollowUpRequest{
 		Prompt: prompt,
 	})
 	if err != nil {
@@ -359,7 +360,7 @@ type AgentRecreateOpts struct {
 	JSON            bool
 	DataDirOverride string
 	IsInteractive   func() bool
-	TmuxAttachFn    func(sessionName string) error
+	TmuxAttachFn    func(context.Context, string) error
 }
 
 // AgentRecreate starts a new tmux session for an existing headed invocation.
@@ -399,9 +400,6 @@ func AgentRecreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 	if err != nil {
 		return fail(err)
 	}
-	if err := ns.client.CheckAPIVersion(ctx); err != nil {
-		return fail(err)
-	}
 
 	resp, err := ns.client.RecreateHeaded(ctx, opts.InvocationRef, repoCtx.RepoID)
 	if err != nil {
@@ -434,7 +432,7 @@ func AgentRecreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 			SandboxPath:      resp.SandboxPath,
 			ExecutionProfile: resp.ExecutionProfile,
 			CheckoutRoot:     resp.CheckoutRoot,
-			CustomEnvKeys:    append([]string(nil), resp.CustomEnvKeys...),
+			CustomEnvKeys:    slices.Clone(resp.CustomEnvKeys),
 			TmuxSession:      resp.TmuxSession,
 			DaemonInstanceID: resp.DaemonInstanceID,
 			AlreadyRunning:   resp.AlreadyRunning,
@@ -459,15 +457,16 @@ func AgentRecreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 	}
 
 	if !opts.Detached {
-		_, _ = fmt.Fprintln(stdout, "\nAttaching to tmux session... (detach with Ctrl+b, d)")
-		attachFn := opts.TmuxAttachFn
-		if attachFn == nil {
-			attachFn = realTmuxAttach
-		}
-		if err := attachFn(resp.TmuxSession); err != nil {
-			_, _ = fmt.Fprintf(stderr, "warning: could not attach to tmux session: %v\n", err)
-			_, _ = fmt.Fprintf(stderr, "Use 'agency agent %s attach --repo %s' to attach later.\n", resp.InvocationID, resp.RepoID)
-		}
+		attachHeadedSession(ctx, headedAttachOpts{
+			AttachFn:    opts.TmuxAttachFn,
+			Stdout:      stdout,
+			Stderr:      stderr,
+			SessionName: resp.TmuxSession,
+			Invocation:  resp.InvocationID,
+			RepoID:      resp.RepoID,
+			Banner:      true,
+			LaterHint:   true,
+		})
 		return nil
 	}
 

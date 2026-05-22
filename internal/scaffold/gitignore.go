@@ -9,13 +9,12 @@ import (
 
 const agencyIgnoreEntry = ".agency/"
 
-// GitignoreResult indicates what happened to .gitignore.
-type GitignoreResult string
+// gitignoreResult indicates what happened to .gitignore.
+type gitignoreResult string
 
 const (
-	GitignoreUpdated   GitignoreResult = "updated"
-	GitignoreUnchanged GitignoreResult = "unchanged"
-	GitignoreSkipped   GitignoreResult = "skipped"
+	gitignoreUpdated   gitignoreResult = "updated"
+	gitignoreUnchanged gitignoreResult = "unchanged"
 )
 
 // EnsureGitignore ensures .agency/ is in .gitignore.
@@ -23,7 +22,7 @@ const (
 // Ensures file ends with newline.
 //
 // Returns the result indicating what action was taken.
-func EnsureGitignore(fsys fs.FS, gitignorePath string) (GitignoreResult, error) {
+func EnsureGitignore(fsys fs.FS, gitignorePath string) (gitignoreResult, error) {
 	content, err := fsys.ReadFile(gitignorePath)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -34,7 +33,7 @@ func EnsureGitignore(fsys fs.FS, gitignorePath string) (GitignoreResult, error) 
 		if err := fsys.WriteFile(gitignorePath, []byte(newContent), 0644); err != nil {
 			return "", err
 		}
-		return GitignoreUpdated, nil
+		return gitignoreUpdated, nil
 	}
 
 	// File exists, check if entry is already present
@@ -45,9 +44,9 @@ func EnsureGitignore(fsys fs.FS, gitignorePath string) (GitignoreResult, error) 
 			if err := fsys.WriteFile(gitignorePath, []byte(newContent), 0644); err != nil {
 				return "", err
 			}
-			return GitignoreUpdated, nil
+			return gitignoreUpdated, nil
 		}
-		return GitignoreUnchanged, nil
+		return gitignoreUnchanged, nil
 	}
 
 	// Entry not present, append it
@@ -61,7 +60,7 @@ func EnsureGitignore(fsys fs.FS, gitignorePath string) (GitignoreResult, error) 
 	if err := fsys.WriteFile(gitignorePath, []byte(newContent), 0644); err != nil {
 		return "", err
 	}
-	return GitignoreUpdated, nil
+	return gitignoreUpdated, nil
 }
 
 // hasAgencyEntry checks if the .agency/ or .agency entry exists in content.

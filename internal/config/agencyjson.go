@@ -4,8 +4,6 @@ package config
 import (
 	"bytes"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -19,8 +17,8 @@ const (
 	DefaultSetupTimeout   = 10 * time.Minute
 	DefaultVerifyTimeout  = 30 * time.Minute
 	DefaultArchiveTimeout = 5 * time.Minute
-	MinTimeout            = 1 * time.Minute
-	MaxTimeout            = 24 * time.Hour
+	minTimeout            = 1 * time.Minute
+	maxTimeout            = 24 * time.Hour
 )
 
 // AgencyConfig represents the parsed and validated agency.json configuration.
@@ -48,30 +46,6 @@ type Scripts struct {
 type ScriptConfig struct {
 	Path    string        `json:"path"`
 	Timeout time.Duration `json:"-"` // Parsed from "timeout" string field
-}
-
-// LoadAgencyConfig reads and parses agency.json from the given repo root.
-// Returns E_NO_AGENCY_JSON if the file does not exist.
-// Returns E_INVALID_AGENCY_JSON if the file is not valid JSON.
-// Does NOT perform semantic validation; call ValidateAgencyConfig for that.
-func LoadAgencyConfig(filesystem fs.FS, repoRoot string) (AgencyConfig, error) {
-	path := filepath.Join(repoRoot, "agency.json")
-	return LoadAgencyConfigFile(filesystem, path)
-}
-
-// LoadAgencyConfigFile reads and parses an agency config from an exact path.
-func LoadAgencyConfigFile(filesystem fs.FS, path string) (AgencyConfig, error) {
-	cfg, err := loadAgencyConfigPath(filesystem, path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return AgencyConfig{}, errors.New(errors.ENoAgencyJSON, "agency.json not found; run 'agency init' to create it")
-		}
-		if errors.GetCode(err) != "" {
-			return AgencyConfig{}, err
-		}
-		return AgencyConfig{}, errors.Wrap(errors.ENoAgencyJSON, "failed to read agency.json", err)
-	}
-	return cfg, nil
 }
 
 func loadAgencyConfigPath(filesystem fs.FS, path string) (AgencyConfig, error) {
@@ -326,11 +300,8 @@ func parseScriptConfig(raw json.RawMessage, fieldName string, defaultTimeout tim
 		if err != nil {
 			return cfg, errors.New(errors.EInvalidAgencyJSON, fieldName+".timeout invalid duration: "+err.Error())
 		}
-		if timeout < MinTimeout {
-			return cfg, errors.New(errors.EInvalidAgencyJSON, fieldName+".timeout must be at least 1m")
-		}
-		if timeout > MaxTimeout {
-			return cfg, errors.New(errors.EInvalidAgencyJSON, fieldName+".timeout must be at most 24h")
+		if err := validateScriptTimeout(fieldName, timeout); err != nil {
+			return cfg, err
 		}
 		cfg.Timeout = timeout
 	}

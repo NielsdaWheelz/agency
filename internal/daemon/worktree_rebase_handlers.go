@@ -129,7 +129,7 @@ func (s *Server) performWorktreeRebase(ctx context.Context, record *store.Integr
 	}
 	env := prSyncNonInteractiveEnv(profileEnv)
 
-	clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.Runner, wtMeta.TreePath, env)
+	clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.runner, wtMeta.TreePath, env)
 	if err != nil {
 		return err
 	}
@@ -144,7 +144,7 @@ func (s *Server) performWorktreeRebase(ctx context.Context, record *store.Integr
 		)
 	}
 
-	if err := prSyncGitFetchOrigin(ctx, s.Runner, wtMeta.TreePath, env); err != nil {
+	if err := prSyncGitFetchOrigin(ctx, s.runner, wtMeta.TreePath, env); err != nil {
 		return err
 	}
 
@@ -153,7 +153,7 @@ func (s *Server) performWorktreeRebase(ctx context.Context, record *store.Integr
 		return errors.New(errors.EInternal, "worktree base branch is missing")
 	}
 	rebaseTarget := "origin/" + baseBranch
-	rebaseResult, runErr := s.Runner.Run(ctx, "git", []string{"rebase", rebaseTarget}, exec.RunOpts{
+	rebaseResult, runErr := s.runner.Run(ctx, "git", []string{"rebase", rebaseTarget}, exec.RunOpts{
 		Dir: wtMeta.TreePath,
 		Env: env,
 	})
@@ -161,7 +161,7 @@ func (s *Server) performWorktreeRebase(ctx context.Context, record *store.Integr
 		return errors.Wrap(errors.EInternal, "git rebase failed to start", runErr)
 	}
 	if rebaseResult.ExitCode != 0 {
-		abortResult, abortErr := s.Runner.Run(ctx, "git", []string{"rebase", "--abort"}, exec.RunOpts{
+		abortResult, abortErr := s.runner.Run(ctx, "git", []string{"rebase", "--abort"}, exec.RunOpts{
 			Dir: wtMeta.TreePath,
 			Env: env,
 		})

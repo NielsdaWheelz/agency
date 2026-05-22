@@ -71,10 +71,6 @@ func setupTestRepoAt(t *testing.T, root string) string {
 	return root
 }
 
-func shellQuoteForTest(s string) string {
-	return core.ShellEscapePosix(s)
-}
-
 func writeUserConfig(t *testing.T, configDir string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(configDir, 0o755), "failed to create config dir")
@@ -314,6 +310,24 @@ func TestDoctor_MissingUserConfig(t *testing.T) {
 	assert.Empty(t, entries, "doctor should stay read-only when config is missing")
 }
 
+func TestDoctor_NotInRepo(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	m := testutil.NewFakeCommandRunner()
+	m.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{ExitCode: 128}
+
+	var stdout, stderr bytes.Buffer
+	err := Doctor(context.Background(), m, fs.NewRealFS(), dir, DoctorOpts{
+		DataDirOverride:   t.TempDir(),
+		ConfigDirOverride: t.TempDir(),
+	}, &stdout, &stderr)
+
+	require.Error(t, err, "expected doctor to fail outside a git repo")
+	assert.Equal(t, errors.ENoRepo, errors.GetCode(err))
+	assert.Empty(t, stdout.String())
+}
+
 func TestDoctor_UsesLocalAgencyConfigWhenRepoHasNone(t *testing.T) {
 	t.Parallel()
 	repoRoot := setupTestRepo(t)
@@ -419,7 +433,7 @@ func TestDoctor_InvalidAgencyConfigIncludesPathSourceAndHint(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, filepath.Join(canonicalRepoRoot, "agency.json"), ae.Details["path"])
 	assert.Equal(t, "repo", ae.Details["source"])
-	assert.Contains(t, ae.Details["hint"], "agency init --path "+shellQuoteForTest(canonicalRepoRoot)+" --repo-config --force")
+	assert.Contains(t, ae.Details["hint"], "agency init --path "+core.ShellEscapePosix(canonicalRepoRoot)+" --repo-config --force")
 }
 
 func TestDoctor_GhNotAuthenticated(t *testing.T) {
@@ -562,9 +576,10 @@ func TestDoctor_IsReadOnly(t *testing.T) {
 	assert.FileExists(t, filepath.Join(dataDir, "repo_index.json"))
 }
 
-func TestDoctor_OutputOrder(t *testing.T) {
+func TestDoctor_OutputIncludesDiagnosticFacts(t *testing.T) {
 	t.Parallel()
 	repoRoot := setupTestRepo(t)
+	canonicalRepoRoot := mustCanonicalDoctorPath(t, repoRoot)
 
 	dataDir := t.TempDir()
 	registerDoctorTestRepo(t, dataDir, repoRoot, "git@github.com:testowner/testrepo.git")
@@ -581,58 +596,71 @@ func TestDoctor_OutputOrder(t *testing.T) {
 	require.NoError(t, err, "doctor failed")
 
 	output := stdout.String()
-	lines := strings.Split(output, "\n")
 
-	// Verify key order per spec
-	expectedKeyOrder := []string{
-		"repo_root:",
-		"agency_data_dir:",
-		"agency_config_dir:",
-		"user_config_path:",
-		"agency_json_path:",
-		"agency_json_source:",
-		"agency_cache_dir:",
-		"repo_key:",
-		"repo_id:",
-		"origin_present:",
-		"origin_url:",
-		"origin_host:",
-		"github_flow_available:",
-		"git_version:",
-		"tmux_version:",
-		"gh_version:",
-		"gh_authenticated:",
-		"defaults_base_branch:",
-		"defaults_runner:",
-		"defaults_runner_model:",
-		"defaults_runner_model_source:",
-		"defaults_runner_effort:",
-		"defaults_runner_effort_source:",
-		"defaults_editor:",
-		"execution_profile:",
-		"execution_profile_source:",
-		"execution_checkout_root_policy:",
-		"execution_checkout_root:",
-		"execution_profile_env_keys:",
-		"runner_cmd:",
-		"script_setup:",
-		"script_verify:",
-		"script_archive:",
-		"status:",
-	}
-
-	keyIndex := 0
-	for _, line := range lines {
+	fields := map[string]string{}
+	for _, line := range strings.Split(output, "\n") {
 		if line == "" {
 			continue
 		}
-		if !assert.Less(t, keyIndex, len(expectedKeyOrder), "unexpected extra line: %s", line) {
-			continue
-		}
-		assert.True(t, strings.HasPrefix(line, expectedKeyOrder[keyIndex]),
-			"line %d: expected prefix %q, got %q", keyIndex, expectedKeyOrder[keyIndex], line)
-		keyIndex++
+		key, value, ok := strings.Cut(line, ": ")
+		require.Truef(t, ok, "doctor output line must be key: value: %q", line)
+		require.NotContains(t, fields, key, "duplicate doctor output key %q", key)
+		fields[key] = value
 	}
 
-	assert.Equal(t, len(expectedKeyOrder), keyIndex, "expected %d lines, got %d", len(expectedKeyOrder), keyIndex)
+	for _, key := range []string{
+		"repo_root",
+		"agency_data_dir",
+		"agency_config_dir",
+		"user_config_path",
+		"agency_json_path",
+		"agency_json_source",
+		"agency_cache_dir",
+		"repo_key",
+		"repo_id",
+		"origin_present",
+		"origin_url",
+		"origin_host",
+		"github_flow_available",
+		"git_version",
+		"tmux_version",
+		"gh_version",
+		"gh_authenticated",
+		"defaults_base_branch",
+		"defaults_runner",
+		"defaults_runner_model",
+		"defaults_runner_model_source",
+		"defaults_runner_effort",
+		"defaults_runner_effort_source",
+		"defaults_editor",
+		"execution_profile",
+		"execution_profile_source",
+		"execution_checkout_root_policy",
+		"execution_checkout_root",
+		"execution_profile_env_keys",
+		"runner_cmd",
+		"script_setup",
+		"script_verify",
+		"script_archive",
+		"status",
+	} {
+		assert.Contains(t, fields, key)
+	}
+
+	assert.Equal(t, canonicalRepoRoot, fields["repo_root"])
+	assert.Equal(t, dataDir, fields["agency_data_dir"])
+	assert.Equal(t, configDir, fields["agency_config_dir"])
+	assert.Equal(t, "repo", fields["agency_json_source"])
+	assert.Equal(t, "github:testowner/testrepo", fields["repo_key"])
+	assert.Equal(t, "true", fields["origin_present"])
+	assert.Equal(t, "github.com", fields["origin_host"])
+	assert.Equal(t, "true", fields["github_flow_available"])
+	assert.Equal(t, "git version 2.40.0", fields["git_version"])
+	assert.Equal(t, "tmux 3.3a", fields["tmux_version"])
+	assert.Equal(t, "gh version 2.40.0 (2024-01-15)", fields["gh_version"])
+	assert.Equal(t, "true", fields["gh_authenticated"])
+	assert.Equal(t, "main", fields["defaults_base_branch"])
+	assert.Equal(t, "claude-code", fields["defaults_runner"])
+	assert.Equal(t, "personal", fields["execution_profile"])
+	assert.Equal(t, "ok", fields["status"])
 }

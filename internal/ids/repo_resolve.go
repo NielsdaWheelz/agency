@@ -3,7 +3,8 @@
 package ids
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"strings"
 )
 
@@ -46,28 +47,15 @@ func (e *ErrRepoAmbiguous) Error() string {
 // For "github:owner/repo" returns "repo".
 // For "path:<hash>" or anything else, returns "".
 func RepoShortName(repoKey string) string {
-	if !strings.HasPrefix(repoKey, "github:") {
+	after, ok := strings.CutPrefix(repoKey, "github:")
+	if !ok {
 		return ""
 	}
-	after := strings.TrimPrefix(repoKey, "github:")
 	idx := strings.LastIndex(after, "/")
 	if idx < 0 || idx == len(after)-1 {
 		return ""
 	}
 	return after[idx+1:]
-}
-
-// repoOwnerSlashName extracts "owner/repo" from "github:owner/repo".
-// Returns "" for non-github keys or malformed keys without a slash.
-func repoOwnerSlashName(repoKey string) string {
-	if !strings.HasPrefix(repoKey, "github:") {
-		return ""
-	}
-	after := strings.TrimPrefix(repoKey, "github:")
-	if !strings.Contains(after, "/") {
-		return ""
-	}
-	return after
 }
 
 // ResolveRepoRef resolves an input identifier to a single repo reference.
@@ -126,8 +114,8 @@ func ResolveRepoRef(input string, refs []RepoRef) (RepoRef, error) {
 			continue
 		}
 		// Try owner/repo format (without "github:" prefix)
-		ownerRepo := repoOwnerSlashName(ref.RepoKey)
-		if ownerRepo != "" && ownerRepo == input {
+		ownerRepo, ok := strings.CutPrefix(ref.RepoKey, "github:")
+		if ok && strings.Contains(ownerRepo, "/") && ownerRepo == input {
 			keyMatches = append(keyMatches, ref)
 		}
 	}
@@ -180,7 +168,7 @@ func ResolveRepoRef(input string, refs []RepoRef) (RepoRef, error) {
 
 // sortRepoCandidates sorts candidates deterministically by RepoID.
 func sortRepoCandidates(refs []RepoRef) {
-	sort.Slice(refs, func(i, j int) bool {
-		return refs[i].RepoID < refs[j].RepoID
+	slices.SortFunc(refs, func(a, b RepoRef) int {
+		return cmp.Compare(a.RepoID, b.RepoID)
 	})
 }

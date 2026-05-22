@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -94,7 +95,7 @@ func controlPlaneStartFingerprint(repoRoot, worktreeID, checkoutRoot string, mod
 		EnvKeys:            sortedEnvKeys(requestEnv),
 		PromptSHA256:       hex.EncodeToString(promptHash[:]),
 		InvocationName:     req.InvocationName,
-		RunnerArgs:         append([]string(nil), req.RunnerArgs...),
+		RunnerArgs:         slices.Clone(req.RunnerArgs),
 		NoIncludeUntracked: req.NoIncludeUntracked,
 	})
 	sum := sha256.Sum256(payload)
@@ -129,7 +130,7 @@ func (s *Server) isInsideAgencyManagedTree(path string) (bool, error) {
 		return false, err
 	}
 	for _, repoID := range repoIDs {
-		worktrees, err := store.ScanIntegrationWorktreesForRepo(s.Store.DataDir, repoID)
+		worktrees, err := s.store.ScanIntegrationWorktreesForRepo(repoID)
 		if err != nil {
 			return false, err
 		}
@@ -139,7 +140,7 @@ func (s *Server) isInsideAgencyManagedTree(path string) (bool, error) {
 			}
 		}
 
-		invocations, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
+		invocations, err := s.store.ScanInvocationsForRepo(repoID)
 		if err != nil {
 			return false, err
 		}
@@ -157,7 +158,7 @@ func (s *Server) directStartRequestConflictsWithRecord(repoID, repoRoot string, 
 		return true
 	}
 
-	wtSvc := integrationworktree.NewService(s.Store, s.Runner, s.FS, s.Clock)
+	wtSvc := integrationworktree.NewService(s.store, s.runner, s.fsys, s.clock)
 	wtRecord, err := wtSvc.Resolve(repoID, req.WorktreeRef, true)
 	if err != nil {
 		if req.WorktreeRef != meta.IntegrationWorktreeID {
@@ -177,16 +178,16 @@ func directStartFailedBeforeClaim(meta *store.InvocationMeta) bool {
 }
 
 func (s *Server) ensureRepoRegistered(repoIdentity identity.RepoIdentity, repoRoot string) error {
-	idx, err := s.Store.LoadRepoIndex()
+	idx, err := s.store.LoadRepoIndex()
 	if err != nil {
 		return err
 	}
-	idx = s.Store.UpsertRepoIndexEntry(idx, repoIdentity.RepoKey, repoIdentity.RepoID, repoRoot)
-	return s.Store.SaveRepoIndex(idx)
+	idx = s.store.UpsertRepoIndexEntry(idx, repoIdentity.RepoKey, repoIdentity.RepoID, repoRoot)
+	return s.store.SaveRepoIndex(idx)
 }
 
 func (s *Server) checkInvocationNameUniqueness(repoID, name string) error {
-	records, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
+	records, err := s.store.ScanInvocationsForRepo(repoID)
 	if err != nil {
 		return fmt.Errorf("failed to scan invocations: %w", err)
 	}
@@ -208,7 +209,7 @@ func (s *Server) checkInvocationNameUniqueness(repoID, name string) error {
 }
 
 func (s *Server) acquireControlPlaneRepoLock(repoID, op string) (func() error, error) {
-	deadline := s.Clock().Add(controlPlaneRepoLockAcquireTimeout)
+	deadline := s.clock().Add(controlPlaneRepoLockAcquireTimeout)
 	for {
 		unlock, err := s.repoLock.Lock(repoID, op)
 		if err == nil {
@@ -218,7 +219,7 @@ func (s *Server) acquireControlPlaneRepoLock(repoID, op string) (func() error, e
 		if !stderrors.As(err, &lockedErr) {
 			return nil, err
 		}
-		if !s.Clock().Before(deadline) {
+		if !s.clock().Before(deadline) {
 			return nil, err
 		}
 		time.Sleep(controlPlaneRepoLockPollInterval)
@@ -246,24 +247,24 @@ func (s *Server) resolveControlPlaneRepoRoot(ctx context.Context, repoRoot strin
 		return "", identity.RepoIdentity{}, false
 	}
 
-	gitRoot, err := git.GetRepoRoot(ctx, s.Runner, repoRoot, nil)
+	gitRoot, err := git.GetRepoRoot(ctx, s.runner, repoRoot, nil)
 	if err != nil {
 		writeErr(http.StatusBadRequest, string(errors.ENoRepo), "repo_root is not inside a git repository: "+err.Error(), "")
 		return "", identity.RepoIdentity{}, false
 	}
 	repoRoot = gitRoot.Path
-	originInfo := git.GetOriginInfo(ctx, s.Runner, repoRoot, nil)
+	originInfo := git.GetOriginInfo(ctx, s.runner, repoRoot, nil)
 	repoIdentity := identity.DeriveRepoIdentity(repoRoot, originInfo.URL)
 	return repoRoot, repoIdentity, true
 }
 
 func (s *Server) prepareControlPlaneStart(ctx context.Context, repoRoot, worktreeRef, lockOp string, writeErr controlPlaneStartErrorWriter, repoIdentity identity.RepoIdentity) (*controlPlaneStartResolved, bool) {
 	if err := s.ensureRepoRegistered(repoIdentity, repoRoot); err != nil {
-		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to register repo: "+err.Error(), "")
+		writeErr(http.StatusInternalServerError, string(errors.EInternal), "failed to register repo: "+err.Error(), "")
 		return nil, false
 	}
 
-	wtSvc := integrationworktree.NewService(s.Store, s.Runner, s.FS, s.Clock)
+	wtSvc := integrationworktree.NewService(s.store, s.runner, s.fsys, s.clock)
 	wtRecord, err := wtSvc.Resolve(repoIdentity.RepoID, worktreeRef, false)
 	if err != nil {
 		code := errors.CodeOr(err, errors.EInternal)

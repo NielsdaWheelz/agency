@@ -24,6 +24,10 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
 
+func taskHandlerTestNow() time.Time {
+	return time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+}
+
 func TestTaskStartValidationErrors(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -118,6 +122,49 @@ func TestTaskStartInvalidBodyReturnsInvalidRequest(t *testing.T) {
 	assert.Equal(t, string(errors.EInvalidRequest), payload.ErrorCode)
 }
 
+func TestHandleGetTask_AmbiguousIncludesCandidates(t *testing.T) {
+	t.Parallel()
+
+	st := store.NewStore(fs.NewRealFS(), t.TempDir(), time.Now)
+	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), t.TempDir())
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	for _, taskID := range []string{"task-alpha", "task-alpine"} {
+		_, err := st.EnsureTaskDir("repo-1", taskID)
+		require.NoError(t, err)
+		require.NoError(t, st.WriteTaskMeta("repo-1", taskID, &store.TaskMeta{
+			SchemaVersion:    store.SchemaVersion,
+			TaskID:           taskID,
+			Name:             taskID,
+			State:            store.TaskStateRunning,
+			RepoID:           "repo-1",
+			RepoRoot:         "/repo",
+			BaseBranch:       "main",
+			CheckoutRoot:     "/checkouts/repo-1",
+			ExecutionProfile: "personal",
+			Mode:             store.RunnerModeHeadless,
+			Runner:           "claude-code",
+			CreatedAt:        now,
+			UpdatedAt:        now,
+		}))
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/task-al?repo_id=repo-1", nil)
+	w := httptest.NewRecorder()
+
+	srv.newHTTPHandler().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusConflict, w.Code)
+	var payload rawAPIResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &payload))
+	assert.False(t, payload.OK)
+	assert.Equal(t, string(errors.ETaskIDAmbiguous), payload.ErrorCode)
+	assert.Equal(t, "use a more specific task id", payload.Hint)
+
+	var details AmbiguousDetails
+	require.NoError(t, json.Unmarshal(payload.Details, &details))
+	assert.ElementsMatch(t, []string{"task-alpha", "task-alpine"}, details.Candidates)
+}
+
 func TestTaskMutationRequestShapeErrorsReturnInvalidRequest(t *testing.T) {
 	t.Parallel()
 
@@ -143,7 +190,6 @@ func TestTaskMutationRequestShapeErrorsReturnInvalidRequest(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
 			w := httptest.NewRecorder()
@@ -176,7 +222,6 @@ func TestStartRequestsRejectNullEnv(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			err := json.Unmarshal([]byte(tt.body), tt.dst)
@@ -200,7 +245,6 @@ func TestStartRequestsRejectInvalidEnvKeys(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			err := json.Unmarshal([]byte(tt.body), tt.dst)
@@ -548,7 +592,7 @@ func TestTaskRetryEventAppendFailurePreservesExistingTask(t *testing.T) {
 	taskID := "task-event-failure"
 	_, err = st.EnsureTaskDir(createResp.RepoID, taskID)
 	require.NoError(t, err)
-	now := st.Now().UTC().Format(time.RFC3339)
+	now := taskHandlerTestNow().UTC().Format(time.RFC3339)
 	require.NoError(t, st.WriteTaskMeta(createResp.RepoID, taskID, &store.TaskMeta{
 		SchemaVersion:       store.SchemaVersion,
 		TaskID:              taskID,
@@ -596,7 +640,7 @@ func TestTaskRetryEventAppendFailurePreservesExistingTask(t *testing.T) {
 	assert.Equal(t, string(errors.EPersistFailed), retryRecord.ErrorCode)
 	assert.Empty(t, retryRecord.InvocationID)
 
-	records, err := store.ScanInvocationsForRepo(st.DataDir, createResp.RepoID)
+	records, err := st.ScanInvocationsForRepo(createResp.RepoID)
 	require.NoError(t, err)
 	var retryInvocation *store.InvocationMeta
 	for i := range records {
@@ -637,11 +681,10 @@ func TestAbortStartedTaskInvocation_HeadedKillFailureLeavesInvocationInspectable
 	st := store.NewStore(fs.NewRealFS(), dataDir, func() time.Time {
 		return time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
 	})
-	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), filepath.Join(dataDir, "config"))
 	fakeTmux := testutil.NewFakeTmuxClient()
 	fakeTmux.KillSessionErr = fmt.Errorf("tmux unavailable")
 	fakeTmux.Sessions["session-1"] = testutil.FakeTmuxSession{Name: "session-1"}
-	srv.TmuxClient = fakeTmux
+	srv := NewServer(st, testutil.NewFakeTmuxCommandRunner(exec.NewRealRunner(), fakeTmux), fs.NewRealFS(), filepath.Join(dataDir, "config"))
 
 	require.NoError(t, seedClaimedTaskInvocation(st, "repo-1", "task-1", "wt-1", "inv-headed", "start-1", "fingerprint-1", t.TempDir()))
 	require.NoError(t, st.UpdateInvocationMeta("repo-1", "inv-headed", func(meta *store.InvocationMeta) {
@@ -685,7 +728,7 @@ func TestFindClaimedTaskInvocationSkipsTaskAbortRunningInvocation(t *testing.T) 
 	assert.Nil(t, meta)
 }
 
-func TestTaskRetryDoesNotFallbackToPersistedProfileBeforeConfigResolution(t *testing.T) {
+func TestTaskRetryRejectsMissingSelectedProfileBeforePersistedProfile(t *testing.T) {
 	dataDir := t.TempDir()
 	configDir := filepath.Join(dataDir, "config")
 	writeTestUserConfig(t, configDir)
@@ -796,7 +839,7 @@ func seedTaskForRetry(st *store.Store, repoID, repoRoot, taskID, executionProfil
 	if err != nil {
 		return err
 	}
-	now := st.Now().UTC().Format(time.RFC3339)
+	now := taskHandlerTestNow().UTC().Format(time.RFC3339)
 	meta := &store.TaskMeta{
 		SchemaVersion:      store.SchemaVersion,
 		TaskID:             taskID,
@@ -823,7 +866,7 @@ func seedStartingTaskReservation(st *store.Store, repoID, repoRoot, checkoutRoot
 	if _, err := st.EnsureTaskDir(repoID, taskID); err != nil {
 		return err
 	}
-	now := st.Now().UTC().Format(time.RFC3339)
+	now := taskHandlerTestNow().UTC().Format(time.RFC3339)
 	meta := &store.TaskMeta{
 		SchemaVersion:      store.SchemaVersion,
 		TaskID:             taskID,
@@ -860,7 +903,7 @@ func seedClaimedTaskInvocation(st *store.Store, repoID, taskID, worktreeID, invo
 		"abc123",
 		"claude-code",
 		store.RunnerModeHeadless,
-		st.Now(),
+		taskHandlerTestNow(),
 	)
 	meta.Status = store.InvocationStatusRunning
 	meta.TaskID = taskID
@@ -877,7 +920,7 @@ func seedTaskRetryRecord(st *store.Store, repoID, repoRoot, taskID, invocationID
 	if err != nil {
 		return err
 	}
-	now := st.Now().UTC().Format(time.RFC3339)
+	now := taskHandlerTestNow().UTC().Format(time.RFC3339)
 	meta := &store.TaskMeta{
 		SchemaVersion:      store.SchemaVersion,
 		TaskID:             taskID,
@@ -921,7 +964,7 @@ func seedTaskRetryRecord(st *store.Store, repoID, repoRoot, taskID, invocationID
 	if _, err := st.EnsureInvocationDir(repoID, invocationID); err != nil {
 		return err
 	}
-	invMeta := store.NewInvocationMeta(invocationID, "", "wt-1", "/sandbox", meta.CheckoutRoot, "personal", "agency/sandbox-"+invocationID, "abc123", "claude-code", store.RunnerModeHeadless, st.Now())
+	invMeta := store.NewInvocationMeta(invocationID, "", "wt-1", "/sandbox", meta.CheckoutRoot, "personal", "agency/sandbox-"+invocationID, "abc123", "claude-code", store.RunnerModeHeadless, taskHandlerTestNow())
 	invMeta.Status = store.InvocationStatusRunning
 	invMeta.TaskID = taskID
 	return st.WriteInvocationMeta(repoID, invocationID, invMeta)
@@ -935,7 +978,7 @@ func seedStartingTaskRetryReservation(st *store.Store, repoID, repoRoot, taskID,
 	if err != nil {
 		return err
 	}
-	now := st.Now().UTC().Format(time.RFC3339)
+	now := taskHandlerTestNow().UTC().Format(time.RFC3339)
 	meta := &store.TaskMeta{
 		SchemaVersion:      store.SchemaVersion,
 		TaskID:             taskID,

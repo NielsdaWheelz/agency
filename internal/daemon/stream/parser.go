@@ -16,11 +16,11 @@ import (
 // Lines exceeding this are written to raw.jsonl but not parsed.
 const MaxLineSize = 8 * 1024 * 1024
 
-// ParseErrorThrottleCount is how many parse errors before throttling emission.
-const ParseErrorThrottleCount = 10
+// parseErrorThrottleCount is how many parse errors before throttling emission.
+const parseErrorThrottleCount = 10
 
-// ParseErrorThrottleInterval is the minimum time between parse_error events.
-const ParseErrorThrottleInterval = 5 * time.Second
+// parseErrorThrottleInterval is the minimum time between parse_error events.
+const parseErrorThrottleInterval = 5 * time.Second
 
 var (
 	// ErrRawLogWriteFailed indicates raw.jsonl persistence failed.
@@ -32,17 +32,13 @@ var (
 
 // Parser handles line-by-line parsing of runner output.
 type Parser struct {
-	// InvocationID is the invocation being parsed.
-	InvocationID string
+	invocationID string
 
-	// Runner is the runner id associated with this parser instance.
-	Runner string
+	runner string
 
-	// Adapter is the runner-specific parser.
-	Adapter Adapter
+	adapter adapter
 
-	// Clock returns the current time (injectable for testing).
-	Clock func() time.Time
+	clock func() time.Time
 
 	// mu protects mutable state.
 	mu sync.Mutex
@@ -82,13 +78,18 @@ type Parser struct {
 
 // NewParser creates a new parser for the given runner.
 func NewParser(invocationID, runner string, clock func() time.Time) *Parser {
-	adapter := GetAdapter(runner)
+	adapter := getAdapter(runner)
 	return &Parser{
-		InvocationID: invocationID,
-		Runner:       runner,
-		Adapter:      adapter,
-		Clock:        clock,
+		invocationID: invocationID,
+		runner:       runner,
+		adapter:      adapter,
+		clock:        clock,
 	}
+}
+
+// CanParse reports whether this parser has a runner adapter for normalized events.
+func (p *Parser) CanParse() bool {
+	return p != nil && p.adapter != nil
 }
 
 // SetInitialSeq seeds the parser sequence counter.
@@ -139,7 +140,7 @@ func (p *Parser) Stop() {
 // parses each line, and writes normalized events to streamFile.
 // This function blocks until EOF or error.
 func (p *Parser) StreamAndParse(reader io.Reader, rawFile, streamFile *os.File) error {
-	if p.Adapter == nil {
+	if p.adapter == nil {
 		// No adapter - just stream raw output without parsing
 		return p.streamRawOnly(reader, rawFile)
 	}
@@ -158,7 +159,7 @@ func (p *Parser) StreamAndParse(reader io.Reader, rawFile, streamFile *os.File) 
 		line, oversized, hasData, err := p.readAndPersistLine(bufReader, rawFile)
 		if hasData {
 			// Update last output timestamp
-			p.lastOutputAt.Store(p.Clock().UnixNano())
+			p.lastOutputAt.Store(p.clock().UnixNano())
 
 			if oversized {
 				// Line too large - emit parse_error event
@@ -239,7 +240,7 @@ func (p *Parser) parseAndWriteLine(line []byte, streamFile *os.File) error {
 		return nil
 	}
 
-	result, err := p.Adapter.ParseLine(trimmedLine)
+	result, err := p.adapter.ParseLine(trimmedLine)
 	if err != nil {
 		// Parse error - emit parse_error event
 		return p.emitParseError(streamFile, "json_parse_error")
@@ -250,7 +251,7 @@ func (p *Parser) parseAndWriteLine(line []byte, streamFile *os.File) error {
 	}
 
 	// Write normalized events
-	for _, event := range result.Events {
+	for _, event := range result.events {
 		if writeErr := p.writeNormalizedEvent(event, streamFile); writeErr != nil {
 			return writeErr
 		}
@@ -264,14 +265,14 @@ func (p *Parser) parseAndWriteLine(line []byte, streamFile *os.File) error {
 }
 
 // writeNormalizedEvent writes a normalized event to stream.jsonl.
-func (p *Parser) writeNormalizedEvent(event *NormalizedEvent, streamFile *os.File) error {
+func (p *Parser) writeNormalizedEvent(event *normalizedEvent, streamFile *os.File) error {
 	p.mu.Lock()
 	p.seq++
 	event.Seq = p.seq
-	event.SchemaVersion = SchemaVersion
-	event.Timestamp = p.Clock().UTC().Format(time.RFC3339)
-	event.InvocationID = p.InvocationID
-	event.Runner = p.Runner
+	event.SchemaVersion = schemaVersion
+	event.Timestamp = p.clock().UTC().Format(time.RFC3339)
+	event.InvocationID = p.invocationID
+	event.Runner = p.runner
 	p.mu.Unlock()
 
 	data, err := event.Marshal()
@@ -279,13 +280,13 @@ func (p *Parser) writeNormalizedEvent(event *NormalizedEvent, streamFile *os.Fil
 		return fmt.Errorf("marshal normalized event: %w", err)
 	}
 	if len(data) > MaxLineSize {
-		overflowEvent := &NormalizedEvent{
+		overflowEvent := &normalizedEvent{
 			SchemaVersion: event.SchemaVersion,
 			Seq:           event.Seq,
 			Timestamp:     event.Timestamp,
 			InvocationID:  event.InvocationID,
 			Runner:        event.Runner,
-			Kind:          EventKindParseError,
+			Kind:          eventKindParseError,
 			Data: map[string]interface{}{
 				"reason":      "normalized_event_too_large",
 				"event_kind":  string(event.Kind),
@@ -295,10 +296,10 @@ func (p *Parser) writeNormalizedEvent(event *NormalizedEvent, streamFile *os.Fil
 		}
 		data, err = overflowEvent.Marshal()
 		if err != nil {
-			return fmt.Errorf("marshal oversized normalized-event fallback: %w", err)
+			return fmt.Errorf("marshal oversized normalized-event parse_error: %w", err)
 		}
 		if len(data) > MaxLineSize {
-			return fmt.Errorf("%w: oversized fallback event exceeded max line size (%d bytes)", ErrNormalizedStreamWriteFailed, len(data))
+			return fmt.Errorf("%w: oversized parse_error event exceeded max line size (%d bytes)", ErrNormalizedStreamWriteFailed, len(data))
 		}
 	}
 
@@ -314,12 +315,12 @@ func (p *Parser) emitParseError(streamFile *os.File, reason string) error {
 	p.parseErrorCount++
 	count := p.parseErrorCount
 	lastEmit := p.lastParseErrorEmit
-	now := p.Clock()
+	now := p.clock()
 
 	// Throttle emission: emit on first error, then every 10 errors or 5 seconds
 	shouldEmit := count == 1 ||
-		(count%ParseErrorThrottleCount == 0) ||
-		(now.Sub(lastEmit) >= ParseErrorThrottleInterval)
+		(count%parseErrorThrottleCount == 0) ||
+		(now.Sub(lastEmit) >= parseErrorThrottleInterval)
 
 	if shouldEmit {
 		p.lastParseErrorEmit = now
@@ -330,8 +331,8 @@ func (p *Parser) emitParseError(streamFile *os.File, reason string) error {
 		return nil
 	}
 
-	event := &NormalizedEvent{
-		Kind: EventKindParseError,
+	event := &normalizedEvent{
+		Kind: eventKindParseError,
 		Data: map[string]interface{}{
 			"parse_error_count": count,
 			"reason":            reason,
@@ -358,7 +359,7 @@ func (p *Parser) streamRawOnly(reader io.Reader, rawFile *os.File) error {
 			if _, writeErr := rawFile.Write(buf[:n]); writeErr != nil {
 				return fmt.Errorf("%w: %v", ErrRawLogWriteFailed, writeErr)
 			}
-			p.lastOutputAt.Store(p.Clock().UnixNano())
+			p.lastOutputAt.Store(p.clock().UnixNano())
 		}
 		if err != nil {
 			if err == io.EOF {
@@ -376,7 +377,7 @@ func (p *Parser) streamRawOnly(reader io.Reader, rawFile *os.File) error {
 // the mutating tool names. When a subsequent user message (tool result) arrives,
 // we emit the notification. This ensures the checkpoint captures the tool's
 // effect on the filesystem.
-func (p *Parser) maybeNotifyCheckpoint(event *NormalizedEvent) {
+func (p *Parser) maybeNotifyCheckpoint(event *normalizedEvent) {
 	p.mu.Lock()
 	notifyFn := p.checkpointNotify
 	p.mu.Unlock()
@@ -385,7 +386,7 @@ func (p *Parser) maybeNotifyCheckpoint(event *NormalizedEvent) {
 		return
 	}
 
-	if event.Kind == EventKindToolEnd {
+	if event.Kind == eventKindToolEnd {
 		toolName := checkpointToolNameFromEvent(event.Data)
 		if toolName == "" || !isMutatingToolName(toolName) {
 			return
@@ -398,7 +399,7 @@ func (p *Parser) maybeNotifyCheckpoint(event *NormalizedEvent) {
 		return
 	}
 
-	if event.Kind == EventKindMessage {
+	if event.Kind == eventKindMessage {
 		role, _ := event.Data["role"].(string)
 		hasToolUse, _ := event.Data["has_tool_use"].(bool)
 
@@ -459,8 +460,8 @@ func checkpointToolNameFromEvent(data map[string]interface{}) string {
 	return ""
 }
 
-func (p *Parser) maybeNotifySessionStart(event *NormalizedEvent) {
-	if event.Kind != EventKindSessionStart {
+func (p *Parser) maybeNotifySessionStart(event *normalizedEvent) {
+	if event.Kind != eventKindSessionStart {
 		return
 	}
 
@@ -490,8 +491,8 @@ func (p *Parser) maybeNotifySessionStart(event *NormalizedEvent) {
 	})
 }
 
-func (p *Parser) maybeNotifyFinal(event *NormalizedEvent) {
-	if event.Kind != EventKindFinal {
+func (p *Parser) maybeNotifyFinal(event *normalizedEvent) {
+	if event.Kind != eventKindFinal {
 		return
 	}
 

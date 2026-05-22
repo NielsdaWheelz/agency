@@ -61,7 +61,10 @@ func (s *Server) resolveTurnDiffContext(record *resolvedInvocation, params GetDi
 		return nil, err
 	}
 
-	entries := s.collectTimelineEntries(record)
+	entries, err := s.collectTimelineEntries(record)
+	if err != nil {
+		return nil, errors.Wrap(errors.EStoreCorrupt, "failed to read invocation timeline", err)
+	}
 	if len(entries) == 0 {
 		return nil, errors.NewWithDetails(
 			errors.ECheckpointNotFound,
@@ -78,9 +81,12 @@ func (s *Server) resolveTurnDiffContext(record *resolvedInvocation, params GetDi
 		entryIndexByID[entry.dto.EntryID] = i
 	}
 
-	checkpointsDir := s.Store.InvocationDir(record.RepoID, record.InvocationID)
-	cpFile, err := checkpoint.LoadCheckpointsFile(s.FS, checkpointsDir)
-	if err != nil || len(cpFile.Checkpoints) == 0 {
+	checkpointsPath := s.store.InvocationCheckpointsPath(record.RepoID, record.InvocationID)
+	cpFile, err := checkpoint.LoadCheckpointsFile(s.fsys, checkpointsPath)
+	if err != nil {
+		return nil, errors.Wrap(errors.EStoreCorrupt, "failed to load invocation checkpoints from checkpoints.json", err)
+	}
+	if cpFile == nil || len(cpFile.Checkpoints) == 0 {
 		return nil, errors.NewWithDetails(
 			errors.ECheckpointNotFound,
 			"turn-aware diff requires checkpoints for deterministic mapping",

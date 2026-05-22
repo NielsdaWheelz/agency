@@ -1,9 +1,10 @@
 package daemon
 
 import (
+	"cmp"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -51,12 +52,12 @@ func (s *Server) handleListInvocations(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	now := s.Clock()
+	now := s.clock()
 	var allInvocations []InvocationDTO
 	for _, repoID := range repoIDs {
 		repoName := s.repoName(repoID)
 		worktreeNames := map[string]string{}
-		worktrees, err := store.ScanIntegrationWorktreesForRepo(s.Store.DataDir, repoID)
+		worktrees, err := s.store.ScanIntegrationWorktreesForRepo(repoID)
 		if err == nil {
 			for _, worktree := range worktrees {
 				if worktree.Meta == nil {
@@ -66,7 +67,7 @@ func (s *Server) handleListInvocations(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		records, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
+		records, err := s.store.ScanInvocationsForRepo(repoID)
 		if err != nil {
 			continue
 		}
@@ -89,22 +90,26 @@ func (s *Server) handleListInvocations(w http.ResponseWriter, r *http.Request) {
 				RepoID:       repoID,
 				Meta:         r.Meta,
 			}
-			projection := s.projectInvocationReadSurface(
+			projection, err := s.projectInvocationReadSurface(
 				resolved,
 				repoName,
 				worktreeNames[r.Meta.IntegrationWorktreeID],
 				now,
 				nil,
 			)
+			if err != nil {
+				s.writeInvocationTimelineReadError(w, requestID, err)
+				return
+			}
 			allInvocations = append(allInvocations, projection.DTO)
 		}
 	}
 
-	sort.Slice(allInvocations, func(i, j int) bool {
-		if allInvocations[i].StartedAt != allInvocations[j].StartedAt {
-			return allInvocations[i].StartedAt > allInvocations[j].StartedAt
+	slices.SortFunc(allInvocations, func(a, b InvocationDTO) int {
+		if a.StartedAt != b.StartedAt {
+			return cmp.Compare(b.StartedAt, a.StartedAt)
 		}
-		return allInvocations[i].InvocationID < allInvocations[j].InvocationID
+		return cmp.Compare(a.InvocationID, b.InvocationID)
 	})
 
 	invocations, nextCursor := paginateInvocations(allInvocations, params.Cursor, params.Limit)
@@ -121,12 +126,16 @@ func (s *Server) handleGetInvocation(w http.ResponseWriter, r *http.Request, inv
 		return
 	}
 
-	now := s.Clock()
+	now := s.clock()
 	worktreeName := ""
-	if worktreeMeta, err := s.Store.ReadIntegrationWorktreeMeta(record.RepoID, record.Meta.IntegrationWorktreeID); err == nil && worktreeMeta != nil {
+	if worktreeMeta, err := s.store.ReadIntegrationWorktreeMeta(record.RepoID, record.Meta.IntegrationWorktreeID); err == nil && worktreeMeta != nil {
 		worktreeName = worktreeMeta.Name
 	}
-	projection := s.projectInvocationReadSurface(record, s.repoName(record.RepoID), worktreeName, now, nil)
+	projection, err := s.projectInvocationReadSurface(record, s.repoName(record.RepoID), worktreeName, now, nil)
+	if err != nil {
+		s.writeInvocationTimelineReadError(w, requestID, err)
+		return
+	}
 	dto := projection.DTO
 	s.writeAPIResponse(w, requestID, dto)
 }
@@ -143,26 +152,27 @@ func (s *Server) projectInvocationReadSurface(
 	worktreeName string,
 	now time.Time,
 	entries []timelineSortableEntry,
-) invocationReadProjection {
-	if record == nil || record.Meta == nil {
-		return invocationReadProjection{}
-	}
-
-	logsDir := s.preferredInvocationLogsDir(record.RepoID, record.InvocationID)
+) (invocationReadProjection, error) {
+	logsDir := s.store.InvocationLogsDir(record.RepoID, record.InvocationID)
 	runnerMeta, runnerErr := s.loadRunnerStatusForInvocation(record)
-	dto := InvocationMetaToDTO(record.Meta, record.RepoID, logsDir, runnerMeta, runnerErr, now)
+	dto := invocationMetaToDTO(record.Meta, record.RepoID, logsDir, runnerMeta, runnerErr, now)
 	dto.RepoName = repoName
 	dto.WorktreeName = strings.TrimSpace(worktreeName)
 
 	_, _, runnerSummary, _ := projectRunnerStatus(runnerMeta, runnerErr)
-	activityProjection := s.buildInvocationActivityProjection(record, dto.State, runnerSummary, entries)
-	applyInvocationActivityProjection(&dto, activityProjection)
+	activityProjection, err := s.buildInvocationActivityProjection(record, dto.State, runnerSummary, entries)
+	if err != nil {
+		return invocationReadProjection{}, err
+	}
+	dto.StatusSummary = activityProjection.StatusSummary
+	dto.LatestActivity = activityProjection.LatestActivity
+	dto.Navigation = activityProjection.Navigation
 
 	return invocationReadProjection{
 		DTO:        dto,
 		RunnerMeta: runnerMeta,
 		RunnerErr:  runnerErr,
-	}
+	}, nil
 }
 
 // resolvedInvocation contains the resolved invocation with its repo ID.
@@ -198,7 +208,7 @@ func (s *Server) resolveInvocationRef(ref string, repoID string) (*resolvedInvoc
 
 // resolveInvocationRefForRepo resolves an invocation reference within a specific repo.
 func (s *Server) resolveInvocationRefForRepo(ref string, repoID string) (*resolvedInvocation, error) {
-	records, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
+	records, err := s.store.ScanInvocationsForRepo(repoID)
 	if err != nil {
 		return nil, err
 	}

@@ -12,7 +12,7 @@ import (
 )
 
 // TaskStart creates a task, integration worktree, and primary invocation.
-func (c *Client) TaskStart(ctx context.Context, opts TaskStartOpts) (*daemon.TaskStartResponse, error) {
+func (c *Client) TaskStart(ctx context.Context, opts daemon.TaskStartRequest) (*daemon.TaskStartResponse, error) {
 	if err := c.CheckAPIVersion(ctx); err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func (c *Client) ArchiveTask(ctx context.Context, taskRef, repoID string) (*daem
 }
 
 // RetryTask starts a new primary invocation for an existing task worktree.
-func (c *Client) RetryTask(ctx context.Context, taskRef, repoID string, opts TaskRetryOpts) (*daemon.TaskStartResponse, error) {
+func (c *Client) RetryTask(ctx context.Context, taskRef, repoID string, opts daemon.TaskRetryRequest) (*daemon.TaskStartResponse, error) {
 	if err := c.CheckAPIVersion(ctx); err != nil {
 		return nil, err
 	}

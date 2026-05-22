@@ -1,10 +1,6 @@
 package verify
 
-import (
-	"testing"
-
-	"github.com/stretchr/testify/assert"
-)
+import "testing"
 
 // intPtr returns a pointer to an int for use in tests.
 func intPtr(i int) *int {
@@ -118,12 +114,13 @@ func TestDeriveOK_Precedence(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
 			got := deriveOK(tt.timedOut, tt.cancelled, tt.exitCode, tt.vj)
-			assert.Equal(t, tt.want, got)
+			if got != tt.want {
+				t.Fatalf("deriveOK() = %v, want %v", got, tt.want)
+			}
 		})
 	}
 }
@@ -213,7 +210,7 @@ func TestDeriveSummary(t *testing.T) {
 			vj:        nil,
 			want:      "verify failed (exit 127)",
 		},
-		// Empty summary in verify.json falls back to generic
+		// Empty verify.json summary uses the outcome-derived summary.
 		{
 			name:      "verify.json with empty summary",
 			timedOut:  false,
@@ -225,12 +222,13 @@ func TestDeriveSummary(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
 			got := deriveSummary(tt.timedOut, tt.cancelled, tt.exitCode, tt.vj)
-			assert.Equal(t, tt.want, got)
+			if got != tt.want {
+				t.Fatalf("deriveSummary() = %q, want %q", got, tt.want)
+			}
 		})
 	}
 }

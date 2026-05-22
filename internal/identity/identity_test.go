@@ -1,6 +1,8 @@
 package identity
 
 import (
+	"crypto/sha256"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -156,7 +158,6 @@ func TestParseGitHubOwnerRepo(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -205,7 +206,6 @@ func TestDeriveRepoIdentity_GitHub(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -213,13 +213,12 @@ func TestDeriveRepoIdentity_GitHub(t *testing.T) {
 
 			assert.Equal(t, tt.wantKey, id.RepoKey)
 			assert.Equal(t, tt.wantGHFlow, id.GitHubFlowAvailable)
-			assert.Len(t, id.RepoID, RepoIDLen)
-			assert.True(t, id.Origin.Present, "Origin.Present = false, want true")
+			assert.Len(t, id.RepoID, repoIDLen)
 		})
 	}
 }
 
-func TestDeriveRepoIdentity_PathFallback(t *testing.T) {
+func TestDeriveRepoIdentity_PathKeyForNonGitHubOrigins(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -245,21 +244,20 @@ func TestDeriveRepoIdentity_PathFallback(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
 			id := DeriveRepoIdentity(tt.absRepoRoot, tt.originURL)
 
 			// Should use path-based key
-			assert.True(t, len(id.RepoKey) >= 5 && id.RepoKey[:5] == "path:", "RepoKey = %q, expected path: prefix", id.RepoKey)
+			assert.True(t, strings.HasPrefix(id.RepoKey, "path:"), "RepoKey = %q, expected path: prefix", id.RepoKey)
 
 			// Path hash should be full sha256 hex
 			pathHash := id.RepoKey[5:] // strip "path:"
-			assert.Len(t, pathHash, PathHashLen)
+			assert.Len(t, pathHash, sha256.Size*2)
 
 			assert.False(t, id.GitHubFlowAvailable, "GitHubFlowAvailable = true, want false")
-			assert.Len(t, id.RepoID, RepoIDLen)
+			assert.Len(t, id.RepoID, repoIDLen)
 		})
 	}
 }
@@ -299,28 +297,4 @@ func TestDeriveRepoIdentity_DifferentPaths(t *testing.T) {
 
 	assert.NotEqual(t, id1.RepoKey, id2.RepoKey, "different paths produced same RepoKey")
 	assert.NotEqual(t, id1.RepoID, id2.RepoID, "different paths produced same RepoID")
-}
-
-func TestDeriveRepoIdentity_OriginInfo(t *testing.T) {
-	t.Parallel()
-
-	// Test that Origin info is properly populated
-	t.Run("with origin", func(t *testing.T) {
-		t.Parallel()
-
-		id := DeriveRepoIdentity("/path", "git@github.com:owner/repo.git")
-
-		assert.True(t, id.Origin.Present, "Origin.Present = false, want true")
-		assert.Equal(t, "git@github.com:owner/repo.git", id.Origin.URL)
-		assert.Equal(t, "github.com", id.Origin.Host)
-	})
-
-	t.Run("without origin", func(t *testing.T) {
-		t.Parallel()
-
-		id := DeriveRepoIdentity("/path", "")
-
-		assert.False(t, id.Origin.Present, "Origin.Present = true, want false")
-		assert.Equal(t, "", id.Origin.URL)
-	})
 }

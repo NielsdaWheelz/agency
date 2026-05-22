@@ -1,0 +1,8 @@
+{"type":"system","subtype":"init","cwd":"/tmp/workspace","session_id":"sess_cursor_tool_family_coverage"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"exercise cursor tool family normalization"}]},"session_id":"sess_cursor_tool_family_coverage"}
+{"type":"tool_call","subtype":"completed","call_id":"tool_glob","tool_call":{"globToolCall":{"args":{"path":"/tmp/workspace","pattern":"*.go"}}}}
+{"type":"tool_call","subtype":"completed","call_id":"tool_grep","tool_call":{"grepToolCall":{"args":{"query":"TODO","path":"/tmp/workspace"}}}}
+{"type":"tool_call","subtype":"completed","call_id":"tool_web_search","tool_call":{"webSearchToolCall":{"args":{"query":"agency project"}}}}
+{"type":"tool_call","subtype":"completed","call_id":"tool_web_fetch","tool_call":{"webFetchToolCall":{"args":{"url":"https://example.com/spec"}}}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"normalized families captured"}]},"session_id":"sess_cursor_tool_family_coverage"}
+{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"sess_cursor_tool_family_coverage"}

@@ -13,19 +13,19 @@ func idempotencyKey(repoID, clientRequestID string) string {
 	return repoID + ":" + clientRequestID
 }
 
-func (s *Server) checkIdempotency(repoID, clientRequestID, fingerprint string) (IdempotencyEntry, bool, bool) {
+func (s *Server) checkIdempotency(repoID, clientRequestID, fingerprint string) (idempotencyEntry, bool, bool) {
 	if clientRequestID == "" {
-		return IdempotencyEntry{}, false, false
+		return idempotencyEntry{}, false, false
 	}
 
 	s.idempotencyMu.RLock()
 	defer s.idempotencyMu.RUnlock()
 
 	entry, exists := s.idempotency[idempotencyKey(repoID, clientRequestID)]
-	if !exists || s.Clock().Unix()-entry.CreatedAt > IdempotencyTTL {
-		return IdempotencyEntry{}, false, false
+	if !exists || s.clock().Unix()-entry.createdAt > idempotencyTTL {
+		return idempotencyEntry{}, false, false
 	}
-	return entry, true, entry.Fingerprint != fingerprint
+	return entry, true, entry.fingerprint != fingerprint
 }
 
 func (s *Server) recordIdempotency(repoID, clientRequestID, invocationID, fingerprint string) {
@@ -35,10 +35,10 @@ func (s *Server) recordIdempotency(repoID, clientRequestID, invocationID, finger
 
 	s.idempotencyMu.Lock()
 	defer s.idempotencyMu.Unlock()
-	s.idempotency[idempotencyKey(repoID, clientRequestID)] = IdempotencyEntry{
-		InvocationID: invocationID,
-		Fingerprint:  fingerprint,
-		CreatedAt:    s.Clock().Unix(),
+	s.idempotency[idempotencyKey(repoID, clientRequestID)] = idempotencyEntry{
+		invocationID: invocationID,
+		fingerprint:  fingerprint,
+		createdAt:    s.clock().Unix(),
 	}
 	if len(s.idempotency) > 100 {
 		s.cleanupExpiredIdempotency()
@@ -46,9 +46,9 @@ func (s *Server) recordIdempotency(repoID, clientRequestID, invocationID, finger
 }
 
 func (s *Server) cleanupExpiredIdempotency() {
-	now := s.Clock().Unix()
+	now := s.clock().Unix()
 	for key, entry := range s.idempotency {
-		if now-entry.CreatedAt > IdempotencyTTL {
+		if now-entry.createdAt > idempotencyTTL {
 			delete(s.idempotency, key)
 		}
 	}
@@ -58,7 +58,7 @@ func (s *Server) findInvocationByClientRequestID(repoID, clientRequestID, finger
 	if clientRequestID == "" {
 		return nil, false, false, nil
 	}
-	records, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
+	records, err := s.store.ScanInvocationsForRepo(repoID)
 	if err != nil {
 		return nil, false, false, err
 	}
@@ -79,7 +79,7 @@ func (s *Server) findInvocationRecordByClientRequestID(repoID, clientRequestID s
 	if clientRequestID == "" {
 		return nil, false, nil
 	}
-	records, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
+	records, err := s.store.ScanInvocationsForRepo(repoID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -118,34 +118,32 @@ func worktreeCreateFingerprint(repoRoot string, req WorktreeCreateRequest, execC
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *Server) checkWorktreeIdempotency(repoID, idempotencyKey, fingerprint string) (WorktreeIdempotencyEntry, bool, bool) {
+func (s *Server) checkWorktreeIdempotency(repoID, idempotencyKey, fingerprint string) (worktreeIdempotencyEntry, bool, bool) {
 	if idempotencyKey == "" {
-		return WorktreeIdempotencyEntry{}, false, false
+		return worktreeIdempotencyEntry{}, false, false
 	}
 
 	s.worktreeIdempotencyMu.RLock()
 	defer s.worktreeIdempotencyMu.RUnlock()
 
 	entry, exists := s.worktreeIdempotency[worktreeIdempotencyKey(repoID, idempotencyKey)]
-	if !exists || s.Clock().Unix()-entry.CreatedAt > IdempotencyTTL {
-		return WorktreeIdempotencyEntry{}, false, false
+	if !exists || s.clock().Unix()-entry.createdAt > idempotencyTTL {
+		return worktreeIdempotencyEntry{}, false, false
 	}
-	return entry, true, entry.Fingerprint != fingerprint
+	return entry, true, entry.fingerprint != fingerprint
 }
 
-func (s *Server) recordWorktreeIdempotency(repoID, idempotencyKey, worktreeID, fingerprint, treePath, branch string) {
+func (s *Server) recordWorktreeIdempotency(repoID, idempotencyKey, worktreeID, fingerprint string) {
 	if idempotencyKey == "" {
 		return
 	}
 
 	s.worktreeIdempotencyMu.Lock()
 	defer s.worktreeIdempotencyMu.Unlock()
-	s.worktreeIdempotency[worktreeIdempotencyKey(repoID, idempotencyKey)] = WorktreeIdempotencyEntry{
-		WorktreeID:  worktreeID,
-		Fingerprint: fingerprint,
-		TreePath:    treePath,
-		Branch:      branch,
-		CreatedAt:   s.Clock().Unix(),
+	s.worktreeIdempotency[worktreeIdempotencyKey(repoID, idempotencyKey)] = worktreeIdempotencyEntry{
+		worktreeID:  worktreeID,
+		fingerprint: fingerprint,
+		createdAt:   s.clock().Unix(),
 	}
 	if len(s.worktreeIdempotency) > 100 {
 		s.cleanupExpiredWorktreeIdempotency()
@@ -153,9 +151,9 @@ func (s *Server) recordWorktreeIdempotency(repoID, idempotencyKey, worktreeID, f
 }
 
 func (s *Server) cleanupExpiredWorktreeIdempotency() {
-	now := s.Clock().Unix()
+	now := s.clock().Unix()
 	for key, entry := range s.worktreeIdempotency {
-		if now-entry.CreatedAt > IdempotencyTTL {
+		if now-entry.createdAt > idempotencyTTL {
 			delete(s.worktreeIdempotency, key)
 		}
 	}
@@ -165,7 +163,7 @@ func (s *Server) findWorktreeByIdempotencyKey(repoID, idempotencyKey, fingerprin
 	if idempotencyKey == "" {
 		return nil, false, false, nil
 	}
-	records, err := store.ScanIntegrationWorktreesForRepo(s.Store.DataDir, repoID)
+	records, err := s.store.ScanIntegrationWorktreesForRepo(repoID)
 	if err != nil {
 		return nil, false, false, err
 	}
@@ -196,9 +194,9 @@ func followUpFingerprint(invocationID, prompt string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *Server) reserveFollowUpIdempotency(repoID, clientRequestID, invocationID, fingerprint string) (IdempotencyEntry, bool, bool) {
+func (s *Server) reserveFollowUpIdempotency(repoID, clientRequestID, invocationID, fingerprint string) (idempotencyEntry, bool, bool) {
 	if clientRequestID == "" {
-		return IdempotencyEntry{}, false, false
+		return idempotencyEntry{}, false, false
 	}
 
 	s.idempotencyMu.Lock()
@@ -206,14 +204,14 @@ func (s *Server) reserveFollowUpIdempotency(repoID, clientRequestID, invocationI
 
 	key := idempotencyKey(followUpIdempotencyScope(repoID), clientRequestID)
 	entry, exists := s.idempotency[key]
-	if exists && s.Clock().Unix()-entry.CreatedAt <= IdempotencyTTL {
-		return entry, true, entry.Fingerprint != fingerprint
+	if exists && s.clock().Unix()-entry.createdAt <= idempotencyTTL {
+		return entry, true, entry.fingerprint != fingerprint
 	}
 
-	entry = IdempotencyEntry{
-		InvocationID: invocationID,
-		Fingerprint:  fingerprint,
-		CreatedAt:    s.Clock().Unix(),
+	entry = idempotencyEntry{
+		invocationID: invocationID,
+		fingerprint:  fingerprint,
+		createdAt:    s.clock().Unix(),
 	}
 	s.idempotency[key] = entry
 	if len(s.idempotency) > 100 {
@@ -226,34 +224,32 @@ func headedIdempotencyKey(repoID, clientRequestID string) string {
 	return repoID + ":headed:" + clientRequestID
 }
 
-func (s *Server) checkHeadedIdempotency(repoID, clientRequestID, fingerprint string) (HeadedIdempotencyEntry, bool, bool) {
+func (s *Server) checkHeadedIdempotency(repoID, clientRequestID, fingerprint string) (headedIdempotencyEntry, bool, bool) {
 	if clientRequestID == "" {
-		return HeadedIdempotencyEntry{}, false, false
+		return headedIdempotencyEntry{}, false, false
 	}
 
 	s.headedIdempotencyMu.RLock()
 	defer s.headedIdempotencyMu.RUnlock()
 
 	entry, exists := s.headedIdempotency[headedIdempotencyKey(repoID, clientRequestID)]
-	if !exists || s.Clock().Unix()-entry.CreatedAt > IdempotencyTTL {
-		return HeadedIdempotencyEntry{}, false, false
+	if !exists || s.clock().Unix()-entry.createdAt > idempotencyTTL {
+		return headedIdempotencyEntry{}, false, false
 	}
-	return entry, true, entry.Fingerprint != fingerprint
+	return entry, true, entry.fingerprint != fingerprint
 }
 
-func (s *Server) recordHeadedIdempotency(repoID, clientRequestID, invocationID, fingerprint, tmuxSession, sandboxPath string) {
+func (s *Server) recordHeadedIdempotency(repoID, clientRequestID, invocationID, fingerprint string) {
 	if clientRequestID == "" {
 		return
 	}
 
 	s.headedIdempotencyMu.Lock()
 	defer s.headedIdempotencyMu.Unlock()
-	s.headedIdempotency[headedIdempotencyKey(repoID, clientRequestID)] = HeadedIdempotencyEntry{
-		InvocationID: invocationID,
-		Fingerprint:  fingerprint,
-		TmuxSession:  tmuxSession,
-		SandboxPath:  sandboxPath,
-		CreatedAt:    s.Clock().Unix(),
+	s.headedIdempotency[headedIdempotencyKey(repoID, clientRequestID)] = headedIdempotencyEntry{
+		invocationID: invocationID,
+		fingerprint:  fingerprint,
+		createdAt:    s.clock().Unix(),
 	}
 	if len(s.headedIdempotency) > 100 {
 		s.cleanupExpiredHeadedIdempotency()
@@ -261,18 +257,18 @@ func (s *Server) recordHeadedIdempotency(repoID, clientRequestID, invocationID, 
 }
 
 func (s *Server) cleanupExpiredHeadedIdempotency() {
-	now := s.Clock().Unix()
+	now := s.clock().Unix()
 	for key, entry := range s.headedIdempotency {
-		if now-entry.CreatedAt > IdempotencyTTL {
+		if now-entry.createdAt > idempotencyTTL {
 			delete(s.headedIdempotency, key)
 		}
 	}
 }
 
-func (s *Server) runCheckpointLoop(proc *SupervisedProcess) {
+func (s *Server) runCheckpointLoop(proc *supervisedProcess) {
 	defer s.supervisionWg.Done()
 
-	if proc.CheckpointEngine == nil {
+	if proc.checkpointEngine == nil {
 		return
 	}
 
@@ -284,8 +280,8 @@ func (s *Server) runCheckpointLoop(proc *SupervisedProcess) {
 		defer close(stopperDone)
 		<-proc.done
 		cancel()
-		proc.CheckpointEngine.Stop()
+		proc.checkpointEngine.Stop()
 	}()
-	_ = proc.CheckpointEngine.Run(ctx)
+	_ = proc.checkpointEngine.Run(ctx)
 	<-stopperDone
 }

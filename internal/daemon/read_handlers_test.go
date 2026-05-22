@@ -25,6 +25,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
+	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
 // ---------------------------------------------------------------------------
@@ -55,8 +56,8 @@ func (env *readTestEnv) apiHandler() http.Handler {
 //	  inv-2: finished, headed, worktree=wt-1, started 5min ago, landed
 //	  inv-3: failed, headless, worktree=wt-2, started 1min ago
 //
-// Clock: fixed at 2026-02-05T12:00:00Z
-func setupReadTestEnv(t *testing.T) *readTestEnv {
+// clock: fixed at 2026-02-05T12:00:00Z
+func setupReadTestEnv(t *testing.T, tmuxClients ...tmuxClient) *readTestEnv {
 	t.Helper()
 
 	dataDir := t.TempDir()
@@ -69,8 +70,16 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 	clock := func() time.Time { return now }
 
 	st := store.NewStore(fs.NewRealFS(), dataDir, clock)
-	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
-	srv.Clock = clock
+	var tmuxClient tmuxClient
+	if len(tmuxClients) > 0 {
+		tmuxClient = tmuxClients[0]
+	}
+	runner := exec.NewRealRunner()
+	if tmuxClient != nil {
+		runner = testutil.NewFakeTmuxCommandRunner(runner, tmuxClient)
+	}
+	srv := NewServer(st, runner, fs.NewRealFS(), configDir)
+	srv.clock = clock
 	repoPath := filepath.Join(dataDir, "fixtures", "repo")
 	worktreeAlphaPath := filepath.Join(dataDir, "fixtures", "worktrees", "alpha")
 	worktreeBetaPath := filepath.Join(dataDir, "fixtures", "worktrees", "beta")
@@ -169,6 +178,7 @@ func setupReadTestEnv(t *testing.T) *readTestEnv {
 		BaseCommit:            "def456",
 		Runner:                "claude-code",
 		Mode:                  store.RunnerModeHeaded,
+		TmuxSession:           tmux.SessionName("inv-2"),
 		StartedAt:             now.Add(-5 * time.Minute).Format(time.RFC3339),
 		FinishedAt:            now.Add(-2 * time.Minute).Format(time.RFC3339),
 		Status:                store.InvocationStatusFinished,
@@ -236,7 +246,7 @@ func writeReadTestWorktreeMerge(t *testing.T, env *readTestEnv, worktreeID strin
 		"squash",
 		true,
 		"",
-		env.Server.Clock(),
+		env.Server.clock(),
 	)
 	mergeMeta.Branch = worktreeMeta.Branch
 	mergeMeta.PRNumber = 77
@@ -252,8 +262,20 @@ func writeReadTestWorktreeMerge(t *testing.T, env *readTestEnv, worktreeID strin
 	return mergeMeta
 }
 
+func writeCorruptReadTestWorktreeMerge(t *testing.T, env *readTestEnv, worktreeID string) {
+	t.Helper()
+
+	mergePath := env.Store.IntegrationWorktreeMergePath(env.RepoID, worktreeID)
+	require.NoError(t, os.WriteFile(mergePath, []byte("{invalid"), 0o600))
+}
+
 // doWorktreeRequest makes a request to the worktrees handler.
 func (env *readTestEnv) doWorktreeRequest(t *testing.T, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	return env.doAPIRequest(t, method, path)
+}
+
+func (env *readTestEnv) doAPIRequest(t *testing.T, method, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, nil)
 	w := httptest.NewRecorder()
@@ -318,15 +340,27 @@ func (env *readTestEnv) doInvocationRequestWithBody(t *testing.T, method, path s
 }
 
 // decodeAPIResponse decodes the API response envelope from a recorder.
-func decodeAPIResponse(t *testing.T, w *httptest.ResponseRecorder) APIResponse {
+func decodeAPIResponse(t *testing.T, w *httptest.ResponseRecorder) apiResponse {
 	t.Helper()
-	var resp APIResponse
+	var resp apiResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode API response: %s", w.Body.String())
 	return resp
 }
 
-// decodeData extracts and decodes the Data field from an APIResponse into target.
-func decodeData(t *testing.T, resp APIResponse, target interface{}) {
+func assertAPIResponseMethodNotAllowed(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, APIVersion, resp.APIVersion)
+	assert.NotEmpty(t, resp.BuildVersion)
+	assert.NotEmpty(t, resp.RequestID)
+	assert.Equal(t, resp.RequestID, w.Header().Get("X-Request-ID"))
+	assert.Equal(t, string(errors.EMethodNotAllowed), resp.ErrorCode)
+	assert.Equal(t, "method not allowed", resp.Message)
+}
+
+// decodeData extracts and decodes the Data field from an apiResponse into target.
+func decodeData(t *testing.T, resp apiResponse, target interface{}) {
 	t.Helper()
 	dataBytes, err := json.Marshal(resp.Data)
 	require.NoError(t, err)
@@ -334,7 +368,7 @@ func decodeData(t *testing.T, resp APIResponse, target interface{}) {
 }
 
 // ---------------------------------------------------------------------------
-// TIER 1: Core read handler tests (Tests 5-19)
+// Core read handler tests.
 // ---------------------------------------------------------------------------
 
 func TestHandleListWorktrees_HappyPath(t *testing.T) {
@@ -413,6 +447,21 @@ func TestHandleListWorktrees_UnknownRepoReturnsNotFound(t *testing.T) {
 	assert.Empty(t, resp.Details)
 }
 
+func TestHandleListWorktrees_CorruptMergeStateReturnsStoreCorrupt(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+	writeCorruptReadTestWorktreeMerge(t, env, "wt-1")
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees?repo_id="+env.RepoID)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EStoreCorrupt), resp.ErrorCode)
+	assert.Contains(t, resp.Message, "merge.json")
+}
+
 func TestHandleGetWorktree_HappyPath(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
@@ -451,6 +500,21 @@ func TestHandleGetWorktree_HappyPath(t *testing.T) {
 	assert.Equal(t, filepath.Join(env.Store.IntegrationWorktreeLogsDir(env.RepoID, "wt-1"), "archive.log"), dto.Merge.ArchiveLogPath)
 	assert.Equal(t, "2026-02-05T12:00:00Z", dto.Merge.StartedAt)
 	assert.Equal(t, "2026-02-05T12:00:00Z", dto.Merge.UpdatedAt)
+}
+
+func TestHandleGetWorktree_CorruptMergeStateReturnsStoreCorrupt(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+	writeCorruptReadTestWorktreeMerge(t, env, "wt-1")
+
+	w := env.doWorktreeRequest(t, http.MethodGet, "/worktrees/wt-1?repo_id="+env.RepoID)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, string(errors.EStoreCorrupt), resp.ErrorCode)
+	assert.Contains(t, resp.Message, "merge.json")
 }
 
 func TestHandleGetWorktree_ByName(t *testing.T) {
@@ -911,7 +975,6 @@ func TestHandleGetInvocation_UsesInvocationOwnedRunnerSummaryAfterSandboxCleanup
 		Summary:       "invocation-owned summary survives cleanup",
 	}
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", status)
-	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", status)
 
 	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
@@ -943,15 +1006,15 @@ func TestHandleGetInvocationAndCheck_StoppingStatusIsExplicit(t *testing.T) {
 
 	var shown InvocationDTO
 	decodeData(t, showResp, &shown)
-	assert.Equal(t, string(InvocationStateStopping), shown.State)
-	assert.Contains(t, shown.AttentionFlags, AttentionFlagNeedsAttention)
+	assert.Equal(t, string(invocationStateStopping), shown.State)
+	assert.Contains(t, shown.AttentionFlags, attentionFlagNeedsAttention)
 
 	checkResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID))
 	require.True(t, checkResp.OK)
 
 	var check InvocationCheckData
 	decodeData(t, checkResp, &check)
-	assert.Equal(t, string(InvocationStateStopping), check.State)
+	assert.Equal(t, string(invocationStateStopping), check.State)
 	assert.Contains(t, check.BlockingReasons, InvocationCheckReason{
 		Code:    checkReasonInvocationActive,
 		Message: "invocation is still active",
@@ -1019,8 +1082,6 @@ func TestHandleGetInvocation_NotFound(t *testing.T) {
 func TestHandleGetInvocationCheckpoints_HappyPath(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
-
-	require.NoError(t, os.MkdirAll(env.Store.InvocationDir(env.RepoID, "inv-1"), 0o700))
 
 	cpFile := &checkpoint.CheckpointsFile{
 		SchemaVersion: checkpoint.SchemaVersion,
@@ -1121,19 +1182,34 @@ func TestHandleGetInvocationCheckpoints_Empty(t *testing.T) {
 	assert.Len(t, data.Checkpoints, 0)
 }
 
-func TestHandleGetInvocationCheckpoints_MalformedFileReturnsInternalError(t *testing.T) {
+func TestHandleGetInvocationCheckpoints_CorruptFileReturnsStoreCorrupt(t *testing.T) {
 	t.Parallel()
-	env := setupReadTestEnv(t)
 
-	require.NoError(t, os.MkdirAll(env.Store.InvocationDir(env.RepoID, "inv-1"), 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(env.Store.InvocationDir(env.RepoID, "inv-1"), "checkpoints.json"), []byte("{malformed"), 0o644))
+	tests := []struct {
+		name    string
+		payload []byte
+	}{
+		{name: "malformed json", payload: []byte("{malformed")},
+		{name: "missing schema", payload: []byte(`{"checkpoints":[]}`)},
+		{name: "unknown schema", payload: []byte(`{"schema_version":"2.0","checkpoints":[]}`)},
+	}
 
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints?repo_id="+env.RepoID)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := setupReadTestEnv(t)
 
-	resp := decodeAPIResponse(t, w)
-	assert.False(t, resp.OK)
-	assert.Equal(t, "E_INTERNAL", resp.ErrorCode)
+			require.NoError(t, os.WriteFile(env.Store.InvocationCheckpointsPath(env.RepoID, "inv-1"), tt.payload, 0o644))
+
+			w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints?repo_id="+env.RepoID)
+			assert.Equal(t, http.StatusInternalServerError, w.Code)
+
+			resp := decodeAPIResponse(t, w)
+			assert.False(t, resp.OK)
+			assert.Equal(t, string(errors.EStoreCorrupt), resp.ErrorCode)
+			assert.Contains(t, resp.Message, "checkpoints.json")
+		})
+	}
 }
 
 func TestResponseEnvelope_RequestID(t *testing.T) {
@@ -1229,91 +1305,7 @@ func TestResponseEnvelope_ErrorFormat(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TIER 2: Filter helpers (Tests 20-22)
-// ---------------------------------------------------------------------------
-
-func TestMatchesWorktreeState(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		state    store.WorktreeState
-		filter   string
-		expected bool
-	}{
-		{store.WorktreeStatePresent, "present", true},
-		{store.WorktreeStatePresent, "archived", false},
-		{store.WorktreeStatePresent, "all", true},
-		{store.WorktreeStateArchived, "present", false},
-		{store.WorktreeStateArchived, "archived", true},
-		{store.WorktreeStateArchived, "all", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(string(tt.state)+"_"+tt.filter, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.expected, matchesWorktreeState(tt.state, tt.filter))
-		})
-	}
-}
-
-func TestMatchesInvocationState(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		status   store.InvocationStatus
-		landing  store.LandingStatus
-		filter   string
-		expected bool
-	}{
-		{"starting_unresolved", store.InvocationStatusStarting, "", "unresolved", true},
-		{"running_unresolved", store.InvocationStatusRunning, "", "unresolved", true},
-		{"stopping_unresolved", store.InvocationStatusStopping, "", "unresolved", true},
-		{"finished_no_landing_unresolved", store.InvocationStatusFinished, "", "unresolved", true},
-		{"finished_landed_unresolved", store.InvocationStatusFinished, store.LandingStatusLanded, "unresolved", false},
-		{"finished_discarded_unresolved", store.InvocationStatusFinished, store.LandingStatusDiscarded, "unresolved", false},
-		{"failed_no_landing_unresolved", store.InvocationStatusFailed, "", "unresolved", true},
-		{"finished_finished", store.InvocationStatusFinished, "", "finished", true},
-		{"failed_finished", store.InvocationStatusFailed, "", "finished", true},
-		{"running_finished", store.InvocationStatusRunning, "", "finished", false},
-		{"stopping_finished", store.InvocationStatusStopping, "", "finished", false},
-		{"running_all", store.InvocationStatusRunning, "", "all", true},
-		{"stopping_all", store.InvocationStatusStopping, "", "all", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.expected, matchesInvocationState(tt.status, tt.landing, tt.filter))
-		})
-	}
-}
-
-func TestMatchesInvocationMode(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		mode     store.RunnerMode
-		filter   string
-		expected bool
-	}{
-		{store.RunnerModeHeaded, "headed", true},
-		{store.RunnerModeHeaded, "headless", false},
-		{store.RunnerModeHeaded, "all", true},
-		{store.RunnerModeHeadless, "headless", true},
-		{store.RunnerModeHeadless, "headed", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(string(tt.mode)+"_"+tt.filter, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.expected, matchesInvocationMode(tt.mode, tt.filter))
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// TIER 2: Pagination tests (Tests 23-25)
+// Pagination helpers.
 // ---------------------------------------------------------------------------
 
 func TestPaginateWorktrees(t *testing.T) {
@@ -1489,7 +1481,7 @@ func TestHandleGetInvocationLogs_HappyPath(t *testing.T) {
 	var data InvocationLogsOffsetData
 	decodeData(t, resp, &data)
 
-	assert.Equal(t, "raw", data.Kind)
+	assert.Equal(t, InvocationLogKindRaw, data.Kind)
 	assert.Equal(t, int64(len(logContent)), data.NextOffset)
 	decoded, err := base64.StdEncoding.DecodeString(data.DataB64)
 	require.NoError(t, err)
@@ -1511,7 +1503,7 @@ func TestHandleGetInvocationLogs_MissingFile(t *testing.T) {
 
 	var data InvocationLogsOffsetData
 	decodeData(t, resp, &data)
-	assert.Equal(t, "raw", data.Kind)
+	assert.Equal(t, InvocationLogKindRaw, data.Kind)
 	assert.Empty(t, data.DataB64)
 	assert.Zero(t, data.NextOffset)
 	assert.Zero(t, data.TotalBytes)
@@ -1524,11 +1516,11 @@ func TestHandleGetInvocationLogs_KindParam(t *testing.T) {
 		kind       string
 		fileSuffix string
 	}{
-		{"raw", "raw.jsonl"},
-		{"stderr", "stderr.log"},
-		{"stream", "stream.jsonl"},
-		{"hooks", "hooks.jsonl"},
-		{"terminal", "terminal.log"},
+		{InvocationLogKindRaw, "raw.jsonl"},
+		{InvocationLogKindStderr, "stderr.log"},
+		{InvocationLogKindStream, "stream.jsonl"},
+		{InvocationLogKindHooks, "hooks.jsonl"},
+		{InvocationLogKindTerminal, "terminal.log"},
 	}
 
 	for _, tt := range tests {
@@ -1559,7 +1551,7 @@ func TestHandleGetInvocationLogs_KindParam(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TIER 2: extractDiffstat test (Test 30)
+// Diffstat parsing.
 // ---------------------------------------------------------------------------
 
 func TestExtractDiffstat(t *testing.T) {
@@ -1596,193 +1588,7 @@ func TestExtractDiffstat(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TIER 2: Parameter parsing tests (Tests 32-35)
-// ---------------------------------------------------------------------------
-
-func TestParseListWorktreesParams(t *testing.T) {
-	t.Parallel()
-
-	t.Run("defaults", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/worktrees", nil)
-		params, invalid := parseListWorktreesParams(req)
-		require.Nil(t, invalid)
-		assert.Equal(t, "present", params.State)
-		assert.Equal(t, 100, params.Limit)
-		assert.Empty(t, params.RepoID)
-		assert.Empty(t, params.Cursor)
-	})
-
-	t.Run("overrides", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/worktrees?repo_id=r1&state=all&limit=50&cursor=abc", nil)
-		params, invalid := parseListWorktreesParams(req)
-		require.Nil(t, invalid)
-		assert.Equal(t, "r1", params.RepoID)
-		assert.Equal(t, "all", params.State)
-		assert.Equal(t, 50, params.Limit)
-		assert.Equal(t, "abc", params.Cursor)
-	})
-
-	t.Run("invalid_state", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/worktrees?state=bogus", nil)
-		_, invalid := parseListWorktreesParams(req)
-		require.NotNil(t, invalid)
-		assert.Equal(t, "state", invalid.Param)
-		assert.Equal(t, "bogus", invalid.Value)
-		assert.Equal(t, validWorktreeStates, invalid.AllowedValues)
-	})
-
-	t.Run("invalid_limit", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/worktrees?limit=0", nil)
-		_, invalid := parseListWorktreesParams(req)
-		require.NotNil(t, invalid)
-		assert.Equal(t, "limit", invalid.Param)
-		assert.Equal(t, "0", invalid.Value)
-		assert.Nil(t, invalid.AllowedValues)
-	})
-}
-
-func TestParseListInvocationsParams(t *testing.T) {
-	t.Parallel()
-
-	t.Run("defaults", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/invocations", nil)
-		params, invalid := parseListInvocationsParams(req)
-		require.Nil(t, invalid)
-		assert.Equal(t, "all", params.State)
-		assert.Equal(t, "all", params.Mode)
-		assert.Equal(t, 100, params.Limit)
-	})
-
-	t.Run("overrides", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/invocations?state=unresolved&mode=headless&limit=25&worktree_ref=alpha", nil)
-		params, invalid := parseListInvocationsParams(req)
-		require.Nil(t, invalid)
-		assert.Equal(t, "unresolved", params.State)
-		assert.Equal(t, "headless", params.Mode)
-		assert.Equal(t, 25, params.Limit)
-		assert.Equal(t, "alpha", params.WorktreeRef)
-	})
-
-	t.Run("invalid_mode", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/invocations?mode=bogus", nil)
-		_, invalid := parseListInvocationsParams(req)
-		require.NotNil(t, invalid)
-		assert.Equal(t, "mode", invalid.Param)
-		assert.Equal(t, "bogus", invalid.Value)
-		assert.Equal(t, validInvocationModes, invalid.AllowedValues)
-	})
-
-	t.Run("invalid_limit", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/invocations?limit=0", nil)
-		_, invalid := parseListInvocationsParams(req)
-		require.NotNil(t, invalid)
-		assert.Equal(t, "limit", invalid.Param)
-		assert.Equal(t, "0", invalid.Value)
-		assert.Nil(t, invalid.AllowedValues)
-	})
-}
-
-func TestParseGetDiffParams(t *testing.T) {
-	t.Parallel()
-
-	t.Run("defaults", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/diff", nil)
-		params, invalid := parseGetDiffParams(req)
-		require.Nil(t, invalid)
-		assert.True(t, params.IncludePatch)
-		assert.Equal(t, 2097152, params.MaxPatchBytes)
-		assert.True(t, params.IncludeUncommitted)
-	})
-
-	t.Run("overrides", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/diff?include_patch=false&max_patch_bytes=1000&include_uncommitted=0", nil)
-		params, invalid := parseGetDiffParams(req)
-		require.Nil(t, invalid)
-		assert.False(t, params.IncludePatch)
-		assert.Equal(t, 1000, params.MaxPatchBytes)
-		assert.False(t, params.IncludeUncommitted)
-	})
-
-	t.Run("invalid_max_patch_bytes", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/diff?max_patch_bytes=0", nil)
-		_, invalid := parseGetDiffParams(req)
-		require.NotNil(t, invalid)
-		assert.Equal(t, "max_patch_bytes", invalid.Param)
-		assert.Equal(t, "0", invalid.Value)
-	})
-}
-
-func TestParseGetLogsParams(t *testing.T) {
-	t.Parallel()
-
-	t.Run("defaults", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs", nil)
-		params, invalid := parseGetLogsParams(req)
-		require.Nil(t, invalid)
-		assert.Equal(t, "raw", params.Kind)
-		assert.Zero(t, params.Offset)
-		assert.Equal(t, 65536, params.Limit)
-	})
-
-	t.Run("overrides", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?kind=stderr&offset=128&limit=1024", nil)
-		params, invalid := parseGetLogsParams(req)
-		require.Nil(t, invalid)
-		assert.Equal(t, "stderr", params.Kind)
-		assert.Equal(t, int64(128), params.Offset)
-		assert.Equal(t, 1024, params.Limit)
-	})
-
-	t.Run("terminal_kind", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?kind=terminal", nil)
-		params, invalid := parseGetLogsParams(req)
-		require.Nil(t, invalid)
-		assert.Equal(t, "terminal", params.Kind)
-	})
-
-	t.Run("hooks_kind", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?kind=hooks", nil)
-		params, invalid := parseGetLogsParams(req)
-		require.Nil(t, invalid)
-		assert.Equal(t, "hooks", params.Kind)
-	})
-
-	t.Run("invalid_offset", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?offset=-1", nil)
-		_, invalid := parseGetLogsParams(req)
-		require.NotNil(t, invalid)
-		assert.Equal(t, "offset", invalid.Param)
-		assert.Equal(t, "-1", invalid.Value)
-	})
-
-	t.Run("invalid_limit", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/invocations/inv-1/logs?limit=0", nil)
-		_, invalid := parseGetLogsParams(req)
-		require.NotNil(t, invalid)
-		assert.Equal(t, "limit", invalid.Param)
-		assert.Equal(t, "0", invalid.Value)
-	})
-}
-
-// ---------------------------------------------------------------------------
-// TIER 2: Diff integration test (Test 31)
+// Diff integration.
 // ---------------------------------------------------------------------------
 
 func TestHandleGetInvocationDiff(t *testing.T) {
@@ -1831,7 +1637,7 @@ func TestHandleGetInvocationDiff(t *testing.T) {
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
 	srv := NewServer(st, cr, fs.NewRealFS(), configDir)
 	now := time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC)
-	srv.Clock = func() time.Time { return now }
+	srv.clock = func() time.Time { return now }
 
 	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
 		SchemaVersion: store.SchemaVersion,
@@ -1888,7 +1694,7 @@ func TestHandleGetInvocationDiff(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TIER 3: Worktree ref filter (Test 37)
+// Worktree ref filtering.
 // ---------------------------------------------------------------------------
 
 func TestHandleListInvocations_WorktreeRefFilter(t *testing.T) {
@@ -1983,77 +1789,6 @@ func TestHandleListInvocations_WorktreeRefFilter_NotFound(t *testing.T) {
 	assert.Len(t, data.Invocations, 0, "nonexistent worktree_ref should return empty list")
 }
 
-func TestHandleListInvocations_WorktreeIDQueryParamIgnored(t *testing.T) {
-	t.Parallel()
-	env := setupReadTestEnv(t)
-
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/?repo_id="+env.RepoID+"&worktree_id=wt-1")
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	resp := decodeAPIResponse(t, w)
-	var data ListInvocationsData
-	decodeData(t, resp, &data)
-
-	assert.Len(t, data.Invocations, 3)
-	assert.ElementsMatch(t, []string{"inv-1", "inv-2", "inv-3"}, []string{
-		data.Invocations[0].InvocationID,
-		data.Invocations[1].InvocationID,
-		data.Invocations[2].InvocationID,
-	})
-}
-
-// ---------------------------------------------------------------------------
-// TIER 3: Handler pagination (Tests 38-40)
-// ---------------------------------------------------------------------------
-
-func TestHandleGetInvocationCheckpoints_Pagination(t *testing.T) {
-	t.Parallel()
-	env := setupReadTestEnv(t)
-
-	// Seed 5 checkpoints
-	require.NoError(t, os.MkdirAll(env.Store.InvocationDir(env.RepoID, "inv-1"), 0o700))
-
-	cpFile := &checkpoint.CheckpointsFile{
-		SchemaVersion: checkpoint.SchemaVersion,
-		Checkpoints: []checkpoint.Checkpoint{
-			{ID: 1, CreatedAt: "2026-02-05T11:51:00Z", SnapshotCommit: "aaa", IncludesUntracked: true},
-			{ID: 2, CreatedAt: "2026-02-05T11:52:00Z", SnapshotCommit: "bbb", IncludesUntracked: true},
-			{ID: 3, CreatedAt: "2026-02-05T11:53:00Z", SnapshotCommit: "ccc", IncludesUntracked: true},
-			{ID: 4, CreatedAt: "2026-02-05T11:54:00Z", SnapshotCommit: "ddd", IncludesUntracked: true},
-			{ID: 5, CreatedAt: "2026-02-05T11:55:00Z", SnapshotCommit: "eee", IncludesUntracked: true},
-		},
-	}
-	cpData, err := json.Marshal(cpFile)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(env.Store.InvocationCheckpointsPath(env.RepoID, "inv-1"), cpData, 0o644))
-
-	// First page: limit=2
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints?repo_id="+env.RepoID+"&limit=2")
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	resp := decodeAPIResponse(t, w)
-	var data1 ListCheckpointsData
-	decodeData(t, resp, &data1)
-
-	assert.Len(t, data1.Checkpoints, 2)
-	assert.Equal(t, 5, data1.Checkpoints[0].ID)
-	assert.Equal(t, 4, data1.Checkpoints[1].ID)
-	assert.NotEmpty(t, data1.NextCursor)
-
-	// Second page: exclusive cursor → [3, 2]
-	w2 := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints?repo_id="+env.RepoID+"&limit=2&cursor="+data1.NextCursor)
-	assert.Equal(t, http.StatusOK, w2.Code)
-
-	resp2 := decodeAPIResponse(t, w2)
-	var data2 ListCheckpointsData
-	decodeData(t, resp2, &data2)
-
-	assert.Len(t, data2.Checkpoints, 2)
-	assert.Equal(t, 3, data2.Checkpoints[0].ID)
-	assert.Equal(t, 2, data2.Checkpoints[1].ID)
-}
-
 func TestHandleListWorktrees_Pagination(t *testing.T) {
 	t.Parallel()
 
@@ -2063,7 +1798,7 @@ func TestHandleListWorktrees_Pagination(t *testing.T) {
 
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
 	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
-	srv.Clock = func() time.Time { return time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC) }
+	srv.clock = func() time.Time { return time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC) }
 
 	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
 		SchemaVersion: store.SchemaVersion,
@@ -2127,7 +1862,7 @@ func TestHandleListInvocations_Pagination(t *testing.T) {
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
 	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
 	now := time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC)
-	srv.Clock = func() time.Time { return now }
+	srv.clock = func() time.Time { return now }
 
 	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
 		SchemaVersion: store.SchemaVersion,
@@ -2179,7 +1914,7 @@ func TestHandleListInvocations_Pagination(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TIER 3: Routing tests (Tests 41-42)
+// Routing tests.
 // ---------------------------------------------------------------------------
 
 func TestInvocationsRouting_MethodNotAllowed(t *testing.T) {
@@ -2193,8 +1928,12 @@ func TestInvocationsRouting_MethodNotAllowed(t *testing.T) {
 	}{
 		{"POST_to_list_invocations", http.MethodPost, "/invocations/"},
 		{"POST_to_get_invocation", http.MethodPost, "/invocations/inv-1"},
+		{"POST_to_checkpoints", http.MethodPost, "/invocations/inv-1/checkpoints"},
 		{"POST_to_diff", http.MethodPost, "/invocations/inv-1/diff"},
 		{"POST_to_logs", http.MethodPost, "/invocations/inv-1/logs"},
+		{"POST_to_timeline", http.MethodPost, "/invocations/inv-1/timeline"},
+		{"POST_to_check", http.MethodPost, "/invocations/inv-1/check"},
+		{"POST_to_session", http.MethodPost, "/invocations/inv-1/session"},
 	}
 
 	for _, tt := range tests {
@@ -2202,6 +1941,7 @@ func TestInvocationsRouting_MethodNotAllowed(t *testing.T) {
 			t.Parallel()
 			w := env.doInvocationRequest(t, tt.method, tt.path+"?repo_id="+env.RepoID)
 			assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+			assertAPIResponseMethodNotAllowed(t, w)
 		})
 	}
 }
@@ -2227,100 +1967,6 @@ func TestCheckpointsRouting(t *testing.T) {
 // Offset-based logs tests.
 // ---------------------------------------------------------------------------
 
-func TestReadLogFileAtOffset(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name      string
-		offset    int64
-		limit     int
-		wantData  string // expected decoded content; empty string = check DataB64 == ""
-		wantNext  int64
-		wantTotal int64
-		wantErr   bool
-		noFile    bool // if true, skip creating the log file
-	}{
-		{
-			name:      "full_file",
-			offset:    0,
-			limit:     65536,
-			wantData:  "abcdef",
-			wantNext:  6,
-			wantTotal: 6,
-		},
-		{
-			name:      "partial_offset_0_limit_2",
-			offset:    0,
-			limit:     2,
-			wantData:  "ab",
-			wantNext:  2,
-			wantTotal: 6,
-		},
-		{
-			name:      "partial_offset_2_limit_2",
-			offset:    2,
-			limit:     2,
-			wantData:  "cd",
-			wantNext:  4,
-			wantTotal: 6,
-		},
-		{
-			name:      "beyond_eof",
-			offset:    100,
-			limit:     65536,
-			wantData:  "",
-			wantNext:  6,
-			wantTotal: 6,
-		},
-		{
-			name:      "limit_clamped_to_max",
-			offset:    0,
-			limit:     MaxLogChunk + 100,
-			wantData:  "abcdef",
-			wantNext:  6,
-			wantTotal: 6,
-		},
-		{
-			name:      "file_not_found",
-			offset:    0,
-			limit:     65536,
-			noFile:    true,
-			wantData:  "",
-			wantNext:  0,
-			wantTotal: 0,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			tmpDir := t.TempDir()
-			logPath := filepath.Join(tmpDir, "test.log")
-
-			if !tt.noFile {
-				require.NoError(t, os.WriteFile(logPath, []byte("abcdef"), 0o644))
-			}
-
-			st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
-			srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
-
-			data, err := srv.readLogFileAtOffset(logPath, tt.offset, tt.limit)
-			require.NoError(t, err)
-
-			assert.Equal(t, tt.wantNext, data.NextOffset)
-			assert.Equal(t, tt.wantTotal, data.TotalBytes)
-
-			if tt.wantData == "" {
-				assert.Equal(t, "", data.DataB64)
-			} else {
-				decoded, decErr := base64.StdEncoding.DecodeString(data.DataB64)
-				require.NoError(t, decErr)
-				assert.Equal(t, tt.wantData, string(decoded))
-			}
-		})
-	}
-}
-
 func TestHandleGetInvocationLogs_OffsetRead(t *testing.T) {
 	t.Parallel()
 
@@ -2345,7 +1991,10 @@ func TestHandleGetInvocationLogs_OffsetRead(t *testing.T) {
 		var data InvocationLogsOffsetData
 		decodeData(t, resp, &data)
 
-		assert.Equal(t, "raw", data.Kind)
+		decoded, decErr := base64.StdEncoding.DecodeString(data.DataB64)
+		require.NoError(t, decErr)
+		assert.Equal(t, "ab", string(decoded))
+		assert.Equal(t, InvocationLogKindRaw, data.Kind)
 		assert.Equal(t, int64(2), data.NextOffset)
 		assert.Equal(t, int64(6), data.TotalBytes)
 		assert.NotEmpty(t, data.DataB64)
@@ -2431,7 +2080,7 @@ func TestHandleGetInvocationLogs_OffsetRead(t *testing.T) {
 
 		var data InvocationLogsOffsetData
 		decodeData(t, resp, &data)
-		assert.Equal(t, "raw", data.Kind)
+		assert.Equal(t, InvocationLogKindRaw, data.Kind)
 		assert.Empty(t, data.DataB64)
 		assert.Zero(t, data.NextOffset)
 		assert.Zero(t, data.TotalBytes)
@@ -2451,7 +2100,7 @@ func TestHandleGetInvocationLogs_OffsetRead(t *testing.T) {
 
 		var data InvocationLogsOffsetData
 		decodeData(t, resp, &data)
-		assert.Equal(t, "stream", data.Kind)
+		assert.Equal(t, InvocationLogKindStream, data.Kind)
 		assert.Empty(t, data.DataB64)
 		assert.Zero(t, data.NextOffset)
 		assert.Zero(t, data.TotalBytes)
@@ -2471,7 +2120,7 @@ func TestHandleGetInvocationLogs_OffsetRead(t *testing.T) {
 
 		var data InvocationLogsOffsetData
 		decodeData(t, resp, &data)
-		assert.Equal(t, "terminal", data.Kind)
+		assert.Equal(t, InvocationLogKindTerminal, data.Kind)
 		assert.Empty(t, data.DataB64)
 		assert.Zero(t, data.NextOffset)
 		assert.Zero(t, data.TotalBytes)
@@ -2491,7 +2140,7 @@ func TestHandleGetInvocationLogs_OffsetRead(t *testing.T) {
 
 		var data InvocationLogsOffsetData
 		decodeData(t, resp, &data)
-		assert.Equal(t, "hooks", data.Kind)
+		assert.Equal(t, InvocationLogKindHooks, data.Kind)
 		assert.Empty(t, data.DataB64)
 		assert.Zero(t, data.NextOffset)
 		assert.Zero(t, data.TotalBytes)
@@ -2521,8 +2170,8 @@ func TestHandleGetInvocationLogs_OffsetRead(t *testing.T) {
 // Daemon read API contract hardening acceptance tests.
 // ---------------------------------------------------------------------------
 
-// decodeDetails extracts and decodes the Details field from an APIResponse.
-func decodeDetails(t *testing.T, resp APIResponse, target interface{}) {
+// decodeDetails extracts and decodes the Details field from an apiResponse.
+func decodeDetails(t *testing.T, resp apiResponse, target interface{}) {
 	t.Helper()
 	dataBytes, err := json.Marshal(resp.Details)
 	require.NoError(t, err)
@@ -2541,7 +2190,7 @@ func TestHandleListWorktrees_InvalidStateReturnsEInvalidArgument(t *testing.T) {
 	assert.False(t, resp.OK)
 	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
 
-	var details InvalidQueryArgumentDetails
+	var details invalidQueryArgumentDetails
 	decodeDetails(t, resp, &details)
 	assert.Equal(t, "state", details.Param)
 	assert.Equal(t, "bogus", details.Value)
@@ -2573,7 +2222,7 @@ func TestHandleListInvocations_InvalidStateReturnsEInvalidArgument(t *testing.T)
 	assert.False(t, resp.OK)
 	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
 
-	var details InvalidQueryArgumentDetails
+	var details invalidQueryArgumentDetails
 	decodeDetails(t, resp, &details)
 	assert.Equal(t, "state", details.Param)
 	assert.Equal(t, "bogus", details.Value)
@@ -2593,6 +2242,25 @@ func TestHandleListInvocations_InvalidLimitReturnsEInvalidArgument(t *testing.T)
 	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
 }
 
+func TestHandleGetInvocationCheckpoints_InvalidLimitReturnsEInvalidArgument(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/checkpoints?repo_id="+env.RepoID+"&limit=0")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	resp := decodeAPIResponse(t, w)
+	assert.False(t, resp.OK)
+	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
+
+	var details invalidQueryArgumentDetails
+	decodeDetails(t, resp, &details)
+	assert.Equal(t, "limit", details.Param)
+	assert.Equal(t, "0", details.Value)
+	assert.Nil(t, details.AllowedValues)
+}
+
 func TestHandleListInvocations_InvalidModeReturnsEInvalidArgument(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
@@ -2605,7 +2273,7 @@ func TestHandleListInvocations_InvalidModeReturnsEInvalidArgument(t *testing.T) 
 	assert.False(t, resp.OK)
 	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
 
-	var details InvalidQueryArgumentDetails
+	var details invalidQueryArgumentDetails
 	decodeDetails(t, resp, &details)
 	assert.Equal(t, "mode", details.Param)
 	assert.Equal(t, "bogus", details.Value)
@@ -2625,7 +2293,7 @@ func TestHandleListInvocations_InvalidFiltersFailClosed_DeterministicPrecedence(
 	assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
 
 	// Canonical validation order: state then mode; first invalid wins.
-	var details InvalidQueryArgumentDetails
+	var details invalidQueryArgumentDetails
 	decodeDetails(t, resp, &details)
 	assert.Equal(t, "state", details.Param)
 	assert.Equal(t, "badstate", details.Value)
@@ -2640,7 +2308,7 @@ func TestHandleListWorktrees_InvalidStateFailsBeforeRepoIndexLookup(t *testing.T
 	configDir := filepath.Join(dataDir, "config")
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
 	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
-	srv.Clock = func() time.Time { return time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC) }
+	srv.clock = func() time.Time { return time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC) }
 
 	env := &readTestEnv{Server: srv, Store: st, RepoID: ""}
 
@@ -2663,7 +2331,7 @@ func TestHandleListInvocations_InvalidStateFailsBeforeRepoIndexLookup(t *testing
 	configDir := filepath.Join(dataDir, "config")
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
 	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
-	srv.Clock = func() time.Time { return time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC) }
+	srv.clock = func() time.Time { return time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC) }
 
 	env := &readTestEnv{Server: srv, Store: st, RepoID: ""}
 
@@ -2715,7 +2383,7 @@ func TestHandleGetWorktree_AmbiguousReturnsCandidates(t *testing.T) {
 
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
 	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
-	srv.Clock = func() time.Time { return time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC) }
+	srv.clock = func() time.Time { return time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC) }
 
 	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
 		SchemaVersion: store.SchemaVersion,
@@ -2772,7 +2440,7 @@ func TestHandleGetInvocation_AmbiguousReturnsCandidates(t *testing.T) {
 	now := time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC)
 	st := store.NewStore(fs.NewRealFS(), dataDir, func() time.Time { return now })
 	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
-	srv.Clock = func() time.Time { return now }
+	srv.clock = func() time.Time { return now }
 
 	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
 		SchemaVersion: store.SchemaVersion,
@@ -2830,20 +2498,44 @@ func TestWorktreesRouting_MethodNotAllowed(t *testing.T) {
 	}{
 		{"POST_to_list_worktrees", "/worktrees?repo_id=" + env.RepoID},
 		{"POST_to_get_worktree", "/worktrees/wt-1?repo_id=" + env.RepoID},
+		{"PUT_to_pr_merge", "/worktrees/wt-1/pr/merge?repo_id=" + env.RepoID},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			w := env.doWorktreeRequest(t, http.MethodPost, tt.path)
+			method := http.MethodPost
+			if strings.HasPrefix(tt.name, "PUT_") {
+				method = http.MethodPut
+			}
+			w := env.doWorktreeRequest(t, method, tt.path)
 			assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+			assertAPIResponseMethodNotAllowed(t, w)
+		})
+	}
+}
 
-			// Router-level 405 uses writeError (not writeAPIError), so envelope
-			// includes ok+error_code but not request_id. Assert the error shape.
-			var body map[string]interface{}
-			require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
-			assert.Equal(t, false, body["ok"])
-			assert.Equal(t, "E_METHOD_NOT_ALLOWED", body["error_code"])
+func TestReadRouting_TaskAndRepoMethodNotAllowedUsesAPIResponseEnvelope(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{"tasks_list", http.MethodPost, "/tasks?repo_id=" + env.RepoID},
+		{"tasks_show", http.MethodPost, "/tasks/task-1?repo_id=" + env.RepoID},
+		{"repos_list", http.MethodPost, "/repos"},
+		{"repos_show", http.MethodPost, "/repos/" + env.RepoID},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			w := env.doAPIRequest(t, tt.method, tt.path)
+			assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+			assertAPIResponseMethodNotAllowed(t, w)
 		})
 	}
 }
@@ -3041,29 +2733,40 @@ func TestHandleGetInvocationTimeline_ReplaySupportsFiveMBLinesAcrossSources(t *t
 func TestHandleGetInvocationTimeline_RejectsCorruptTimelineData(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name       string
-		streamLine string
-		eventLine  string
+		name           string
+		streamLine     string
+		eventLine      string
+		expectedReason string
 	}{
 		{
-			name:       "unsupported_schema_version",
-			streamLine: `{"schema_version":"2.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"unsupported schema"}}` + "\n",
-			eventLine:  `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"ok"}}` + "\n",
+			name:           "unsupported_schema_version",
+			streamLine:     `{"schema_version":"2.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"unsupported schema"}}` + "\n",
+			eventLine:      `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"ok"}}` + "\n",
+			expectedReason: "unsupported_schema_version",
 		},
 		{
-			name:       "malformed_json",
-			streamLine: `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"ok"}}` + "\n",
-			eventLine:  `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"broken"` + "\n",
+			name:           "malformed_json",
+			streamLine:     `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"ok"}}` + "\n",
+			eventLine:      `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"broken"` + "\n",
+			expectedReason: "json_unmarshal_failed",
 		},
 		{
-			name:       "missing_kind",
-			streamLine: `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude-code","kind":"","data":{"role":"assistant","text":"missing-kind"}}` + "\n",
-			eventLine:  `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"","event":"","data":{"text":"missing-kind-and-event"}}` + "\n",
+			name:           "missing_kind",
+			streamLine:     `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude-code","kind":"","data":{"role":"assistant","text":"missing-kind"}}` + "\n",
+			eventLine:      `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"","data":{"text":"missing-kind"}}` + "\n",
+			expectedReason: "missing_event_kind",
 		},
 		{
-			name:       "oversized_line",
-			streamLine: strings.Repeat("x", 9*1024*1024) + "\n",
-			eventLine:  strings.Repeat("x", 9*1024*1024) + "\n",
+			name:           "zero_invocation_event_seq",
+			streamLine:     `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"ok"}}` + "\n",
+			eventLine:      `{"schema_version":"1.0","seq":0,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"zero-seq"}}` + "\n",
+			expectedReason: "invalid_event_seq",
+		},
+		{
+			name:           "oversized_line",
+			streamLine:     strings.Repeat("x", 9*1024*1024) + "\n",
+			eventLine:      strings.Repeat("x", 9*1024*1024) + "\n",
+			expectedReason: "line_too_large",
 		},
 	}
 
@@ -3086,7 +2789,8 @@ func TestHandleGetInvocationTimeline_RejectsCorruptTimelineData(t *testing.T) {
 
 			var data struct {
 				Entries []struct {
-					Kind string `json:"kind"`
+					Kind string         `json:"kind"`
+					Data map[string]any `json:"data"`
 				} `json:"entries"`
 			}
 			decodeData(t, resp, &data)
@@ -3096,6 +2800,7 @@ func TestHandleGetInvocationTimeline_RejectsCorruptTimelineData(t *testing.T) {
 			for _, entry := range data.Entries {
 				if entry.Kind == "parse_error" {
 					sawParseError = true
+					assert.Equal(t, tc.expectedReason, entry.Data["reason"])
 					break
 				}
 			}
@@ -3104,35 +2809,49 @@ func TestHandleGetInvocationTimeline_RejectsCorruptTimelineData(t *testing.T) {
 	}
 }
 
-func TestHandleGetInvocationTimeline_InvocationEventIDsStayUniqueAcrossLineAndSeqFallback(t *testing.T) {
+func TestHandleGetInvocationTimeline_ReturnsStoreCorruptForUnreadableTimelineFiles(t *testing.T) {
 	t.Parallel()
-	env := setupReadTestEnv(t)
-
-	eventLines := strings.Join([]string{
-		`{"schema_version":"1.0","seq":0,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"line-based-id"}}`,
-		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:21Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"seq-based-id"}}`,
-	}, "\n") + "\n"
-	require.NoError(t, os.WriteFile(env.Store.InvocationEventsPath(env.RepoID, "inv-1"), []byte(eventLines), 0o644))
-
-	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID+"&limit=100")
-	require.Equal(t, http.StatusOK, w.Code)
-	resp := decodeAPIResponse(t, w)
-	require.True(t, resp.OK)
-
-	var data struct {
-		Entries []struct {
-			EntryID string `json:"entry_id"`
-		} `json:"entries"`
+	cases := []struct {
+		name        string
+		setup       func(t *testing.T, env *readTestEnv)
+		wantMessage string
+	}{
+		{
+			name: "stream_log",
+			setup: func(t *testing.T, env *readTestEnv) {
+				t.Helper()
+				logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
+				require.NoError(t, os.MkdirAll(logsDir, 0o700))
+				require.NoError(t, os.Mkdir(env.Store.InvocationStreamLogPath(env.RepoID, "inv-1"), 0o700))
+			},
+			wantMessage: "stream timeline file",
+		},
+		{
+			name: "invocation_events",
+			setup: func(t *testing.T, env *readTestEnv) {
+				t.Helper()
+				require.NoError(t, os.Mkdir(env.Store.InvocationEventsPath(env.RepoID, "inv-1"), 0o700))
+			},
+			wantMessage: "invocation_event timeline file",
+		},
 	}
-	decodeData(t, resp, &data)
 
-	entryIDs := make([]string, 0, len(data.Entries))
-	for _, entry := range data.Entries {
-		entryIDs = append(entryIDs, entry.EntryID)
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := setupReadTestEnv(t)
+			tc.setup(t, env)
+
+			w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/timeline?repo_id="+env.RepoID)
+
+			assert.Equal(t, http.StatusInternalServerError, w.Code)
+			resp := decodeAPIResponse(t, w)
+			assert.False(t, resp.OK)
+			assert.Equal(t, string(errors.EStoreCorrupt), resp.ErrorCode)
+			assert.Contains(t, resp.Message, tc.wantMessage)
+		})
 	}
-
-	assert.Contains(t, entryIDs, "inv_event:line:1:agency.followup_prompt")
-	assert.Contains(t, entryIDs, "inv_event:1:agency.followup_prompt")
 }
 
 func TestHandleGetInvocationTimeline_PaginationStableContinuation(t *testing.T) {
@@ -3254,6 +2973,28 @@ func TestHandleGetInvocationTimeline_InvalidLimitReturnsEInvalidArgument(t *test
 			resp := decodeAPIResponse(t, w)
 			assert.False(t, resp.OK)
 			assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
+		})
+
+		t.Run("offset_limit_above_max_returns_error", func(t *testing.T) {
+			t.Parallel()
+			env := setupReadTestEnv(t)
+
+			logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
+			require.NoError(t, os.MkdirAll(logsDir, 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(logsDir, "raw.jsonl"), []byte("x"), 0o644))
+
+			w := env.doInvocationRequest(t, http.MethodGet,
+				fmt.Sprintf("/invocations/inv-1/logs?repo_id=%s&offset=0&limit=%d", env.RepoID, MaxLogChunk+1))
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+
+			resp := decodeAPIResponse(t, w)
+			assert.False(t, resp.OK)
+			assert.Equal(t, "E_INVALID_ARGUMENT", resp.ErrorCode)
+
+			var details invalidQueryArgumentDetails
+			decodeDetails(t, resp, &details)
+			assert.Equal(t, "limit", details.Param)
 		})
 	}
 }
@@ -3382,7 +3123,7 @@ func TestHandleControlPlaneFollowUp_WritesTimelineEntryWithoutNewInvocation(t *t
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
-	before, err := store.ScanInvocationsForRepo(env.Store.DataDir, env.RepoID)
+	before, err := env.Store.ScanInvocationsForRepo(env.RepoID)
 	require.NoError(t, err)
 	beforeCount := len(before)
 
@@ -3400,7 +3141,7 @@ func TestHandleControlPlaneFollowUp_WritesTimelineEntryWithoutNewInvocation(t *t
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&writeResp))
 	assert.Equal(t, true, writeResp["ok"])
 
-	after, err := store.ScanInvocationsForRepo(env.Store.DataDir, env.RepoID)
+	after, err := env.Store.ScanInvocationsForRepo(env.RepoID)
 	require.NoError(t, err)
 	assert.Equal(t, beforeCount, len(after), "follow-up prompt must not create a new invocation")
 

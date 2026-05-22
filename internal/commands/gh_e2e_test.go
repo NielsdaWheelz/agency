@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -142,7 +143,7 @@ func TestGHE2EWorktreePRSyncMerge(t *testing.T) {
 	require.NoError(t, err, "RegisterRepo")
 	repoID := registeredRepo.Data.RepoID
 	require.NotEmpty(t, repoID, "registered repo id")
-	createResp, err := client.WorktreeCreate(ctx, daemonclient.WorktreeCreateOpts{
+	createResp, err := client.WorktreeCreate(ctx, daemon.WorktreeCreateRequest{
 		RepoRoot:   repoRoot,
 		Name:       "e2e-" + runID,
 		BaseBranch: defaultBranch,
@@ -356,8 +357,8 @@ func resolveDefaultBranch(t *testing.T, ctx context.Context, cr exec.CommandRunn
 			fields := strings.Fields(line)
 			if len(fields) >= 2 && fields[0] == "ref:" && fields[len(fields)-1] == "HEAD" {
 				ref := fields[1]
-				if strings.HasPrefix(ref, "refs/heads/") {
-					return strings.TrimPrefix(ref, "refs/heads/")
+				if branch, ok := strings.CutPrefix(ref, "refs/heads/"); ok {
+					return branch
 				}
 			}
 		}
@@ -370,8 +371,8 @@ func resolveDefaultBranch(t *testing.T, ctx context.Context, cr exec.CommandRunn
 	if err == nil && result.ExitCode == 0 {
 		for _, line := range strings.Split(result.Stdout, "\n") {
 			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "HEAD branch:") {
-				branch := strings.TrimSpace(strings.TrimPrefix(line, "HEAD branch:"))
+			if value, ok := strings.CutPrefix(line, "HEAD branch:"); ok {
+				branch := strings.TrimSpace(value)
 				if branch != "" && branch != "(unknown)" {
 					return branch
 				}
@@ -384,43 +385,26 @@ func resolveDefaultBranch(t *testing.T, ctx context.Context, cr exec.CommandRunn
 		"ls-remote", "--heads", "origin",
 	}, exec.RunOpts{})
 	if err == nil && result.ExitCode == 0 {
-		branches := parseRemoteBranches(result.Stdout)
-		if branch := pickDefaultBranch(branches); branch != "" {
-			return branch
+		var branches []string
+		for _, line := range strings.Split(result.Stdout, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			ref := fields[1]
+			if branch, ok := strings.CutPrefix(ref, "refs/heads/"); ok {
+				branches = append(branches, branch)
+			}
+		}
+		for _, branch := range []string{"main", "master", "trunk"} {
+			if slices.Contains(branches, branch) {
+				return branch
+			}
+		}
+		if len(branches) > 0 {
+			return branches[0]
 		}
 	}
 
 	return "main"
-}
-
-func parseRemoteBranches(output string) []string {
-	var branches []string
-	for _, line := range strings.Split(output, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		ref := fields[1]
-		if strings.HasPrefix(ref, "refs/heads/") {
-			branches = append(branches, strings.TrimPrefix(ref, "refs/heads/"))
-		}
-	}
-	return branches
-}
-
-func pickDefaultBranch(branches []string) string {
-	preferred := []string{"main", "master", "trunk"}
-	branchSet := make(map[string]struct{}, len(branches))
-	for _, branch := range branches {
-		branchSet[branch] = struct{}{}
-	}
-	for _, branch := range preferred {
-		if _, ok := branchSet[branch]; ok {
-			return branch
-		}
-	}
-	if len(branches) > 0 {
-		return branches[0]
-	}
-	return ""
 }

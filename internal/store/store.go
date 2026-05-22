@@ -7,23 +7,32 @@ import (
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 )
 
 // Store handles persistence of repo index and repo records.
 type Store struct {
-	FS      fs.FS            // filesystem interface for stubbing
-	DataDir string           // resolved AGENCY_DATA_DIR
-	Now     func() time.Time // injectable clock for deterministic tests
+	fsys    fs.FS
+	now     func() time.Time
+	DataDir string // resolved AGENCY_DATA_DIR
 }
 
 // NewStore creates a new Store with the given dependencies.
 func NewStore(filesystem fs.FS, dataDir string, now func() time.Time) *Store {
-	return &Store{
-		FS:      filesystem,
-		DataDir: dataDir,
-		Now:     now,
+	if filesystem == nil {
+		filesystem = fs.NewRealFS()
 	}
+	if now == nil {
+		now = time.Now
+	}
+	return &Store{
+		fsys:    filesystem,
+		DataDir: dataDir,
+		now:     now,
+	}
+}
+
+func (s *Store) nowTime() time.Time {
+	return s.now()
 }
 
 // RepoIndexPath returns the path to repo_index.json.
@@ -47,40 +56,40 @@ func (s *Store) RepoEventsPath(repoID string) string {
 	return filepath.Join(s.RepoDir(repoID), "events.jsonl")
 }
 
-// TasksDir returns the tasks directory for a repo.
+// tasksDir returns the tasks directory for a repo.
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/tasks/
-func (s *Store) TasksDir(repoID string) string {
+func (s *Store) tasksDir(repoID string) string {
 	return filepath.Join(s.RepoDir(repoID), "tasks")
 }
 
-// TaskDir returns the directory for a specific task.
+// taskDir returns the directory for a specific task.
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/tasks/<task_id>/
-func (s *Store) TaskDir(repoID, taskID string) string {
-	return filepath.Join(s.TasksDir(repoID), taskID)
+func (s *Store) taskDir(repoID, taskID string) string {
+	return filepath.Join(s.tasksDir(repoID), taskID)
 }
 
-// TaskMetaPath returns the path to a task's meta.json.
+// taskMetaPath returns the path to a task's meta.json.
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/tasks/<task_id>/meta.json
-func (s *Store) TaskMetaPath(repoID, taskID string) string {
-	return filepath.Join(s.TaskDir(repoID, taskID), "meta.json")
+func (s *Store) taskMetaPath(repoID, taskID string) string {
+	return filepath.Join(s.taskDir(repoID, taskID), "meta.json")
 }
 
 // TaskEventsPath returns the path to a task's events.jsonl.
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/tasks/<task_id>/events.jsonl
 func (s *Store) TaskEventsPath(repoID, taskID string) string {
-	return filepath.Join(s.TaskDir(repoID, taskID), "events.jsonl")
+	return filepath.Join(s.taskDir(repoID, taskID), "events.jsonl")
 }
 
-// IntegrationWorktreesDir returns the integration worktrees directory for a repo.
+// integrationWorktreesDir returns the integration worktrees directory for a repo.
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/integration_worktrees/
-func (s *Store) IntegrationWorktreesDir(repoID string) string {
+func (s *Store) integrationWorktreesDir(repoID string) string {
 	return filepath.Join(s.RepoDir(repoID), "integration_worktrees")
 }
 
 // IntegrationWorktreeDir returns the directory for a specific integration worktree.
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/integration_worktrees/<worktree_id>/
 func (s *Store) IntegrationWorktreeDir(repoID, worktreeID string) string {
-	return filepath.Join(s.IntegrationWorktreesDir(repoID), worktreeID)
+	return filepath.Join(s.integrationWorktreesDir(repoID), worktreeID)
 }
 
 // IntegrationWorktreeMetaPath returns the path to an integration worktree's meta.json.
@@ -101,9 +110,9 @@ func (s *Store) IntegrationWorktreeMergePath(repoID, worktreeID string) string {
 	return filepath.Join(s.IntegrationWorktreeDir(repoID, worktreeID), "merge.json")
 }
 
-// IntegrationWorktreeVerifyRecordPath returns the path to an integration worktree's verify_record.json.
+// integrationWorktreeVerifyRecordPath returns the path to an integration worktree's verify_record.json.
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/integration_worktrees/<worktree_id>/verify_record.json
-func (s *Store) IntegrationWorktreeVerifyRecordPath(repoID, worktreeID string) string {
+func (s *Store) integrationWorktreeVerifyRecordPath(repoID, worktreeID string) string {
 	return filepath.Join(s.IntegrationWorktreeDir(repoID, worktreeID), "verify_record.json")
 }
 
@@ -147,12 +156,6 @@ func (s *Store) InvocationPromptPath(repoID, invocationID string) string {
 // Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/checkpoints.json
 func (s *Store) InvocationCheckpointsPath(repoID, invocationID string) string {
 	return filepath.Join(s.InvocationDir(repoID, invocationID), "checkpoints.json")
-}
-
-// InvocationRunnerStatusPath returns the invocation-owned runner status path.
-// Format: ${AGENCY_DATA_DIR}/repos/<repo_id>/invocations/<invocation_id>/.agency/state/runner_status.json
-func (s *Store) InvocationRunnerStatusPath(repoID, invocationID string) string {
-	return runnerstatus.StatusPath(s.InvocationDir(repoID, invocationID))
 }
 
 // InvocationLogsDir returns the logs directory for an invocation.

@@ -1,9 +1,8 @@
 package daemon
 
 import (
+	"fmt"
 	"net/http"
-	"os"
-	"strconv"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -19,22 +18,19 @@ func (s *Server) handleGetInvocationCheckpoints(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	limit := 100
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 500 {
-			limit = parsed
-		}
+	params, invalid := parseListCheckpointsParams(r)
+	if invalid != nil {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument),
+			fmt.Sprintf("invalid value for parameter '%s': %q", invalid.Param, invalid.Value), "",
+			*invalid)
+		return
 	}
-	cursor := r.URL.Query().Get("cursor")
 
-	checkpointsDir := s.Store.InvocationDir(record.RepoID, record.InvocationID)
-	cpFile, err := checkpoint.LoadCheckpointsFile(s.FS, checkpointsDir)
+	checkpointsPath := s.store.InvocationCheckpointsPath(record.RepoID, record.InvocationID)
+	cpFile, err := checkpoint.LoadCheckpointsFile(s.fsys, checkpointsPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			s.writeAPIResponse(w, requestID, ListCheckpointsData{Checkpoints: []CheckpointDTO{}, NextCursor: ""})
-			return
-		}
-		s.writeAPIError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", err.Error(), "", nil)
+		code := errors.CodeOr(err, errors.EStoreCorrupt)
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(code), err.Error(), "", nil)
 		return
 	}
 	if cpFile == nil {
@@ -47,6 +43,6 @@ func (s *Server) handleGetInvocationCheckpoints(w http.ResponseWriter, r *http.R
 		allCheckpoints = append(allCheckpoints, checkpointToDTO(cpFile.Checkpoints[i]))
 	}
 
-	checkpoints, nextCursor := paginateCheckpoints(allCheckpoints, cursor, limit)
+	checkpoints, nextCursor := paginateCheckpoints(allCheckpoints, params.Cursor, params.Limit)
 	s.writeAPIResponse(w, requestID, ListCheckpointsData{Checkpoints: checkpoints, NextCursor: nextCursor})
 }

@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -34,7 +33,6 @@ func TestRepoMutationDecodeFailuresReturnInvalidRequest(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -45,10 +43,14 @@ func TestRepoMutationDecodeFailuresReturnInvalidRequest(t *testing.T) {
 			env.apiHandler().ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusBadRequest, w.Code)
-			var resp RawAPIResponse
+			var resp rawAPIResponse
 			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-			assert.False(t, resp.OK)
-			assert.Equal(t, string(errors.EInvalidRequest), resp.ErrorCode)
+			if resp.OK {
+				t.Fatalf("response OK = true, want false")
+			}
+			if resp.ErrorCode != string(errors.EInvalidRequest) {
+				t.Fatalf("error code = %q, want %q", resp.ErrorCode, errors.EInvalidRequest)
+			}
 		})
 	}
 }

@@ -299,7 +299,7 @@ func TestAgentCheck_Waiting_HumanAndJSONAligned(t *testing.T) {
 		meta.SandboxPath = sandboxPath
 	}))
 
-	runnerStatusPath := st.InvocationRunnerStatusPath(repoID, invocationID)
+	runnerStatusPath := runnerstatus.StatusPath(st.InvocationDir(repoID, invocationID))
 	require.NoError(t, os.MkdirAll(filepath.Dir(runnerStatusPath), 0o700))
 	rs := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
@@ -308,7 +308,7 @@ func TestAgentCheck_Waiting_HumanAndJSONAligned(t *testing.T) {
 		Reason:        runnerstatus.ReasonAwaitingApproval,
 		Summary:       "waiting on API contract decision",
 		Questions:     []string{},
-		HowToTest:     "",
+		HowToTest:     "run go test ./...",
 	}
 	rsBytes, err := json.Marshal(rs)
 	require.NoError(t, err)
@@ -343,6 +343,9 @@ func TestAgentCheck_Waiting_HumanAndJSONAligned(t *testing.T) {
 	assert.Contains(t, humanOut.String(), "pr_sync_eligible:     no")
 	assert.Contains(t, humanOut.String(), "runner_state:         waiting")
 	assert.Contains(t, humanOut.String(), "runner_reason:        awaiting_approval")
+	assert.Contains(t, humanOut.String(), "runner_summary:       waiting on API contract decision")
+	assert.Contains(t, humanOut.String(), "runner_updated_at:    2026-02-05T12:00:00Z")
+	assert.Contains(t, humanOut.String(), "how_to_test:          run go test ./...")
 	assert.Contains(t, humanOut.String(), "[invocation_active]")
 	assert.Contains(t, humanOut.String(), "[invocation_waiting]")
 	assert.Contains(t, humanOut.String(), "history:")
@@ -356,6 +359,9 @@ func TestAgentCheck_Waiting_HumanAndJSONAligned(t *testing.T) {
 	assert.False(t, payload.PRSyncEligible)
 	assert.Equal(t, string(runnerstatus.StateWaiting), payload.RunnerState)
 	assert.Equal(t, runnerstatus.ReasonAwaitingApproval, payload.RunnerReason)
+	assert.Equal(t, "waiting on API contract decision", payload.RunnerSummary)
+	assert.Equal(t, "2026-02-05T12:00:00Z", payload.RunnerUpdatedAt)
+	assert.Equal(t, "run go test ./...", payload.HowToTest)
 	assert.Empty(t, payload.Navigation.AttachCommand)
 	assert.NotEmpty(t, payload.Navigation.HistoryCommand)
 	assert.NotEmpty(t, payload.Navigation.DiffCommand)
@@ -366,6 +372,60 @@ func TestAgentCheck_Waiting_HumanAndJSONAligned(t *testing.T) {
 	}
 	assert.Contains(t, codes, "invocation_active")
 	assert.Contains(t, codes, "invocation_waiting")
+}
+
+func TestAgentCheck_Succeeded_HumanAndJSONAligned(t *testing.T) {
+	t.Parallel()
+	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "checks-succeeded")
+	invocationID := "20260201103030-chkok"
+	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
+
+	st := store.NewStore(fsys, dataDir, time.Now)
+	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+		meta.Status = store.InvocationStatusFinished
+		meta.FinishedAt = "2026-02-05T12:05:00Z"
+	}))
+
+	runnerStatusPath := runnerstatus.StatusPath(st.InvocationDir(repoID, invocationID))
+	require.NoError(t, os.MkdirAll(filepath.Dir(runnerStatusPath), 0o700))
+	rs := runnerstatus.RunnerStatus{
+		SchemaVersion: runnerstatus.SchemaVersion,
+		State:         runnerstatus.StateSucceeded,
+		UpdatedAt:     "2026-02-05T12:05:00Z",
+		Summary:       "completed successfully",
+		HowToTest:     "go test ./...",
+	}
+	rsBytes, err := json.Marshal(rs)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(runnerStatusPath, rsBytes, 0o600))
+
+	cr2 := testutil.NewFakeCommandRunner()
+	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
+	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
+
+	var humanOut, jsonOut, errOut bytes.Buffer
+	err = AgentCheck(context.Background(), cr2, fsys, repoDir, AgentCheckOpts{
+		InvocationRef:   invocationID,
+		RepoRef:         repoID,
+		DataDirOverride: dataDir,
+	}, &humanOut, &errOut)
+	require.NoError(t, err)
+
+	err = AgentCheck(context.Background(), cr2, fsys, repoDir, AgentCheckOpts{
+		InvocationRef:   invocationID,
+		RepoRef:         repoID,
+		JSON:            true,
+		DataDirOverride: dataDir,
+	}, &jsonOut, &errOut)
+	require.NoError(t, err)
+
+	assert.Contains(t, humanOut.String(), "state:                succeeded")
+	assert.Contains(t, humanOut.String(), "runner_state:         succeeded")
+
+	var payload daemon.InvocationCheckData
+	require.NoError(t, json.Unmarshal(jsonOut.Bytes(), &payload))
+	assert.Equal(t, string(runnerstatus.StateSucceeded), payload.State)
+	assert.Equal(t, string(runnerstatus.StateSucceeded), payload.RunnerState)
 }
 
 func TestParseTurnRange_Validation(t *testing.T) {

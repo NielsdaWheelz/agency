@@ -10,17 +10,11 @@ import (
 const daemonWarningEventKind = "agency.daemon_warning"
 
 func (s *Server) recordInvocationWarning(repoID, invocationID, code, warning string, extra map[string]any) {
-	if s == nil || s.Store == nil {
+	if s == nil || s.store == nil {
 		return
 	}
 	if strings.TrimSpace(repoID) == "" || strings.TrimSpace(invocationID) == "" || strings.TrimSpace(warning) == "" {
 		return
-	}
-
-	writer := s.InvocationEvents
-	if writer == nil {
-		writer = eventlog.NewWriter("invocation_id", s.Clock)
-		s.InvocationEvents = writer
 	}
 
 	data := map[string]any{
@@ -33,8 +27,8 @@ func (s *Server) recordInvocationWarning(repoID, invocationID, code, warning str
 		data[key] = value
 	}
 
-	if _, err := writer.Append(
-		s.Store.InvocationEventsPath(repoID, invocationID),
+	if _, err := s.invocationEvents.Append(
+		s.store.InvocationEventsPath(repoID, invocationID),
 		invocationID,
 		daemonWarningEventKind,
 		data,

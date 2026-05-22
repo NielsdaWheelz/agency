@@ -1,8 +1,10 @@
 package config
 
 import (
+	"maps"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -10,9 +12,9 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/runners"
 )
 
-// ValidateAgencyConfig validates the repo configuration (agency.json).
+// validateAgencyConfig validates the repo configuration (agency.json).
 // Returns E_INVALID_AGENCY_JSON for schema/required-field errors.
-func ValidateAgencyConfig(cfg AgencyConfig) (AgencyConfig, error) {
+func validateAgencyConfig(cfg AgencyConfig) (AgencyConfig, error) {
 	// Validate version
 	if cfg.Version != AgencyConfigVersion {
 		return cfg, errors.New(errors.EInvalidAgencyJSON, "version must be 4")
@@ -27,6 +29,15 @@ func ValidateAgencyConfig(cfg AgencyConfig) (AgencyConfig, error) {
 	}
 	if cfg.Scripts.Archive.Path == "" {
 		return cfg, errors.New(errors.EInvalidAgencyJSON, "missing required field scripts.archive.path")
+	}
+	if err := validateScriptTimeout("scripts.setup", cfg.Scripts.Setup.Timeout); err != nil {
+		return cfg, err
+	}
+	if err := validateScriptTimeout("scripts.verify", cfg.Scripts.Verify.Timeout); err != nil {
+		return cfg, err
+	}
+	if err := validateScriptTimeout("scripts.archive", cfg.Scripts.Archive.Timeout); err != nil {
+		return cfg, err
 	}
 	for name, rd := range cfg.RunnerDefaults {
 		cleaned, err := validateRunnerDefaults(name, rd, errors.EInvalidAgencyJSON, false)
@@ -48,6 +59,16 @@ func ValidateAgencyConfig(cfg AgencyConfig) (AgencyConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+func validateScriptTimeout(fieldName string, timeout time.Duration) error {
+	if timeout < minTimeout {
+		return errors.New(errors.EInvalidAgencyJSON, fieldName+".timeout must be at least 1m")
+	}
+	if timeout > maxTimeout {
+		return errors.New(errors.EInvalidAgencyJSON, fieldName+".timeout must be at most 24h")
+	}
+	return nil
 }
 
 // IsValidExecutionProfileLabel validates user-defined profile labels.
@@ -83,11 +104,7 @@ func ExecutionProfileEnv(cfg UserConfig, profile string) (map[string]string, err
 			map[string]string{"execution_profile": profile},
 		)
 	}
-	env := make(map[string]string, len(selected.Env))
-	for k, v := range selected.Env {
-		env[k] = v
-	}
-	return env, nil
+	return maps.Clone(selected.Env), nil
 }
 
 func ResolveCheckoutRoot(repoRoot, repoID, checkoutRoot string) (string, error) {

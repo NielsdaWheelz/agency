@@ -16,9 +16,6 @@ type verifyJSON struct {
 
 	// Summary is an optional human-readable summary.
 	Summary string `json:"summary,omitempty"`
-
-	// Data is optional arbitrary JSON data.
-	Data json.RawMessage `json:"data,omitempty"`
 }
 
 type readVerifyJSONResult struct {

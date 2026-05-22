@@ -12,24 +12,24 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
-func (s *Server) flushLastOutputAt(proc *SupervisedProcess) {
+func (s *Server) flushLastOutputAt(proc *supervisedProcess) {
 	lastOutput := time.Unix(0, s.latestOutputAtUnixNano(proc))
 	if lastOutput.IsZero() {
 		return
 	}
 
-	_ = s.Store.UpdateInvocationMeta(proc.RepoID, proc.InvocationID, func(meta *store.InvocationMeta) {
+	_ = s.store.UpdateInvocationMeta(proc.repoID, proc.invocationID, func(meta *store.InvocationMeta) {
 		meta.LastOutputAt = lastOutput.UTC().Format(time.RFC3339)
 	})
 }
 
-func (s *Server) latestOutputAtUnixNano(proc *SupervisedProcess) int64 {
+func (s *Server) latestOutputAtUnixNano(proc *supervisedProcess) int64 {
 	if proc == nil {
 		return 0
 	}
 	lastOutput := proc.lastOutputAt.Load()
-	if proc.Parser != nil {
-		if parserLastOutput := proc.Parser.GetLastOutputAt(); parserLastOutput > lastOutput {
+	if proc.parser != nil {
+		if parserLastOutput := proc.parser.GetLastOutputAt(); parserLastOutput > lastOutput {
 			lastOutput = parserLastOutput
 		}
 	}
@@ -37,17 +37,17 @@ func (s *Server) latestOutputAtUnixNano(proc *SupervisedProcess) int64 {
 }
 
 func (s *Server) LoadUserConfig() (config.UserConfig, error) {
-	return config.LoadUserConfig(s.FS, s.ConfigDir)
+	return config.LoadUserConfig(s.fsys, s.configDir)
 }
 
-func (s *Server) streamOutput(proc *SupervisedProcess, reader io.Reader, file *os.File) {
+func (s *Server) streamOutput(proc *supervisedProcess, reader io.Reader, file *os.File) {
 	defer proc.streamWg.Done()
 	buf := make([]byte, 4096)
 	for {
 		n, err := reader.Read(buf)
 		if n > 0 {
 			_, _ = file.Write(buf[:n])
-			proc.lastOutputAt.Store(s.Clock().UnixNano())
+			proc.lastOutputAt.Store(s.clock().UnixNano())
 		}
 		if err != nil {
 			break
@@ -55,28 +55,28 @@ func (s *Server) streamOutput(proc *SupervisedProcess, reader io.Reader, file *o
 	}
 }
 
-func (s *Server) streamAndParseOutput(proc *SupervisedProcess, reader io.Reader, rawFile, streamFile *os.File) {
+func (s *Server) streamAndParseOutput(proc *supervisedProcess, reader io.Reader, rawFile, streamFile *os.File) {
 	defer proc.streamWg.Done()
-	if proc.Parser == nil {
+	if proc.parser == nil {
 		s.streamOutput(proc, reader, rawFile)
 		return
 	}
 
-	if err := proc.Parser.StreamAndParse(reader, rawFile, streamFile); err != nil {
+	if err := proc.parser.StreamAndParse(reader, rawFile, streamFile); err != nil {
 		if !stderrors.Is(err, stream.ErrRawLogWriteFailed) && !stderrors.Is(err, stream.ErrNormalizedStreamWriteFailed) {
 			return
 		}
 
 		proc.exitReason.Store("stream_write_failed")
 		proc.failureReason.Store("stream_write_failed")
-		s.persistInvocationMeta(proc.RepoID, proc.InvocationID, func(meta *store.InvocationMeta) {
+		s.persistInvocationMeta(proc.repoID, proc.invocationID, func(meta *store.InvocationMeta) {
 			meta.Flags.NeedsAttention = true
 			meta.FailureReason = "stream_write_failed"
 		})
-		s.recordInvocationWarning(proc.RepoID, proc.InvocationID, "stream_write_failed", err.Error(), nil)
+		s.recordInvocationWarning(proc.repoID, proc.invocationID, "stream_write_failed", err.Error(), nil)
 
-		if proc.PGID > 0 {
-			_ = syscall.Kill(-proc.PGID, syscall.SIGKILL)
+		if proc.pgid > 0 {
+			_ = syscall.Kill(-proc.pgid, syscall.SIGKILL)
 		}
 	}
 }

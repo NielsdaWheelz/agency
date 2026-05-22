@@ -17,6 +17,8 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
+	"github.com/NielsdaWheelz/agency/internal/invocation"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 )
@@ -239,7 +241,7 @@ func TestControlPlaneStartHeaded_InvalidRepoRootReturnsInvalidArgument(t *testin
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
-	reqPayload := ControlPlaneStartHeadedRequest{
+	reqPayload := ControlPlaneStartRequest{
 		ClientRequestID: "test-uuid",
 		RepoRoot:        missingRoot,
 		WorktreeRef:     "wt-1",
@@ -503,7 +505,7 @@ func TestControlPlaneStartHeaded_ErrorResponseIncludesRequestID(t *testing.T) {
 	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
 	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
-	reqPayload := ControlPlaneStartHeadedRequest{
+	reqPayload := ControlPlaneStartRequest{
 		RepoRoot:    "/tmp/repo",
 		WorktreeRef: "wt-1",
 		Runner:      "claude-code",
@@ -528,12 +530,12 @@ func TestControlPlaneStartHeaded_RunnerValidationErrors(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		req      ControlPlaneStartHeadedRequest
+		req      ControlPlaneStartRequest
 		wantCode string
 	}{
 		{
 			name: "unrecognized runner",
-			req: ControlPlaneStartHeadedRequest{
+			req: ControlPlaneStartRequest{
 				ClientRequestID: "test-uuid",
 				RepoRoot:        "/tmp/repo",
 				WorktreeRef:     "wt-1",
@@ -543,7 +545,7 @@ func TestControlPlaneStartHeaded_RunnerValidationErrors(t *testing.T) {
 		},
 		{
 			name: "reserved claude arg --output-format",
-			req: ControlPlaneStartHeadedRequest{
+			req: ControlPlaneStartRequest{
 				ClientRequestID: "test-uuid",
 				RepoRoot:        "/tmp/repo",
 				WorktreeRef:     "wt-1",
@@ -554,7 +556,7 @@ func TestControlPlaneStartHeaded_RunnerValidationErrors(t *testing.T) {
 		},
 		{
 			name: "reserved cursor arg -p",
-			req: ControlPlaneStartHeadedRequest{
+			req: ControlPlaneStartRequest{
 				ClientRequestID: "test-uuid",
 				RepoRoot:        "/tmp/repo",
 				WorktreeRef:     "wt-1",
@@ -593,38 +595,64 @@ func TestControlPlaneStart_UnsafeRepoRoot(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	// Resolve tmpDir through EvalSymlinks, matching what DaemonStart does
-	// in production. On macOS, /var is a symlink to /private/var.
-	tmpDir := t.TempDir()
-	tmpDir, err := filepath.EvalSymlinks(tmpDir)
-	require.NoError(t, err, "eval symlinks")
-	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
-	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
-
-	// Create a path that looks like it's inside an agency-managed worktree.
-	fakeWorktreePath := filepath.Join(tmpDir, "repos", "some-repo", "integration_worktrees", "wt-1", "tree")
-	require.NoError(t, os.MkdirAll(fakeWorktreePath, 0o755), "mkdir")
-	require.NoError(t, os.MkdirAll(filepath.Join(fakeWorktreePath, ".agency"), 0o755), "mkdir marker dir")
-	require.NoError(t, os.WriteFile(filepath.Join(fakeWorktreePath, ".agency", "INTEGRATION_MARKER"), []byte("true\n"), 0o644), "write marker")
-
-	req := ControlPlaneStartRequest{
-		ClientRequestID: "test-uuid",
-		RepoRoot:        fakeWorktreePath,
-		WorktreeRef:     "wt-1",
-		Runner:          "claude-code",
-		Prompt:          "test",
+	tests := []struct {
+		name       string
+		baseParts  []string
+		markerFile string
+	}{
+		{
+			name:       "integration worktree marker",
+			baseParts:  []string{"repos", "some-repo", "integration_worktrees", "wt-1", "tree"},
+			markerFile: integrationworktree.IntegrationMarkerFileName,
+		},
+		{
+			name:       "sandbox marker",
+			baseParts:  []string{"repos", "some-repo", "invocations", "inv-1", "sandbox"},
+			markerFile: invocation.SandboxMarkerFileName,
+		},
 	}
-	body, _ := json.Marshal(req)
-	httpReq := httptest.NewRequest(http.MethodPost, "/invocations/start_headless", bytes.NewReader(body))
-	w := httptest.NewRecorder()
 
-	s.handleControlPlaneStartHeadless(w, httpReq)
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	var resp ControlPlaneStartResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+			// Resolve tmpDir through EvalSymlinks, matching what DaemonStart does
+			// in production. On macOS, /var is a symlink to /private/var.
+			tmpDir := t.TempDir()
+			tmpDir, err := filepath.EvalSymlinks(tmpDir)
+			require.NoError(t, err, "eval symlinks")
+			st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+			s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), tmpDir)
 
-	assert.False(t, resp.OK, "expected OK=false for unsafe repo root")
-	assert.Equal(t, string(errors.EUnsafeRepoRoot), resp.ErrorCode)
+			rootParts := append([]string{tmpDir}, tc.baseParts...)
+			managedRoot := filepath.Join(rootParts...)
+			repoRoot := filepath.Join(managedRoot, "src")
+			require.NoError(t, os.MkdirAll(repoRoot, 0o755), "mkdir")
+			require.NoError(t, os.MkdirAll(filepath.Join(managedRoot, ".agency"), 0o755), "mkdir marker dir")
+			require.NoError(t, os.WriteFile(filepath.Join(managedRoot, ".agency", tc.markerFile), []byte("true\n"), 0o644), "write marker")
+
+			req := ControlPlaneStartRequest{
+				ClientRequestID: "test-uuid",
+				RepoRoot:        repoRoot,
+				WorktreeRef:     "wt-1",
+				Runner:          "claude-code",
+				Prompt:          "test",
+			}
+			body, _ := json.Marshal(req)
+			httpReq := httptest.NewRequest(http.MethodPost, "/invocations/start_headless", bytes.NewReader(body))
+			w := httptest.NewRecorder()
+
+			s.newHTTPHandler().ServeHTTP(w, httpReq)
+
+			var resp ControlPlaneStartResponse
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.False(t, resp.OK, "expected OK=false for unsafe repo root")
+			assert.Equal(t, string(errors.EUnsafeRepoRoot), resp.ErrorCode)
+		})
+	}
 }
 
 func TestControlPlaneStart_WorktreeNotFound(t *testing.T) {
@@ -797,7 +825,7 @@ func TestControlPlaneStartHeaded_RespectsRepoLock(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = unlock() })
 
-	req := ControlPlaneStartHeadedRequest{
+	req := ControlPlaneStartRequest{
 		ClientRequestID: "test-uuid-lock-headed",
 		RepoRoot:        env.RepoPath,
 		WorktreeRef:     "lock-headed-test",

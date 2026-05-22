@@ -5,15 +5,10 @@ import (
 	"strings"
 )
 
-// CursorAdapter parses Cursor agent stream-json output.
+// cursorAdapter parses Cursor agent stream-json output.
 // Cursor shares Claude-style message/result events, but tool activity is emitted
 // via dedicated `tool_call` events instead of assistant content blocks.
-type CursorAdapter struct{}
-
-// Name returns the runner name.
-func (a *CursorAdapter) Name() string {
-	return "cursor"
-}
+type cursorAdapter struct{}
 
 type cursorRawEvent struct {
 	Type    string `json:"type"`
@@ -23,7 +18,7 @@ type cursorRawEvent struct {
 }
 
 // ParseLine parses a single JSONL line from Cursor output.
-func (a *CursorAdapter) ParseLine(line []byte) (*ParseResult, error) {
+func (a *cursorAdapter) ParseLine(line []byte) (*parseResult, error) {
 	var raw cursorRawEvent
 	if err := json.Unmarshal(line, &raw); err != nil {
 		return nil, err
@@ -31,17 +26,17 @@ func (a *CursorAdapter) ParseLine(line []byte) (*ParseResult, error) {
 
 	if raw.Type == "tool_call" {
 		events := a.parseToolCall(&raw, line)
-		return &ParseResult{
-			Events: events,
+		return &parseResult{
+			events: events,
 		}, nil
 	}
 
-	// Cursor emits Claude-compatible system/assistant/user/result events.
-	claude := &ClaudeAdapter{}
+	// Cursor emits the same system/assistant/user/result event envelope handled by claudeAdapter.
+	claude := &claudeAdapter{}
 	return claude.ParseLine(line)
 }
 
-func (a *CursorAdapter) parseToolCall(raw *cursorRawEvent, line []byte) []*NormalizedEvent {
+func (a *cursorAdapter) parseToolCall(raw *cursorRawEvent, line []byte) []*normalizedEvent {
 	switch raw.Subtype {
 	case "started", "completed":
 	default:
@@ -49,22 +44,22 @@ func (a *CursorAdapter) parseToolCall(raw *cursorRawEvent, line []byte) []*Norma
 		if strings.TrimSpace(raw.Subtype) != "" {
 			unknown.Data["subtype"] = raw.Subtype
 		}
-		return []*NormalizedEvent{unknown}
+		return []*normalizedEvent{unknown}
 	}
 
-	kind := EventKindToolStart
+	kind := eventKindToolStart
 	if raw.Subtype == "completed" {
-		kind = EventKindToolEnd
+		kind = eventKindToolEnd
 	}
 
 	name, command, exitCode, actionFamily := parseCursorToolCall(raw.ToolCall)
 	if strings.TrimSpace(name) == "" {
-		return []*NormalizedEvent{
+		return []*normalizedEvent{
 			newUnknownRunnerEvent(raw.Type, "unrecognized_tool_structure", line),
 		}
 	}
 
-	event := &NormalizedEvent{
+	event := &normalizedEvent{
 		Kind: kind,
 		Data: make(map[string]interface{}),
 	}
@@ -80,10 +75,10 @@ func (a *CursorAdapter) parseToolCall(raw *cursorRawEvent, line []byte) []*Norma
 	if actionFamily != "" {
 		event.Data["action_family"] = actionFamily
 	}
-	if kind == EventKindToolEnd && exitCode != nil {
+	if kind == eventKindToolEnd && exitCode != nil {
 		event.Data["exit_code"] = *exitCode
 	}
-	return []*NormalizedEvent{event}
+	return []*normalizedEvent{event}
 }
 
 var cursorToolCallKeyOrder = []struct {
@@ -91,17 +86,17 @@ var cursorToolCallKeyOrder = []struct {
 	canonical string
 	family    string
 }{
-	{key: "readToolCall", canonical: "Read", family: ActionFamilyFileRead},
-	{key: "globToolCall", canonical: "Glob", family: ActionFamilySearch},
-	{key: "grepToolCall", canonical: "Grep", family: ActionFamilySearch},
-	{key: "bashToolCall", canonical: "Bash", family: ActionFamilyCommandExecution},
-	{key: "shellToolCall", canonical: "Bash", family: ActionFamilyCommandExecution},
-	{key: "editToolCall", canonical: "Edit", family: ActionFamilyFileChange},
-	{key: "writeToolCall", canonical: "Write", family: ActionFamilyFileChange},
-	{key: "multiEditToolCall", canonical: "MultiEdit", family: ActionFamilyFileChange},
-	{key: "notebookEditToolCall", canonical: "NotebookEdit", family: ActionFamilyFileChange},
-	{key: "webSearchToolCall", canonical: "WebSearch", family: ActionFamilyWebAction},
-	{key: "webFetchToolCall", canonical: "WebFetch", family: ActionFamilyWebAction},
+	{key: "readToolCall", canonical: "Read", family: actionFamilyFileRead},
+	{key: "globToolCall", canonical: "Glob", family: actionFamilySearch},
+	{key: "grepToolCall", canonical: "Grep", family: actionFamilySearch},
+	{key: "bashToolCall", canonical: "Bash", family: actionFamilyCommandExecution},
+	{key: "shellToolCall", canonical: "Bash", family: actionFamilyCommandExecution},
+	{key: "editToolCall", canonical: "Edit", family: actionFamilyFileChange},
+	{key: "writeToolCall", canonical: "Write", family: actionFamilyFileChange},
+	{key: "multiEditToolCall", canonical: "MultiEdit", family: actionFamilyFileChange},
+	{key: "notebookEditToolCall", canonical: "NotebookEdit", family: actionFamilyFileChange},
+	{key: "webSearchToolCall", canonical: "WebSearch", family: actionFamilyWebAction},
+	{key: "webFetchToolCall", canonical: "WebFetch", family: actionFamilyWebAction},
 }
 
 func parseCursorToolCall(toolCall map[string]interface{}) (string, string, *int, string) {

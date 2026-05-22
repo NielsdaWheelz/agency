@@ -121,37 +121,6 @@ func TestResolveEffectiveRunnerArgs_ClaudeRejectsOwnedPassthroughFlags(t *testin
 	assert.Contains(t, err.Error(), "reserved flag '--model'")
 }
 
-func TestResolveEffectiveRunnerArgs_ClaudeHeadlessDefaultsToBypassPermissions(t *testing.T) {
-	t.Parallel()
-
-	got, err := resolveEffectiveRunnerArgs(
-		"claude-code",
-		[]string{"--allowed-extra"},
-		"",
-		"",
-		"",
-		true,
-	)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"--allowed-extra", "--permission-mode", "bypassPermissions"}, got)
-}
-
-func TestResolveEffectiveRunnerArgs_ClaudeHeadlessRejectsPromptingPermissionModes(t *testing.T) {
-	t.Parallel()
-
-	_, err := resolveEffectiveRunnerArgs(
-		"claude-code",
-		nil,
-		"",
-		"",
-		"default",
-		true,
-	)
-	require.Error(t, err)
-	assert.Equal(t, errors.EUsage, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "headless Claude requires an autonomous permission mode")
-}
-
 func TestResolveStartRunnerAndArgs_UsesSharedDefaultPrecedence(t *testing.T) {
 	tmpDir := t.TempDir()
 	configDir := filepath.Join(tmpDir, "config")

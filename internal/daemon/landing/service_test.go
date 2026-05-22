@@ -54,7 +54,7 @@ func setupTestService(t *testing.T, status store.InvocationStatus, landingStatus
 	}
 	require.NoError(t, st.WriteInvocationMeta(repoID, invocationID, meta))
 
-	return landing.NewService(st, exec.NewRealRunner(), realFS, time.Now)
+	return landing.NewService(st, exec.NewRealRunner(), realFS, time.Now, nil)
 }
 
 // testHarness holds all the pieces needed for landing error‐code tests.
@@ -120,7 +120,7 @@ func setupHarness(t *testing.T) *testHarness {
 	require.NoError(t, st.WriteInvocationMeta(repoID, invocationID, meta))
 
 	runner := testutil.NewFakeCommandRunner()
-	svc := landing.NewService(st, runner, realFS, time.Now)
+	svc := landing.NewService(st, runner, realFS, time.Now, nil)
 
 	return &testHarness{
 		svc:             svc,
@@ -185,7 +185,6 @@ func TestLand_Preconditions(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -245,7 +244,7 @@ func TestLand_IntegrationTreeMissing(t *testing.T) {
 	require.NoError(t, st.WriteInvocationMeta(repoID, invocationID, meta))
 
 	runner := testutil.NewFakeCommandRunner()
-	svc := landing.NewService(st, runner, realFS, time.Now)
+	svc := landing.NewService(st, runner, realFS, time.Now, nil)
 
 	_, err = svc.Land(context.Background(), landing.LandOpts{
 		RepoID:       repoID,
@@ -608,16 +607,6 @@ func TestLand_NothingToLand_EmptyDiffApplyMode(t *testing.T) {
 	assert.Contains(t, err.Error(), "diff is empty")
 }
 
-// ---------------------------------------------------------------------------
-// Note on ELandDenylistViolation
-// ---------------------------------------------------------------------------
-//
-// ELandDenylistViolation is defined in errors.go but is NOT returned by any
-// production code path as of this commit. The landing service does not
-// currently perform denylist checks during land operations (the checkpoint
-// engine has its own denylist logic). This error code is likely reserved for
-// future use. No test is added because there is no production code to exercise.
-
 func TestLand_Failed_ApplyPatchFails(t *testing.T) {
 	t.Parallel()
 
@@ -781,6 +770,12 @@ func readInvocationEventsAsMaps(t *testing.T, eventsPath string) []map[string]an
 	return events
 }
 
+func stubCleanupSuccess(h *testHarness, repoRoot, invocationID string) {
+	h.runner.Responses["git -C "+repoRoot+" worktree remove --force "+h.sandboxPath] = testutil.FakeResponse{ExitCode: 0}
+	h.runner.Responses["git -C "+repoRoot+" show-ref --quiet --verify refs/heads/agency/sandbox-test"] = testutil.FakeResponse{ExitCode: 1}
+	h.runner.Responses["git -C "+repoRoot+" for-each-ref --format=%(refname) refs/agency/snapshots/"+invocationID+"/"] = testutil.FakeResponse{ExitCode: 0}
+}
+
 func TestLand_EventsUseMonotonicInvocationSequence(t *testing.T) {
 	t.Parallel()
 
@@ -792,6 +787,7 @@ func TestLand_EventsUseMonotonicInvocationSequence(t *testing.T) {
 		Stdout: "1\n",
 	}
 	h.runner.Responses[fmt.Sprintf("git -C %s cherry-pick --no-edit abc123..agency/sandbox-test", h.integrationPath)] = testutil.FakeResponse{}
+	stubCleanupSuccess(h, "/nonexistent", "test-inv")
 
 	result, err := h.svc.Land(context.Background(), landing.LandOpts{
 		RepoID:       "test-repo",
@@ -819,7 +815,7 @@ func TestLand_EventAppendFailureStopsOperation(t *testing.T) {
 	t.Parallel()
 
 	h := setupHarness(t)
-	h.svc = landing.NewServiceWithWriter(
+	h.svc = landing.NewService(
 		h.store,
 		h.runner,
 		fs.NewRealFS(),
@@ -866,6 +862,7 @@ func TestDiscard_EventsUseMonotonicInvocationSequence(t *testing.T) {
 	t.Parallel()
 
 	h := setupHarness(t)
+	stubCleanupSuccess(h, "/nonexistent", "test-inv")
 	err := h.svc.Discard(context.Background(), landing.DiscardOpts{
 		RepoID:       "test-repo",
 		InvocationID: "test-inv",

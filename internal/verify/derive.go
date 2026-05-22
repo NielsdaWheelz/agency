@@ -33,7 +33,7 @@ func deriveSummary(timedOut, cancelled bool, exitCode *int, vj *verifyJSON) stri
 		return vj.Summary
 	}
 
-	// Fall back to generic messages based on outcome
+	// Use the outcome-derived summary when verify.json has no summary.
 	if timedOut {
 		return "verify timed out"
 	}

@@ -1,9 +1,17 @@
 package store
 
+import (
+	"github.com/NielsdaWheelz/agency/internal/errors"
+	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
+)
+
+// VerifyRecordSchemaVersion is the current schema version for verify_record.json.
+const VerifyRecordSchemaVersion = "1.0"
+
 // VerifyRecord is the canonical evidence record for a verify run.
 // Written to a store-owned verify_record.json path for the verified execution surface.
 type VerifyRecord struct {
-	// SchemaVersion is the schema version for this record. Always "1.0".
+	// SchemaVersion is the schema version for this record.
 	SchemaVersion string `json:"schema_version"`
 
 	// RepoID is the repository identifier (16 hex chars).
@@ -61,4 +69,19 @@ type VerifyRecord struct {
 	// Summary is the human-readable summary.
 	// Prefers verify.json.summary if present, else generic message.
 	Summary string `json:"summary"`
+}
+
+// WriteIntegrationWorktreeVerifyRecord writes verify_record.json atomically for
+// an integration worktree verify run.
+func (s *Store) WriteIntegrationWorktreeVerifyRecord(repoID, worktreeID string, record VerifyRecord) error {
+	recordPath := s.integrationWorktreeVerifyRecordPath(repoID, worktreeID)
+	if err := agencyfs.WriteJSONAtomic(s.fsys, recordPath, record, 0o600); err != nil {
+		return errors.WrapWithDetails(
+			errors.EPersistFailed,
+			"failed to write integration worktree verify_record.json atomically",
+			err,
+			map[string]string{"record_path": recordPath},
+		)
+	}
+	return nil
 }

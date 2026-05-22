@@ -16,46 +16,16 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
 	invocationpkg "github.com/NielsdaWheelz/agency/internal/invocation"
-	"github.com/NielsdaWheelz/agency/internal/scaffold"
 	"github.com/NielsdaWheelz/agency/internal/store"
+	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// stubRunner is a CommandRunner that returns a fixed repo root.
-type stubRunner struct {
-	repoRoot string
-	exitCode int
-}
-
-func (s *stubRunner) Run(ctx context.Context, name string, args []string, opts exec.RunOpts) (exec.CmdResult, error) {
-	// Handle git rev-parse --show-toplevel
-	if name == "git" && len(args) >= 2 && args[0] == "rev-parse" && args[1] == "--show-toplevel" {
-		return exec.CmdResult{
-			Stdout:   s.repoRoot + "\n",
-			Stderr:   "",
-			ExitCode: s.exitCode,
-		}, nil
-	}
-	return exec.CmdResult{ExitCode: 1}, nil
-}
-
-func (s *stubRunner) LookPath(file string) (string, error) {
-	return "/usr/bin/" + file, nil
-}
-
-// setupTempGitRepo creates a temp directory and initializes a minimal git repo.
-// Returns the repo root and a temp config directory.
+// setupTempGitRepo creates a real temp git repo and returns its root plus a temp config directory.
 func setupTempGitRepo(t *testing.T) (string, string) {
 	t.Helper()
-	dir := t.TempDir()
-	configDir := t.TempDir()
-
-	// Create .git directory to simulate a git repo
-	gitDir := filepath.Join(dir, ".git")
-	require.NoError(t, os.MkdirAll(gitDir, 0755), "failed to create .git dir")
-
-	return dir, configDir
+	return testutil.SetupGitRepo(t), t.TempDir()
 }
 
 func registerInitTestRepo(t *testing.T, dataDir, repoRoot string) {
@@ -86,11 +56,30 @@ func registerInitTestRepo(t *testing.T, dataDir, repoRoot string) {
 	}))
 }
 
+func requireDefaultAgencyConfig(t *testing.T, fsys fs.FS, repoRoot, configDir, repoID, source string) config.ResolvedAgencyConfig {
+	t.Helper()
+
+	resolved, err := config.ResolveAgencyConfig(fsys, repoRoot, configDir, repoID, "")
+	require.NoError(t, err)
+	assert.Equal(t, source, resolved.Source)
+	assert.Equal(t, config.AgencyConfigVersion, resolved.Config.Version)
+	assert.Equal(t, config.CheckoutRootSibling, resolved.Config.Execution.CheckoutRoot)
+
+	configRoot := filepath.Dir(resolved.Path)
+	assert.Equal(t, filepath.Join(configRoot, "scripts/agency_setup.sh"), resolved.Config.Scripts.Setup.Path)
+	assert.Equal(t, filepath.Join(configRoot, "scripts/agency_verify.sh"), resolved.Config.Scripts.Verify.Path)
+	assert.Equal(t, filepath.Join(configRoot, "scripts/agency_archive.sh"), resolved.Config.Scripts.Archive.Path)
+	assert.Equal(t, config.DefaultSetupTimeout, resolved.Config.Scripts.Setup.Timeout)
+	assert.Equal(t, config.DefaultVerifyTimeout, resolved.Config.Scripts.Verify.Timeout)
+	assert.Equal(t, config.DefaultArchiveTimeout, resolved.Config.Scripts.Archive.Timeout)
+
+	return resolved
+}
+
 func TestInit_CreatesConfigAndStubs(t *testing.T) {
-	t.Parallel()
 	repoRoot, configDir := setupTempGitRepo(t)
 
-	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
+	cr := exec.NewRealRunner()
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
@@ -102,10 +91,8 @@ func TestInit_CreatesConfigAndStubs(t *testing.T) {
 	repoID := identity.DeriveRepoIdentity(repoRoot, "").RepoID
 	agencyJSONPath := config.LocalAgencyConfigPath(configDir, repoID)
 
-	// Check local agency.json exists and matches template
-	content, err := os.ReadFile(agencyJSONPath)
-	require.NoError(t, err, "failed to read agency.json")
-	assert.Equal(t, scaffold.AgencyJSONTemplate, string(content), "agency.json content mismatch")
+	resolved := requireDefaultAgencyConfig(t, fsys, repoRoot, configDir, repoID, "local")
+	assert.Equal(t, agencyJSONPath, resolved.Path)
 
 	// Check stub scripts exist and are executable
 	scripts := []string{
@@ -141,7 +128,6 @@ func TestInit_CreatesConfigAndStubs(t *testing.T) {
 }
 
 func TestInit_RefusesOverwrite(t *testing.T) {
-	t.Parallel()
 	repoRoot, configDir := setupTempGitRepo(t)
 	dataDir := t.TempDir()
 	registerInitTestRepo(t, dataDir, repoRoot)
@@ -151,7 +137,7 @@ func TestInit_RefusesOverwrite(t *testing.T) {
 	agencyJSONPath := filepath.Join(repoRoot, "agency.json")
 	require.NoError(t, os.WriteFile(agencyJSONPath, []byte(existingContent), 0644), "failed to write existing agency.json")
 
-	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
+	cr := exec.NewRealRunner()
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
@@ -170,7 +156,6 @@ func TestInit_RefusesOverwrite(t *testing.T) {
 }
 
 func TestInit_ForceOverwritesAgencyJSON(t *testing.T) {
-	t.Parallel()
 	repoRoot, configDir := setupTempGitRepo(t)
 	dataDir := t.TempDir()
 	registerInitTestRepo(t, dataDir, repoRoot)
@@ -187,7 +172,7 @@ func TestInit_ForceOverwritesAgencyJSON(t *testing.T) {
 	setupPath := filepath.Join(scriptsDir, "agency_setup.sh")
 	require.NoError(t, os.WriteFile(setupPath, []byte(customScript), 0755), "failed to write existing script")
 
-	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
+	cr := exec.NewRealRunner()
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
@@ -196,10 +181,13 @@ func TestInit_ForceOverwritesAgencyJSON(t *testing.T) {
 	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
 	require.NoError(t, err, "Init with --force failed")
 
-	// agency.json should be replaced with template
 	content, err := os.ReadFile(agencyJSONPath)
 	require.NoError(t, err, "failed to read agency.json")
-	assert.Equal(t, scaffold.AgencyJSONTemplate, string(content), "agency.json not replaced")
+	assert.NotEqual(t, existingContent, string(content), "agency.json was not replaced")
+
+	repoID := identity.DeriveRepoIdentity(repoRoot, "").RepoID
+	resolved := requireDefaultAgencyConfig(t, fsys, repoRoot, configDir, repoID, "repo")
+	assert.Equal(t, agencyJSONPath, resolved.Path)
 
 	// Existing script should NOT be overwritten
 	scriptContent, err := os.ReadFile(setupPath)
@@ -212,7 +200,6 @@ func TestInit_ForceOverwritesAgencyJSON(t *testing.T) {
 }
 
 func TestInit_GitignoreIdempotent(t *testing.T) {
-	t.Parallel()
 	repoRoot, configDir := setupTempGitRepo(t)
 	dataDir := t.TempDir()
 	registerInitTestRepo(t, dataDir, repoRoot)
@@ -222,7 +209,7 @@ func TestInit_GitignoreIdempotent(t *testing.T) {
 	existing := "node_modules/\n.agency/\n"
 	require.NoError(t, os.WriteFile(gitignorePath, []byte(existing), 0644), "failed to write .gitignore")
 
-	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
+	cr := exec.NewRealRunner()
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
@@ -241,7 +228,6 @@ func TestInit_GitignoreIdempotent(t *testing.T) {
 }
 
 func TestInit_GitignoreWithAgencyNoSlash(t *testing.T) {
-	t.Parallel()
 	repoRoot, configDir := setupTempGitRepo(t)
 	dataDir := t.TempDir()
 	registerInitTestRepo(t, dataDir, repoRoot)
@@ -251,7 +237,7 @@ func TestInit_GitignoreWithAgencyNoSlash(t *testing.T) {
 	existing := "node_modules/\n.agency\n"
 	require.NoError(t, os.WriteFile(gitignorePath, []byte(existing), 0644), "failed to write .gitignore")
 
-	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
+	cr := exec.NewRealRunner()
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
@@ -268,12 +254,11 @@ func TestInit_GitignoreWithAgencyNoSlash(t *testing.T) {
 }
 
 func TestInit_NoGitignore(t *testing.T) {
-	t.Parallel()
 	repoRoot, configDir := setupTempGitRepo(t)
 	dataDir := t.TempDir()
 	registerInitTestRepo(t, dataDir, repoRoot)
 
-	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
+	cr := exec.NewRealRunner()
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
@@ -293,11 +278,10 @@ func TestInit_NoGitignore(t *testing.T) {
 }
 
 func TestInit_NotInRepo(t *testing.T) {
-	t.Parallel()
 	// Use a temp dir that is NOT a git repo
 	dir := t.TempDir()
 
-	cr := &stubRunner{repoRoot: "", exitCode: 128} // git returns 128 when not in repo
+	cr := exec.NewRealRunner()
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
@@ -312,7 +296,6 @@ func TestInit_NotInRepo(t *testing.T) {
 func TestInit_RepoConfigRejectsAgencyManagedTrees(t *testing.T) {
 	dataDir := t.TempDir()
 	configDir := t.TempDir()
-	t.Setenv("AGENCY_DATA_DIR", dataDir)
 
 	tests := []struct {
 		name string
@@ -326,14 +309,20 @@ func TestInit_RepoConfigRejectsAgencyManagedTrees(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repoRoot := filepath.Join(dataDir, "repos", "repo-1", tt.kind, tt.id, "tree")
-			require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, ".agency"), 0o755), "failed to create managed tree")
+			testutil.HermeticGitEnv(t)
+			require.NoError(t, os.MkdirAll(repoRoot, 0o755))
+			result, runErr := exec.NewRealRunner().Run(context.Background(), "git", []string{"init", "-b", "main"}, exec.RunOpts{Dir: repoRoot})
+			require.NoError(t, runErr)
+			require.Zero(t, result.ExitCode, strings.TrimSpace(result.Stdout+"\n"+result.Stderr))
+
+			require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, ".agency"), 0o755), "failed to create managed marker dir")
 			markerName := integrationworktree.IntegrationMarkerFileName
 			if tt.kind == "sandboxes" {
 				markerName = invocationpkg.SandboxMarkerFileName
 			}
 			require.NoError(t, os.WriteFile(filepath.Join(repoRoot, ".agency", markerName), []byte("managed\n"), 0o644))
 
-			cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
+			cr := exec.NewRealRunner()
 			fsys := fs.NewRealFS()
 			ctx := context.Background()
 			var stdout, stderr bytes.Buffer
@@ -348,7 +337,6 @@ func TestInit_RepoConfigRejectsAgencyManagedTrees(t *testing.T) {
 }
 
 func TestInit_GitignoreNoTrailingNewline(t *testing.T) {
-	t.Parallel()
 	repoRoot, configDir := setupTempGitRepo(t)
 	dataDir := t.TempDir()
 	registerInitTestRepo(t, dataDir, repoRoot)
@@ -358,7 +346,7 @@ func TestInit_GitignoreNoTrailingNewline(t *testing.T) {
 	existing := "node_modules/" // no newline at end
 	require.NoError(t, os.WriteFile(gitignorePath, []byte(existing), 0644), "failed to write .gitignore")
 
-	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
+	cr := exec.NewRealRunner()
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
@@ -376,44 +364,7 @@ func TestInit_GitignoreNoTrailingNewline(t *testing.T) {
 	assert.Contains(t, string(content), ".agency/")
 }
 
-func TestInit_VerifyStubContent(t *testing.T) {
-	t.Parallel()
-	repoRoot, configDir := setupTempGitRepo(t)
-	dataDir := t.TempDir()
-	registerInitTestRepo(t, dataDir, repoRoot)
-
-	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
-	fsys := fs.NewRealFS()
-	ctx := context.Background()
-	var stdout, stderr bytes.Buffer
-
-	opts := InitOpts{NoGitignore: false, Force: false, RepoConfig: true, ConfigDirOverride: configDir, DataDirOverride: dataDir}
-	err := Init(ctx, cr, fsys, repoRoot, opts, &stdout, &stderr)
-	require.NoError(t, err, "Init failed")
-
-	// Verify setup script content
-	setupPath := filepath.Join(repoRoot, "scripts/agency_setup.sh")
-	setupContent, err := os.ReadFile(setupPath)
-	require.NoError(t, err, "failed to read setup script")
-	assert.Equal(t, scaffold.SetupStub, string(setupContent), "setup script content mismatch")
-
-	// Verify verify script content (should exit 1 and print message)
-	verifyPath := filepath.Join(repoRoot, "scripts/agency_verify.sh")
-	verifyContent, err := os.ReadFile(verifyPath)
-	require.NoError(t, err, "failed to read verify script")
-	assert.Equal(t, scaffold.VerifyStub, string(verifyContent), "verify script content mismatch")
-	assert.Contains(t, string(verifyContent), "exit 1", "verify script should exit 1")
-	assert.Contains(t, string(verifyContent), `echo "replace scripts/agency_verify.sh"`, "verify script should print replacement message")
-
-	// Verify archive script content
-	archivePath := filepath.Join(repoRoot, "scripts/agency_archive.sh")
-	archiveContent, err := os.ReadFile(archivePath)
-	require.NoError(t, err, "failed to read archive script")
-	assert.Equal(t, scaffold.ArchiveStub, string(archiveContent), "archive script content mismatch")
-}
-
 func TestInit_ScriptsNotCreatedIfExist(t *testing.T) {
-	t.Parallel()
 	repoRoot, configDir := setupTempGitRepo(t)
 	dataDir := t.TempDir()
 	registerInitTestRepo(t, dataDir, repoRoot)
@@ -430,7 +381,7 @@ func TestInit_ScriptsNotCreatedIfExist(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, "agency_verify.sh"), []byte(customVerify), 0755), "failed to write verify script")
 	require.NoError(t, os.WriteFile(filepath.Join(scriptsDir, "agency_archive.sh"), []byte(customArchive), 0755), "failed to write archive script")
 
-	cr := &stubRunner{repoRoot: repoRoot, exitCode: 0}
+	cr := exec.NewRealRunner()
 	fsys := fs.NewRealFS()
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer

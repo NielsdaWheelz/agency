@@ -35,14 +35,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uptime := int64(s.Clock().Sub(s.startedAt).Seconds())
+	uptime := int64(s.clock().Sub(s.startedAt).Seconds())
 	resp := HealthResponse{
 		OK:               true,
 		APIVersion:       APIVersion,
 		BuildVersion:     daemonBuildVersion(),
 		GitSHA:           version.Commit,
 		PID:              os.Getpid(),
-		DaemonInstanceID: s.InstanceID,
+		DaemonInstanceID: s.instanceID,
 		UptimeSeconds:    uptime,
 	}
 	s.writeJSON(w, http.StatusOK, resp)

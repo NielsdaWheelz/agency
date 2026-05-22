@@ -6,10 +6,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
-	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -39,7 +39,7 @@ type TaskStartOpts struct {
 	NoIncludeUntracked bool
 
 	IsInteractive func() bool
-	TmuxAttachFn  func(sessionName string) error
+	TmuxAttachFn  func(context.Context, string) error
 }
 
 // TaskShowOpts holds options for showing one task.
@@ -83,7 +83,7 @@ type TaskRetryOpts struct {
 	JSON               bool
 	NoIncludeUntracked bool
 	IsInteractive      func() bool
-	TmuxAttachFn       func(sessionName string) error
+	TmuxAttachFn       func(context.Context, string) error
 }
 
 // TaskWatchOpts holds options for watching one task.
@@ -213,10 +213,7 @@ func TaskStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return fail(err)
 	}
 
-	if err := ns.client.CheckAPIVersion(ctx); err != nil {
-		return fail(err)
-	}
-	resp, err := ns.client.TaskStart(ctx, daemonclient.TaskStartOpts{
+	resp, err := ns.client.TaskStart(ctx, daemon.TaskStartRequest{
 		RepoRoot:           repoRoot,
 		Name:               taskName,
 		BaseBranch:         baseBranch,
@@ -249,15 +246,16 @@ func TaskStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	if resp.Mode == store.RunnerModeHeaded {
 		_, _ = fmt.Fprintf(stdout, "  tmux:       %s\n", resp.TmuxSession)
 		if !opts.Detached {
-			_, _ = fmt.Fprintf(stdout, "\nAttaching to tmux session... (detach with Ctrl+b, d)\n")
-			attachFn := opts.TmuxAttachFn
-			if attachFn == nil {
-				attachFn = realTmuxAttach
-			}
-			if err := attachFn(resp.TmuxSession); err != nil {
-				_, _ = fmt.Fprintf(stderr, "warning: could not attach to tmux session: %v\n", err)
-				_, _ = fmt.Fprintf(stderr, "Use 'agency agent %s attach --repo %s' to attach later.\n", resp.InvocationID, resp.RepoID)
-			}
+			attachHeadedSession(ctx, headedAttachOpts{
+				AttachFn:    opts.TmuxAttachFn,
+				Stdout:      stdout,
+				Stderr:      stderr,
+				SessionName: resp.TmuxSession,
+				Invocation:  resp.InvocationID,
+				RepoID:      resp.RepoID,
+				Banner:      true,
+				LaterHint:   true,
+			})
 		} else {
 			_, _ = fmt.Fprintf(stdout, "\nSession started in detached mode.\n")
 		}
@@ -269,14 +267,6 @@ func TaskStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		_, _ = fmt.Fprintf(stdout, "Use 'agency agent %s' to inspect the invocation.\n", shortRef(resp.InvocationID))
 	}
 	return nil
-}
-
-func repoIDForRepoRoot(ctx context.Context, client *daemonclient.Client, repoRoot string) (string, error) {
-	repo, err := client.RegisterRepo(ctx, repoRoot)
-	if err == nil {
-		return repo.Data.RepoID, nil
-	}
-	return "", err
 }
 
 func TaskShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts TaskShowOpts, stdout, stderr io.Writer) error {
@@ -456,10 +446,7 @@ func TaskRetry(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	if err != nil {
 		return fail(err)
 	}
-	if err := ns.client.CheckAPIVersion(ctx); err != nil {
-		return fail(err)
-	}
-	resp, err := ns.client.RetryTask(ctx, opts.TaskRef, repo.RepoID, daemonclient.TaskRetryOpts{
+	resp, err := ns.client.RetryTask(ctx, opts.TaskRef, repo.RepoID, daemon.TaskRetryRequest{
 		Mode:               mode,
 		Runner:             runner,
 		Prompt:             prompt,
@@ -481,13 +468,12 @@ func TaskRetry(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	_, _ = fmt.Fprintf(stdout, "  profile:    %s\n", resp.ExecutionProfile)
 	_, _ = fmt.Fprintf(stdout, "  checkout_root: %s\n", resp.CheckoutRoot)
 	if resp.Mode == store.RunnerModeHeaded && !opts.Detached {
-		attachFn := opts.TmuxAttachFn
-		if attachFn == nil {
-			attachFn = realTmuxAttach
-		}
-		if err := attachFn(resp.TmuxSession); err != nil {
-			_, _ = fmt.Fprintf(stderr, "warning: could not attach to tmux session: %v\n", err)
-		}
+		attachHeadedSession(ctx, headedAttachOpts{
+			AttachFn:    opts.TmuxAttachFn,
+			Stdout:      stdout,
+			Stderr:      stderr,
+			SessionName: resp.TmuxSession,
+		})
 	}
 	return nil
 }
@@ -602,7 +588,7 @@ func taskStartJSON(resp *daemon.TaskStartResponse) any {
 		Branch:           resp.Branch,
 		ExecutionProfile: resp.ExecutionProfile,
 		CheckoutRoot:     resp.CheckoutRoot,
-		CustomEnvKeys:    append([]string(nil), resp.CustomEnvKeys...),
+		CustomEnvKeys:    slices.Clone(resp.CustomEnvKeys),
 		InvocationID:     resp.InvocationID,
 		SandboxPath:      resp.SandboxPath,
 		Mode:             resp.Mode,

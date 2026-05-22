@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,8 +29,7 @@ func TestSafeRemoveAll_ValidSubpath(t *testing.T) {
 	require.NoError(t, err, "SafeRemoveAll failed")
 
 	// Verify target is gone
-	_, err = os.Stat(target)
-	assert.True(t, os.IsNotExist(err), "target directory still exists after SafeRemoveAll")
+	require.NoDirExists(t, target, "target directory still exists after SafeRemoveAll")
 }
 
 func TestSafeRemoveAll_OutsidePrefix(t *testing.T) {
@@ -52,12 +50,11 @@ func TestSafeRemoveAll_OutsidePrefix(t *testing.T) {
 	require.Error(t, err, "SafeRemoveAll should have failed for target outside prefix")
 
 	// Check it's the right error type
-	_, ok := err.(*ErrNotUnderPrefix)
-	assert.True(t, ok, "expected ErrNotUnderPrefix, got %T: %v", err, err)
+	var notUnderPrefix *ErrNotUnderPrefix
+	require.ErrorAs(t, err, &notUnderPrefix)
 
 	// Verify target still exists
-	_, err = os.Stat(target)
-	assert.False(t, os.IsNotExist(err), "target was deleted even though it's outside prefix")
+	require.DirExists(t, target, "target was deleted even though it's outside prefix")
 }
 
 func TestSafeRemoveAll_TargetEqualsPrefix(t *testing.T) {
@@ -73,8 +70,7 @@ func TestSafeRemoveAll_TargetEqualsPrefix(t *testing.T) {
 	require.Error(t, err, "SafeRemoveAll should have failed when target equals prefix")
 
 	// Verify target still exists
-	_, err = os.Stat(target)
-	assert.False(t, os.IsNotExist(err), "target was deleted when it equals prefix")
+	require.DirExists(t, target, "target was deleted when it equals prefix")
 }
 
 func TestSafeRemoveAll_TargetDoesNotExist(t *testing.T) {
@@ -107,8 +103,7 @@ func TestSafeRemoveAll_ParentTraversal(t *testing.T) {
 	require.Error(t, err, "SafeRemoveAll should have failed for parent traversal")
 
 	// Verify target still exists
-	_, err = os.Stat(target)
-	assert.False(t, os.IsNotExist(err), "target was deleted despite parent traversal attack")
+	require.DirExists(t, target, "target was deleted despite parent traversal attack")
 }
 
 func TestSafeRemoveAll_PrefixDoesNotExist(t *testing.T) {
@@ -125,11 +120,10 @@ func TestSafeRemoveAll_PrefixDoesNotExist(t *testing.T) {
 	require.Error(t, err, "SafeRemoveAll should have failed when prefix doesn't exist")
 
 	// Verify target still exists (fail closed)
-	_, err = os.Stat(target)
-	assert.False(t, os.IsNotExist(err), "target was deleted when prefix doesn't exist")
+	require.DirExists(t, target, "target was deleted when prefix doesn't exist")
 }
 
-func TestIsSubpath(t *testing.T) {
+func TestPathContains(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name   string
@@ -170,11 +164,12 @@ func TestIsSubpath(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := isSubpath(tt.target, tt.prefix)
-			assert.Equal(t, tt.want, got)
+			got := PathContains(tt.prefix, tt.target) && tt.target != tt.prefix
+			if got != tt.want {
+				t.Fatalf("PathContains(%q, %q) adjusted result = %v, want %v", tt.prefix, tt.target, got, tt.want)
+			}
 		})
 	}
 }

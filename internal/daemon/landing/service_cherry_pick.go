@@ -10,7 +10,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
-func (s *Service) landCherryPick(ctx context.Context, opts LandOpts, meta *store.InvocationMeta, integrationPath, headBefore string, commitCount int) (*LandResult, error) {
+func (s *Service) landCherryPick(ctx context.Context, opts LandOpts, meta *store.InvocationMeta, integrationPath, headBefore string, commitCount int) (*landResult, error) {
 	cherryPickArgs := []string{
 		"-C", integrationPath,
 		"cherry-pick", "--no-edit",
@@ -79,8 +79,8 @@ func (s *Service) landCherryPick(ctx context.Context, opts LandOpts, meta *store
 		return nil, errors.Wrap(errors.ELandFailed, "failed to capture new integration HEAD", err)
 	}
 
-	return &LandResult{
-		Mode:                  ModeCherryPick,
+	return &landResult{
+		Mode:                  modeCherryPick,
 		IntegrationHeadBefore: headBefore,
 		IntegrationHeadAfter:  headAfter,
 		CommitsLanded:         commitCount,

@@ -120,11 +120,11 @@ func GetOriginInfo(ctx context.Context, cr exec.CommandRunner, repoRoot string, 
 	return OriginInfo{
 		Present: true,
 		URL:     url,
-		Host:    ParseOriginHost(url),
+		Host:    parseOriginHost(url),
 	}
 }
 
-// ParseOriginHost extracts the hostname from a git remote URL.
+// parseOriginHost extracts the hostname from a git remote URL.
 // Supports:
 //   - scp-like: git@github.com:owner/repo.git -> github.com
 //   - https: https://github.com/owner/repo.git -> github.com
@@ -134,7 +134,7 @@ func GetOriginInfo(ctx context.Context, cr exec.CommandRunner, repoRoot string, 
 //   - Other URL schemes (git://, file://, etc.)
 //   - Unparseable URLs
 //   - Empty input
-func ParseOriginHost(raw string) string {
+func parseOriginHost(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""
@@ -158,9 +158,8 @@ func ParseOriginHost(raw string) string {
 	}
 
 	// Check for https:// URL
-	if strings.HasPrefix(raw, "https://") {
+	if rest, ok := strings.CutPrefix(raw, "https://"); ok {
 		// Extract host from https://host/path
-		rest := strings.TrimPrefix(raw, "https://")
 		// Find first slash
 		slashIdx := strings.Index(rest, "/")
 		if slashIdx > 0 {
@@ -271,18 +270,4 @@ func BranchExists(ctx context.Context, cr exec.CommandRunner, repoRoot, branch s
 
 	// Exit code 0 = branch exists, non-zero = does not exist
 	return result.ExitCode == 0, nil
-}
-
-// GetOriginURL retrieves the origin remote URL using `git remote get-url origin`.
-// Returns the URL if origin exists, or empty string if missing.
-// Never returns an error; failures result in empty string.
-func GetOriginURL(ctx context.Context, cr exec.CommandRunner, repoRoot string, env map[string]string) string {
-	result, err := cr.Run(ctx, "git", []string{"remote", "get-url", "origin"}, exec.RunOpts{Dir: repoRoot, Env: env})
-	if err != nil {
-		return ""
-	}
-	if result.ExitCode != 0 {
-		return ""
-	}
-	return strings.TrimSpace(result.Stdout)
 }

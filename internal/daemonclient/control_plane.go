@@ -15,7 +15,7 @@ import (
 
 // ControlPlaneStartHeadless starts a headless invocation via the control plane endpoint.
 // This endpoint handles all creation: invocation ID generation, sandbox creation, and runner start.
-func (c *Client) ControlPlaneStartHeadless(ctx context.Context, opts ControlPlaneStartOpts) (*daemon.ControlPlaneStartResponse, error) {
+func (c *Client) ControlPlaneStartHeadless(ctx context.Context, opts daemon.ControlPlaneStartRequest) (*daemon.ControlPlaneStartResponse, error) {
 	if err := c.CheckAPIVersion(ctx); err != nil {
 		return nil, err
 	}
@@ -33,7 +33,7 @@ func (c *Client) ControlPlaneStartHeadless(ctx context.Context, opts ControlPlan
 
 // ControlPlaneStartHeaded starts a headed (tmux) invocation via the control plane endpoint.
 // This endpoint handles all creation: invocation ID generation, sandbox creation, and tmux session start.
-func (c *Client) ControlPlaneStartHeaded(ctx context.Context, opts ControlPlaneStartHeadedOpts) (*daemon.ControlPlaneStartHeadedResponse, error) {
+func (c *Client) ControlPlaneStartHeaded(ctx context.Context, opts daemon.ControlPlaneStartRequest) (*daemon.ControlPlaneStartHeadedResponse, error) {
 	if err := c.CheckAPIVersion(ctx); err != nil {
 		return nil, err
 	}
@@ -70,7 +70,7 @@ func (c *Client) IngestHeadedHook(ctx context.Context, repoID, invocationID, run
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	var apiResp daemon.RawAPIResponse
+	var apiResp rawAPIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
 		return nil, err
 	}
@@ -78,7 +78,7 @@ func (c *Client) IngestHeadedHook(ctx context.Context, repoID, invocationID, run
 }
 
 // SubmitFollowUp submits a follow-up prompt to an existing invocation.
-func (c *Client) SubmitFollowUp(ctx context.Context, invocationRef, repoID string, opts SubmitFollowUpOpts) (*daemon.ControlPlaneFollowUpResponse, error) {
+func (c *Client) SubmitFollowUp(ctx context.Context, invocationRef, repoID string, opts daemon.ControlPlaneFollowUpRequest) (*daemon.ControlPlaneFollowUpResponse, error) {
 	if err := c.CheckAPIVersion(ctx); err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func (c *Client) SubmitFollowUp(ctx context.Context, invocationRef, repoID strin
 		opts.ClientRequestID = uuid.New().String()
 	}
 
-	u := fmt.Sprintf("http://daemon/invocations/%s/followup", url.PathEscape(invocationRef))
+	u := fmt.Sprintf("%s/invocations/%s/followup", daemonBaseURL, url.PathEscape(invocationRef))
 	if repoID != "" {
 		u += "?repo_id=" + url.QueryEscape(repoID)
 	}

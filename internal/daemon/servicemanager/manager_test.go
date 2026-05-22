@@ -27,15 +27,8 @@ func cmdKey(name string, args []string) string {
 	return name + " " + strings.Join(args, " ")
 }
 
-// wasCalled returns true if the given command was invoked on the fake runner.
-func wasCalled(fr *testutil.FakeCommandRunner, name string, args []string) bool {
-	key := cmdKey(name, args)
-	for _, c := range fr.Calls {
-		if c == key {
-			return true
-		}
-	}
-	return false
+func commandSucceeds(fr *testutil.FakeCommandRunner, name string, args ...string) {
+	fr.Responses[cmdKey(name, args)] = testutil.FakeResponse{ExitCode: 0}
 }
 
 // --- Unit tests: plist/unit generation ---
@@ -43,7 +36,7 @@ func wasCalled(fr *testutil.FakeCommandRunner, name string, args []string) bool 
 func TestGenerateLaunchdPlist_ContainsRequiredFields(t *testing.T) {
 	t.Parallel()
 	cfg := testConfig(t)
-	plist, err := GenerateLaunchdPlist(cfg)
+	plist, err := generateLaunchdPlist(cfg)
 	require.NoError(t, err)
 
 	assert.Contains(t, plist, "<string>"+LaunchdLabel+"</string>")
@@ -54,7 +47,7 @@ func TestGenerateLaunchdPlist_ContainsRequiredFields(t *testing.T) {
 	assert.Contains(t, plist, "<key>RunAtLoad</key>")
 	assert.Contains(t, plist, "<true/>")
 	assert.Contains(t, plist, "<key>KeepAlive</key>")
-	assert.Contains(t, plist, filepath.Join(cfg.DataDir, "agencyd.log"))
+	assert.Contains(t, plist, daemonLogPath(cfg))
 	assert.Contains(t, plist, "<?xml version=")
 	assert.Contains(t, plist, "<!DOCTYPE plist")
 }
@@ -66,7 +59,7 @@ func TestGenerateLaunchdPlist_XMLEscapesValues(t *testing.T) {
 		DataDir: `/home/user/.local/share/agency&"quoted"`,
 		HomeDir: t.TempDir(),
 	}
-	plist, err := GenerateLaunchdPlist(cfg)
+	plist, err := generateLaunchdPlist(cfg)
 	require.NoError(t, err)
 
 	// Angle brackets, ampersands, and quotes must be escaped.
@@ -79,7 +72,7 @@ func TestGenerateLaunchdPlist_XMLEscapesValues(t *testing.T) {
 func TestGenerateSystemdUnit_ContainsRequiredFields(t *testing.T) {
 	t.Parallel()
 	cfg := testConfig(t)
-	unit, err := GenerateSystemdUnit(cfg)
+	unit, err := generateSystemdUnit(cfg)
 	require.NoError(t, err)
 
 	assert.Contains(t, unit, "[Unit]")
@@ -89,25 +82,9 @@ func TestGenerateSystemdUnit_ContainsRequiredFields(t *testing.T) {
 	assert.Contains(t, unit, cfg.ExePath+" daemon start --foreground")
 	assert.Contains(t, unit, "Restart=on-failure")
 	assert.Contains(t, unit, "RestartSec=5")
-	assert.Contains(t, unit, filepath.Join(cfg.DataDir, "agencyd.log"))
+	assert.Contains(t, unit, daemonLogPath(cfg))
 	assert.Contains(t, unit, "[Install]")
 	assert.Contains(t, unit, "WantedBy=default.target")
-}
-
-// --- Unit tests: service file paths ---
-
-func TestLaunchdManager_ServiceFilePath(t *testing.T) {
-	t.Parallel()
-	m := NewLaunchdManager(nil)
-	cfg := ServiceConfig{HomeDir: "/Users/alice"}
-	assert.Equal(t, "/Users/alice/Library/LaunchAgents/com.agency.daemon.plist", m.ServiceFilePath(cfg))
-}
-
-func TestSystemdManager_ServiceFilePath(t *testing.T) {
-	t.Parallel()
-	m := NewSystemdManager(nil)
-	cfg := ServiceConfig{HomeDir: "/home/alice"}
-	assert.Equal(t, "/home/alice/.config/systemd/user/agency-daemon.service", m.ServiceFilePath(cfg))
 }
 
 // --- Unit tests: DetectForOS ---
@@ -141,15 +118,15 @@ func TestLaunchdManager_Install_Success(t *testing.T) {
 	t.Parallel()
 	cfg := testConfig(t)
 	fr := testutil.NewFakeCommandRunner()
-	// FakeCommandRunner returns success by default for unknown commands,
-	// so no explicit setup needed for launchctl load.
 
 	m := NewLaunchdManager(fr)
+	plistPath := m.ServiceFilePath(cfg)
+	commandSucceeds(fr, "launchctl", "load", "-w", plistPath)
+
 	err := m.Install(context.Background(), cfg)
 	require.NoError(t, err)
 
 	// Verify plist was written.
-	plistPath := m.ServiceFilePath(cfg)
 	assert.FileExists(t, plistPath)
 	data, err := os.ReadFile(plistPath)
 	require.NoError(t, err)
@@ -157,7 +134,7 @@ func TestLaunchdManager_Install_Success(t *testing.T) {
 	assert.Contains(t, string(data), "--foreground")
 
 	// Verify launchctl was called.
-	assert.True(t, wasCalled(fr, "launchctl", []string{"load", "-w", plistPath}))
+	assert.Contains(t, fr.Calls, cmdKey("launchctl", []string{"load", "-w", plistPath}))
 }
 
 func TestLaunchdManager_Install_AlreadyInstalled(t *testing.T) {
@@ -188,6 +165,7 @@ func TestLaunchdManager_Uninstall_Success(t *testing.T) {
 	plistPath := m.ServiceFilePath(cfg)
 	require.NoError(t, os.MkdirAll(filepath.Dir(plistPath), 0o755))
 	require.NoError(t, os.WriteFile(plistPath, []byte("existing"), 0o644))
+	commandSucceeds(fr, "launchctl", "unload", "-w", plistPath)
 
 	err := m.Uninstall(context.Background(), cfg)
 	require.NoError(t, err)
@@ -230,7 +208,9 @@ func TestSystemdManager_Install_Success(t *testing.T) {
 	t.Parallel()
 	cfg := testConfig(t)
 	fr := testutil.NewFakeCommandRunner()
-	// FakeCommandRunner returns success by default.
+	commandSucceeds(fr, "systemctl", "--user", "daemon-reload")
+	commandSucceeds(fr, "systemctl", "--user", "enable", SystemdUnit)
+	commandSucceeds(fr, "systemctl", "--user", "start", SystemdUnit)
 
 	m := NewSystemdManager(fr)
 	err := m.Install(context.Background(), cfg)
@@ -244,18 +224,20 @@ func TestSystemdManager_Install_Success(t *testing.T) {
 	assert.Contains(t, string(data), cfg.ExePath)
 	assert.Contains(t, string(data), "--foreground")
 
-	// Verify systemctl was called in order.
-	assert.True(t, wasCalled(fr, "systemctl", []string{"--user", "daemon-reload"}))
-	assert.True(t, wasCalled(fr, "systemctl", []string{"--user", "enable", SystemdUnit}))
-	assert.True(t, wasCalled(fr, "systemctl", []string{"--user", "start", SystemdUnit}))
+	// Verify systemctl was called.
+	assert.Contains(t, fr.Calls, cmdKey("systemctl", []string{"--user", "daemon-reload"}))
+	assert.Contains(t, fr.Calls, cmdKey("systemctl", []string{"--user", "enable", SystemdUnit}))
+	assert.Contains(t, fr.Calls, cmdKey("systemctl", []string{"--user", "start", SystemdUnit}))
 }
 
 func TestSystemdManager_Install_SystemctlEnableFails(t *testing.T) {
 	t.Parallel()
 	cfg := testConfig(t)
 	fr := testutil.NewFakeCommandRunner()
-	// daemon-reload succeeds, but enable fails.
+	commandSucceeds(fr, "systemctl", "--user", "daemon-reload")
 	fr.Responses["systemctl --user enable "+SystemdUnit] = testutil.FakeResponse{ExitCode: 1, Stderr: "enable error"}
+	commandSucceeds(fr, "systemctl", "--user", "stop", SystemdUnit)
+	commandSucceeds(fr, "systemctl", "--user", "disable", SystemdUnit)
 
 	m := NewSystemdManager(fr)
 	err := m.Install(context.Background(), cfg)
@@ -296,6 +278,9 @@ func TestSystemdManager_Uninstall_Success(t *testing.T) {
 	unitPath := m.ServiceFilePath(cfg)
 	require.NoError(t, os.MkdirAll(filepath.Dir(unitPath), 0o755))
 	require.NoError(t, os.WriteFile(unitPath, []byte("existing"), 0o644))
+	commandSucceeds(fr, "systemctl", "--user", "stop", SystemdUnit)
+	commandSucceeds(fr, "systemctl", "--user", "disable", SystemdUnit)
+	commandSucceeds(fr, "systemctl", "--user", "daemon-reload")
 
 	err := m.Uninstall(context.Background(), cfg)
 	require.NoError(t, err)

@@ -5,13 +5,8 @@ import (
 	"strings"
 )
 
-// ClaudeAdapter parses Claude CLI stream-json output.
-type ClaudeAdapter struct{}
-
-// Name returns the runner name.
-func (a *ClaudeAdapter) Name() string {
-	return "claude-code"
-}
+// claudeAdapter parses Claude CLI stream-json output.
+type claudeAdapter struct{}
 
 // claudeRawEvent represents a raw event from Claude stream-json output.
 type claudeRawEvent struct {
@@ -62,35 +57,35 @@ type claudeContentBlock struct {
 }
 
 // ParseLine parses a single JSONL line from Claude output.
-func (a *ClaudeAdapter) ParseLine(line []byte) (*ParseResult, error) {
+func (a *claudeAdapter) ParseLine(line []byte) (*parseResult, error) {
 	var raw claudeRawEvent
 	if err := json.Unmarshal(line, &raw); err != nil {
 		return nil, err
 	}
 
-	result := &ParseResult{}
+	result := &parseResult{}
 
 	switch raw.Type {
 	case "system":
 		if raw.Subtype == "init" {
-			result.Events = a.parseSystemInit(&raw)
+			result.events = a.parseSystemInit(&raw)
 		} else {
-			result.Events = []*NormalizedEvent{
+			result.events = []*normalizedEvent{
 				newUnknownRunnerEvent(raw.Type, "unsupported_system_subtype", line),
 			}
 		}
 
 	case "assistant":
-		result.Events = a.parseAssistant(&raw)
+		result.events = a.parseAssistant(&raw)
 
 	case "user":
-		result.Events = a.parseUser(&raw)
+		result.events = a.parseUser(&raw)
 
 	case "result":
-		result.Events = a.parseResult(&raw)
+		result.events = a.parseResult(&raw)
 
 	default:
-		result.Events = []*NormalizedEvent{
+		result.events = []*normalizedEvent{
 			newUnknownRunnerEvent(raw.Type, "unsupported_event_type", line),
 		}
 	}
@@ -99,9 +94,9 @@ func (a *ClaudeAdapter) ParseLine(line []byte) (*ParseResult, error) {
 }
 
 // parseSystemInit handles system:init events.
-func (a *ClaudeAdapter) parseSystemInit(raw *claudeRawEvent) []*NormalizedEvent {
-	event := &NormalizedEvent{
-		Kind: EventKindSessionStart,
+func (a *claudeAdapter) parseSystemInit(raw *claudeRawEvent) []*normalizedEvent {
+	event := &normalizedEvent{
+		Kind: eventKindSessionStart,
 		Data: make(map[string]interface{}),
 	}
 
@@ -115,19 +110,19 @@ func (a *ClaudeAdapter) parseSystemInit(raw *claudeRawEvent) []*NormalizedEvent 
 		event.Data["session_id"] = raw.SessionID
 	}
 
-	return []*NormalizedEvent{event}
+	return []*normalizedEvent{event}
 }
 
 // parseAssistant handles assistant message events.
-func (a *ClaudeAdapter) parseAssistant(raw *claudeRawEvent) []*NormalizedEvent {
-	event := &NormalizedEvent{
-		Kind: EventKindMessage,
+func (a *claudeAdapter) parseAssistant(raw *claudeRawEvent) []*normalizedEvent {
+	event := &normalizedEvent{
+		Kind: eventKindMessage,
 		Data: make(map[string]interface{}),
 	}
 
 	event.Data["role"] = "assistant"
 	event.Data["has_tool_use"] = false
-	event.Data["message_family"] = MessageFamilyAssistant
+	event.Data["message_family"] = messageFamilyAssistant
 
 	if raw.Message != nil && len(raw.Message.Content) > 0 {
 		// Parse content blocks
@@ -196,21 +191,21 @@ func (a *ClaudeAdapter) parseAssistant(raw *claudeRawEvent) []*NormalizedEvent {
 			}
 		}
 	}
-	return []*NormalizedEvent{event}
+	return []*normalizedEvent{event}
 }
 
 // parseUser handles user message events (tool results).
-func (a *ClaudeAdapter) parseUser(raw *claudeRawEvent) []*NormalizedEvent {
-	event := &NormalizedEvent{
-		Kind: EventKindMessage,
+func (a *claudeAdapter) parseUser(raw *claudeRawEvent) []*normalizedEvent {
+	event := &normalizedEvent{
+		Kind: eventKindMessage,
 		Data: make(map[string]interface{}),
 	}
 
 	event.Data["role"] = "user"
 	event.Data["has_tool_use"] = false
-	messageFamily := MessageFamilyPrompt
+	messageFamily := messageFamilyPrompt
 	if raw.ToolUseResult != nil {
-		messageFamily = MessageFamilyToolResult
+		messageFamily = messageFamilyToolResult
 	}
 
 	if raw.Message != nil && len(raw.Message.Content) > 0 {
@@ -251,7 +246,7 @@ func (a *ClaudeAdapter) parseUser(raw *claudeRawEvent) []*NormalizedEvent {
 						}
 					}
 					if hasToolResult {
-						messageFamily = MessageFamilyToolResult
+						messageFamily = messageFamilyToolResult
 					}
 					if len(enrichedBlocks) > 0 {
 						event.Data["content_blocks"] = enrichedBlocks
@@ -263,7 +258,7 @@ func (a *ClaudeAdapter) parseUser(raw *claudeRawEvent) []*NormalizedEvent {
 			}
 		}
 	}
-	if messageFamily == MessageFamilyToolResult {
+	if messageFamily == messageFamilyToolResult {
 		if _, hasText := event.Data["text"]; !hasText && raw.ToolUseResult != nil {
 			switch v := raw.ToolUseResult.(type) {
 			case string:
@@ -282,15 +277,15 @@ func (a *ClaudeAdapter) parseUser(raw *claudeRawEvent) []*NormalizedEvent {
 	}
 	event.Data["message_family"] = messageFamily
 
-	return []*NormalizedEvent{event}
+	return []*normalizedEvent{event}
 }
 
 // parseResult handles result events (success/error).
-func (a *ClaudeAdapter) parseResult(raw *claudeRawEvent) []*NormalizedEvent {
+func (a *claudeAdapter) parseResult(raw *claudeRawEvent) []*normalizedEvent {
 	success, failureReason := claudeResultSucceeded(raw)
 	if !success {
-		event := &NormalizedEvent{
-			Kind: EventKindError,
+		event := &normalizedEvent{
+			Kind: eventKindError,
 			Data: make(map[string]interface{}),
 		}
 
@@ -311,12 +306,12 @@ func (a *ClaudeAdapter) parseResult(raw *claudeRawEvent) []*NormalizedEvent {
 		if failureReason != "" {
 			event.Data["result_state"] = failureReason
 		}
-		return []*NormalizedEvent{event}
+		return []*normalizedEvent{event}
 	}
 
 	// Success result
-	event := &NormalizedEvent{
-		Kind: EventKindFinal,
+	event := &normalizedEvent{
+		Kind: eventKindFinal,
 		Data: make(map[string]interface{}),
 	}
 
@@ -341,14 +336,14 @@ func (a *ClaudeAdapter) parseResult(raw *claudeRawEvent) []*NormalizedEvent {
 		}
 		event.Data["usage"] = usage
 	}
-	return []*NormalizedEvent{event}
+	return []*normalizedEvent{event}
 }
 
 func claudeResultSucceeded(raw *claudeRawEvent) (bool, string) {
 	subtype := strings.ToLower(strings.TrimSpace(raw.Subtype))
 	switch subtype {
 	case "":
-		// Fall back to result status token checks below.
+		// Use result status tokens when no explicit subtype was emitted.
 	case "success":
 		return true, ""
 	case "error", "failed", "failure", "canceled", "cancelled", "timeout", "timed_out", "interrupted":

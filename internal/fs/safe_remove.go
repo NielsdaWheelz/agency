@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // ErrNotUnderPrefix is returned when a target path is not under the allowed prefix.
@@ -53,25 +52,10 @@ func SafeRemoveAll(target, allowedPrefix string) error {
 	}
 
 	// Check if target is under prefix (true subpath, not equal)
-	if !isSubpath(resolvedTarget, resolvedPrefix) {
+	if resolvedTarget == resolvedPrefix || !PathContains(resolvedPrefix, resolvedTarget) {
 		return &ErrNotUnderPrefix{Target: target, Prefix: allowedPrefix}
 	}
 
 	// Safe to remove
 	return os.RemoveAll(cleanTarget)
-}
-
-// isSubpath returns true if target is a proper subpath of prefix.
-// Both paths should already be cleaned and resolved.
-// Returns false if target equals prefix or is outside prefix.
-func isSubpath(target, prefix string) bool {
-	// Ensure prefix ends with separator for proper matching
-	prefixWithSep := prefix
-	if !strings.HasSuffix(prefixWithSep, string(filepath.Separator)) {
-		prefixWithSep = prefix + string(filepath.Separator)
-	}
-
-	// Target must start with prefix+separator AND be longer than prefix
-	// This ensures target is a proper subpath, not equal to prefix
-	return strings.HasPrefix(target, prefixWithSep) && len(target) > len(prefix)
 }

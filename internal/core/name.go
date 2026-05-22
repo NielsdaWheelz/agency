@@ -9,8 +9,8 @@ import (
 
 // Name validation constants.
 const (
-	NameMinLen = 2
-	NameMaxLen = 40
+	nameMinLen = 2
+	nameMaxLen = 40
 )
 
 // namePattern validates run names:
@@ -31,14 +31,14 @@ var namePattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
 //   - No consecutive hyphens
 //   - No trailing hyphen
 func ValidateName(name string) error {
-	if len(name) < NameMinLen {
+	if len(name) < nameMinLen {
 		return errors.NewWithDetails(
 			errors.EInvalidName,
 			"name must be at least 2 characters",
 			map[string]string{"name": name, "min_length": "2"},
 		)
 	}
-	if len(name) > NameMaxLen {
+	if len(name) > nameMaxLen {
 		return errors.NewWithDetails(
 			errors.EInvalidName,
 			"name must be at most 40 characters",

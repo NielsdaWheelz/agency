@@ -33,14 +33,24 @@ func (s *Server) handleGetInvocationCheck(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	checkData := s.buildInvocationCheck(record)
+	checkData, err := s.buildInvocationCheck(record)
+	if err != nil {
+		s.writeInvocationTimelineReadError(w, requestID, err)
+		return
+	}
 	s.writeAPIResponse(w, requestID, checkData)
 }
 
-func (s *Server) buildInvocationCheck(record *resolvedInvocation) InvocationCheckData {
+func (s *Server) buildInvocationCheck(record *resolvedInvocation) (InvocationCheckData, error) {
 	meta := record.Meta
-	timelineEntries := s.collectTimelineEntries(record)
-	projection := s.projectInvocationReadSurface(record, "", "", s.Clock(), timelineEntries)
+	timelineEntries, err := s.collectTimelineEntries(record)
+	if err != nil {
+		return InvocationCheckData{}, err
+	}
+	projection, err := s.projectInvocationReadSurface(record, "", "", s.clock(), timelineEntries)
+	if err != nil {
+		return InvocationCheckData{}, err
+	}
 	dto := projection.DTO
 	runnerMeta := projection.RunnerMeta
 	runnerErr := projection.RunnerErr
@@ -78,7 +88,7 @@ func (s *Server) buildInvocationCheck(record *resolvedInvocation) InvocationChec
 	}
 
 	switch data.State {
-	case string(InvocationStateWaiting):
+	case string(invocationStateWaiting):
 		message := "invocation is waiting"
 		hint := "send a follow-up prompt or inspect history/logs"
 		switch data.Reason {
@@ -96,7 +106,7 @@ func (s *Server) buildInvocationCheck(record *resolvedInvocation) InvocationChec
 			Message: message,
 			Hint:    hint,
 		})
-	case string(InvocationStateFailed):
+	case string(invocationStateFailed):
 		message := "invocation failed"
 		hint := "inspect history/logs and restore a checkpoint if needed"
 		switch data.Reason {
@@ -182,7 +192,7 @@ func (s *Server) buildInvocationCheck(record *resolvedInvocation) InvocationChec
 			})
 		}
 	}
-	return data
+	return data, nil
 }
 
 func projectInvocationCheckNavigation(dto InvocationDTO, meta *store.InvocationMeta) InvocationCheckNavigation {

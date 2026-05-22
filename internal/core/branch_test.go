@@ -1,10 +1,6 @@
 package core
 
-import (
-	"testing"
-
-	"github.com/stretchr/testify/assert"
-)
+import "testing"
 
 func TestBranchName(t *testing.T) {
 	t.Parallel()
@@ -54,12 +50,13 @@ func TestBranchName(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.testName, func(t *testing.T) {
 			t.Parallel()
 
 			got := BranchName(tt.name, tt.runID)
-			assert.Equal(t, tt.expect, got)
+			if got != tt.expect {
+				t.Fatalf("BranchName(%q, %q) = %q, want %q", tt.name, tt.runID, got, tt.expect)
+			}
 		})
 	}
 }

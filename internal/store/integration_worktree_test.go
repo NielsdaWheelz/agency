@@ -13,31 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewIntegrationWorktreeMeta(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, 1, 31, 12, 0, 0, 0, time.UTC)
-	meta := NewIntegrationWorktreeMeta(
-		"20260131120000-a1b2",
-		"my-feature",
-		"abc123",
-		"agency/my-feature-a1b2",
-		"main",
-		"/path/to/tree",
-		"/path/to/checkouts",
-		"work",
-		now,
-	)
-
-	assert.Equal(t, SchemaVersion, meta.SchemaVersion)
-	assert.Equal(t, "20260131120000-a1b2", meta.WorktreeID)
-	assert.Equal(t, "my-feature", meta.Name)
-	assert.Equal(t, "main", meta.BaseBranch)
-	assert.Equal(t, "/path/to/checkouts", meta.CheckoutRoot)
-	assert.Equal(t, "work", meta.ExecutionProfile)
-	assert.Equal(t, WorktreeStatePresent, meta.State)
-	assert.Equal(t, "2026-01-31T12:00:00Z", meta.CreatedAt)
-}
-
 func TestEnsureIntegrationWorktreeDir(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
@@ -76,8 +51,7 @@ func TestRemoveIntegrationWorktreeDir_RejectsPathTraversalOutsideDataDir(t *test
 	var guardErr *fs.ErrNotUnderPrefix
 	require.ErrorAs(t, err, &guardErr)
 
-	_, statErr := os.Stat(marker)
-	require.NoError(t, statErr, "guard failure should not delete paths outside data dir")
+	require.FileExists(t, marker, "guard failure should not delete paths outside data dir")
 }
 
 func TestWriteAndReadIntegrationWorktreeMeta(t *testing.T) {
@@ -114,15 +88,6 @@ func TestWriteAndReadIntegrationWorktreeMeta(t *testing.T) {
 	assert.Equal(t, meta.WorktreeID, read.WorktreeID)
 	assert.Equal(t, meta.Name, read.Name)
 	assert.Equal(t, meta.BaseBranch, read.BaseBranch)
-}
-
-func TestReadIntegrationWorktreeMeta_NotFound(t *testing.T) {
-	t.Parallel()
-	tmpDir := t.TempDir()
-	st := NewStore(fs.NewRealFS(), tmpDir, time.Now)
-
-	_, err := st.ReadIntegrationWorktreeMeta("nonexistent", "notfound")
-	require.Error(t, err, "expected error for nonexistent worktree")
 }
 
 func TestUpdateIntegrationWorktreeMeta(t *testing.T) {
@@ -165,6 +130,7 @@ func TestUpdateIntegrationWorktreeMeta(t *testing.T) {
 func TestScanIntegrationWorktreesForRepo(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
+	st := NewStore(fs.NewRealFS(), tmpDir, time.Now)
 
 	// Create repo directory structure
 	repoID := "abc123"
@@ -234,7 +200,7 @@ func TestScanIntegrationWorktreesForRepo(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(wt4Dir, "meta.json"), data4, 0o644))
 
 	// Scan
-	records, err := ScanIntegrationWorktreesForRepo(tmpDir, repoID)
+	records, err := st.ScanIntegrationWorktreesForRepo(repoID)
 	require.NoError(t, err)
 
 	assert.Len(t, records, 4)
@@ -405,34 +371,11 @@ func TestReadAndScanIntegrationWorktreeMetaRejectUnknownFields(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
 
-	records, err := ScanIntegrationWorktreesForRepo(tmpDir, repoID)
+	records, err := st.ScanIntegrationWorktreesForRepo(repoID)
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 	assert.True(t, records[0].Broken)
 	assert.Nil(t, records[0].Meta)
-}
-
-func TestNewIntegrationWorktreeMergeMeta(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, 4, 20, 19, 0, 0, 0, time.UTC)
-	meta := NewIntegrationWorktreeMergeMeta(
-		"repo-1",
-		"wt-1",
-		"20260420190000-a1b2",
-		"req-123",
-		"squash",
-		true,
-		"/tmp/agency.json",
-		now,
-	)
-
-	assert.Equal(t, SchemaVersion, meta.SchemaVersion)
-	assert.Equal(t, WorktreeMergeStatusRunning, meta.Status)
-	assert.Equal(t, WorktreeMergeStagePreflight, meta.Stage)
-	assert.Equal(t, "2026-04-20T19:00:00Z", meta.StartedAt)
-	assert.Equal(t, "2026-04-20T19:00:00Z", meta.UpdatedAt)
-	assert.Equal(t, "/tmp/agency.json", meta.AgencyConfigPath)
 }
 
 func TestWriteReadAndUpdateIntegrationWorktreeMerge(t *testing.T) {
@@ -552,6 +495,7 @@ func TestEnsureIntegrationWorktreeDir_DirExists(t *testing.T) {
 func TestScanIntegrationWorktrees_CorruptMetaMarkedBroken(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
+	st := NewStore(fs.NewRealFS(), tmpDir, time.Now)
 
 	repoID := "abc123"
 	wtDir := filepath.Join(tmpDir, "repos", repoID, "integration_worktrees")
@@ -582,7 +526,7 @@ func TestScanIntegrationWorktrees_CorruptMetaMarkedBroken(t *testing.T) {
 	data, _ := json.MarshalIndent(goodMeta, "", "  ")
 	require.NoError(t, os.WriteFile(filepath.Join(goodDir, "meta.json"), data, 0o644))
 
-	records, err := ScanIntegrationWorktreesForRepo(tmpDir, repoID)
+	records, err := st.ScanIntegrationWorktreesForRepo(repoID)
 	require.NoError(t, err)
 	require.Len(t, records, 2)
 

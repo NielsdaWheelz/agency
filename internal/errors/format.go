@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -14,10 +14,6 @@ import (
 type PrintOptions struct {
 	// Verbose enables detailed error output with more context keys and longer tails.
 	Verbose bool
-
-	// Tailer provides output tail lines for verify failures.
-	// If nil, PrintWithOptions reads verify.log directly (bounded I/O).
-	Tailer func(logPath string, maxLines int) ([]string, error)
 }
 
 // Context key whitelist (default mode, in order per spec)
@@ -80,10 +76,10 @@ const (
 	maxOutputLineLen = 512 // Max chars per line in output blocks
 )
 
-// Format formats an error for display without I/O.
+// formatError formats an error for display without I/O.
 // This is a pure function - it never reads files or performs network I/O.
 // Returns the formatted string ready for printing.
-func Format(err error, opts PrintOptions) string {
+func formatError(err error, opts PrintOptions) string {
 	if err == nil {
 		return ""
 	}
@@ -92,7 +88,7 @@ func Format(err error, opts PrintOptions) string {
 
 	ae, isAgency := AsAgencyError(err)
 	if !isAgency {
-		// Fallback for non-AgencyError errors
+		// Plain errors are printed as their message.
 		sb.WriteString(err.Error())
 		sb.WriteString("\n")
 		return sb.String()
@@ -148,7 +144,7 @@ func Format(err error, opts PrintOptions) string {
 			}
 		}
 		if len(extraKeys) > 0 {
-			sort.Strings(extraKeys)
+			slices.Sort(extraKeys)
 			sb.WriteString("\nextra:\n")
 			for _, key := range extraKeys {
 				val := ae.Details[key]
@@ -192,7 +188,7 @@ func PrintWithOptions(w io.Writer, err error, opts PrintOptions) {
 	}
 
 	// Get the base formatted output
-	output := Format(err, opts)
+	output := formatError(err, opts)
 
 	ae, isAgency := AsAgencyError(err)
 
@@ -210,15 +206,7 @@ func PrintWithOptions(w io.Writer, err error, opts PrintOptions) {
 				maxChars = verboseMaxChars
 			}
 
-			var lines []string
-			var tailErr error
-
-			if opts.Tailer != nil {
-				lines, tailErr = opts.Tailer(logPath, maxLines)
-			} else {
-				lines, tailErr = readTail(logPath, maxLines, maxChars)
-			}
-
+			lines, tailErr := readTail(logPath, maxLines, maxChars)
 			if tailErr == nil && len(lines) > 0 {
 				// Insert output block before hint line
 				output = insertOutputBlock(output, lines, maxLines)

@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -150,7 +149,6 @@ func TestRunnerStatus_Validate(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			err := tt.status.Validate()
@@ -159,77 +157,6 @@ func TestRunnerStatus_Validate(t *testing.T) {
 				return
 			}
 			assert.NoError(t, err)
-		})
-	}
-}
-
-func TestRunnerStatus_Age(t *testing.T) {
-	t.Parallel()
-
-	t.Run("nil status", func(t *testing.T) {
-		t.Parallel()
-
-		var s *RunnerStatus
-		assert.Equal(t, time.Duration(0), s.Age())
-	})
-
-	t.Run("empty updated_at", func(t *testing.T) {
-		t.Parallel()
-
-		s := &RunnerStatus{UpdatedAt: ""}
-		assert.Equal(t, time.Duration(0), s.Age())
-	})
-
-	t.Run("invalid updated_at", func(t *testing.T) {
-		t.Parallel()
-
-		s := &RunnerStatus{UpdatedAt: "not-a-timestamp"}
-		assert.Equal(t, time.Duration(0), s.Age())
-	})
-
-	t.Run("valid updated_at", func(t *testing.T) {
-		t.Parallel()
-
-		fiveMinutesAgo := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
-		s := &RunnerStatus{UpdatedAt: fiveMinutesAgo}
-		age := s.Age()
-		assert.True(t, age >= 4*time.Minute && age <= 6*time.Minute, "Age() = %v, want ~5m", age)
-	})
-}
-
-func TestNewInitial(t *testing.T) {
-	t.Parallel()
-
-	s := NewInitial()
-	assert.Equal(t, SchemaVersion, s.SchemaVersion)
-	assert.Equal(t, StateRunning, s.State)
-	assert.Equal(t, "Starting work", s.Summary)
-	assert.NotEmpty(t, s.UpdatedAt)
-	_, err := time.Parse(time.RFC3339, s.UpdatedAt)
-	assert.NoError(t, err)
-}
-
-func TestState_IsValid(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		state State
-		want  bool
-	}{
-		{StateRunning, true},
-		{StateWaiting, true},
-		{StateSucceeded, true},
-		{StateFailed, true},
-		{"", false},
-		{"invalid", false},
-		{"Running", false},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(string(tt.state), func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.want, tt.state.IsValid())
 		})
 	}
 }

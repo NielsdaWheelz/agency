@@ -21,7 +21,7 @@ func TestModel_WorkspaceSelection_ReconcilesByInvocationID(t *testing.T) {
 	t.Parallel()
 
 	m := newModel(context.Background(), nil, RunOptions{Interval: 2 * time.Second})
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Invocations: []daemon.InvocationDTO{
 			{InvocationID: "inv-1", RepoID: "repo-1"},
 			{InvocationID: "inv-2", RepoID: "repo-2"},
@@ -34,7 +34,7 @@ func TestModel_WorkspaceSelection_ReconcilesByInvocationID(t *testing.T) {
 	m.workspaceLoading = true
 
 	next, _ := m.Update(snapshotLoadedMsg{
-		snapshot: Snapshot{
+		snapshot: snapshot{
 			Invocations: []daemon.InvocationDTO{
 				{InvocationID: "inv-3", RepoID: "repo-3"},
 				{InvocationID: "inv-2", RepoID: "repo-2"},
@@ -59,7 +59,7 @@ func TestModel_WorkspaceSelection_SelectsFirstAgentWhenPreviousSelectionDisappea
 	m.workspaceLoading = true
 
 	next, _ := m.Update(snapshotLoadedMsg{
-		snapshot: Snapshot{
+		snapshot: snapshot{
 			Invocations: []daemon.InvocationDTO{
 				{InvocationID: "inv-1", RepoID: "repo-1"},
 				{InvocationID: "inv-2", RepoID: "repo-2"},
@@ -77,7 +77,7 @@ func TestModel_WorkspaceNavigation_TracksSelectedInvocationIdentity(t *testing.T
 	t.Parallel()
 
 	m := newModel(context.Background(), nil, RunOptions{Interval: 2 * time.Second})
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Invocations: []daemon.InvocationDTO{
 			{InvocationID: "inv-1", RepoID: "repo-1"},
 			{InvocationID: "inv-2", RepoID: "repo-2"},
@@ -130,7 +130,7 @@ func TestModel_WorkspaceEnterScopesRepoAndWorktree(t *testing.T) {
 	t.Parallel()
 
 	m := newModel(context.Background(), nil, RunOptions{Interval: 2 * time.Second})
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Repos: []daemon.RepoDTO{
 			{RepoID: "repo-1", RepoKey: "github.com/acme/one"},
 			{RepoID: "repo-2", RepoKey: "github.com/acme/two"},
@@ -177,7 +177,7 @@ func TestModel_WorkspaceBroadensWorktreeThenRepo(t *testing.T) {
 	m.activeRepoID = "repo-1"
 	m.activeWorktreeID = "wt-1"
 	m.workspaceFocus = workspacePaneAgents
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Repos:       []daemon.RepoDTO{{RepoID: "repo-1"}},
 		Worktrees:   []daemon.WorktreeDTO{{WorktreeID: "wt-1", RepoID: "repo-1"}},
 		Invocations: []daemon.InvocationDTO{{InvocationID: "inv-1", RepoID: "repo-1", WorktreeID: "wt-1"}},
@@ -214,7 +214,7 @@ func TestModel_WorkspaceSnapshotInvalidScopeTriggersReload(t *testing.T) {
 
 	next, cmd := m.Update(snapshotLoadedMsg{
 		repoID: "repo-missing",
-		snapshot: Snapshot{
+		snapshot: snapshot{
 			Repos: []daemon.RepoDTO{{RepoID: "repo-1"}},
 		},
 	})
@@ -229,7 +229,7 @@ func TestModel_PageSwitchingBetweenWorkspaceHistoryAndLogs(t *testing.T) {
 	t.Parallel()
 
 	m := newModel(context.Background(), nil, RunOptions{Interval: 2 * time.Second})
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Invocations: []daemon.InvocationDTO{
 			{InvocationID: "inv-1", RepoID: "repo-1", WorktreeID: "wt-1"},
 		},
@@ -256,7 +256,7 @@ func TestModel_ActionAttach_QuitsAndDefersAttach(t *testing.T) {
 	t.Parallel()
 
 	m := newModel(context.Background(), nil, RunOptions{})
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Invocations: []daemon.InvocationDTO{
 			{InvocationID: "inv-1", RepoID: "repo-1", Mode: "headed", State: string(runnerstatus.StateRunning)},
 		},
@@ -293,7 +293,7 @@ func TestModel_ActionAttach_MissingSessionOpensActionsAndAllowsRecreate(t *testi
 			return "", nil
 		},
 	})
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Invocations: []daemon.InvocationDTO{
 			{InvocationID: "inv-1", RepoID: "repo-1", Mode: "headed", State: string(runnerstatus.StateRunning)},
 		},
@@ -323,7 +323,7 @@ func TestModel_ActionAttach_HeadlessInvocationStaysInTUI(t *testing.T) {
 	t.Parallel()
 
 	m := newModel(context.Background(), nil, RunOptions{})
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Invocations: []daemon.InvocationDTO{
 			{InvocationID: "inv-1", RepoID: "repo-1", Mode: "headless", State: string(runnerstatus.StateRunning)},
 		},
@@ -346,7 +346,7 @@ func TestModel_ActionAttach_NonRunningInvocationStaysInTUI(t *testing.T) {
 	t.Parallel()
 
 	m := newModel(context.Background(), nil, RunOptions{})
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Invocations: []daemon.InvocationDTO{
 			{
 				InvocationID: "inv-1",
@@ -380,7 +380,7 @@ func TestModel_ActionPRSync_MissingWorktreeIDIsRecoverable(t *testing.T) {
 			return "", nil
 		},
 	})
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Invocations: []daemon.InvocationDTO{
 			{InvocationID: "inv-1", RepoID: "repo-1"},
 			{InvocationID: "inv-2", RepoID: "repo-2", WorktreeID: "wt-2"},
@@ -406,7 +406,7 @@ func TestModel_ActionOpenSuccessUsesConfiguredOutput(t *testing.T) {
 			return "opened sandbox", nil
 		},
 	})
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Invocations: []daemon.InvocationDTO{
 			{InvocationID: "inv-1", RepoID: "repo-1"},
 		},
@@ -429,7 +429,7 @@ func TestModel_WorkspaceStateTogglesReload(t *testing.T) {
 
 	m := newModel(context.Background(), nil, RunOptions{})
 	m.activeWorktreeID = "wt-archived"
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Worktrees: []daemon.WorktreeDTO{
 			{WorktreeID: "wt-present", State: "present"},
 			{WorktreeID: "wt-archived", State: "archived"},
@@ -474,7 +474,7 @@ func TestModel_WorkspaceView_FiltersArchivedWorktreesByDefault(t *testing.T) {
 	m := newModel(context.Background(), nil, RunOptions{})
 	m.width = 160
 	m.height = 30
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Repos: []daemon.RepoDTO{{RepoID: "repo-1", RepoKey: "github.com/acme/repo"}},
 		Worktrees: []daemon.WorktreeDTO{
 			{WorktreeID: "wt-present", WorktreeName: "live-work", RepoID: "repo-1", State: "present"},
@@ -501,7 +501,7 @@ func TestModel_WorkspaceView_CompactLayoutDoesNotStackEveryPane(t *testing.T) {
 	m := newModel(context.Background(), nil, RunOptions{})
 	m.width = 100
 	m.height = 24
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Repos:     []daemon.RepoDTO{{RepoID: "repo-1", RepoKey: "github.com/acme/repo"}},
 		Worktrees: []daemon.WorktreeDTO{{WorktreeID: "wt-1", WorktreeName: "auth", RepoID: "repo-1", State: "present"}},
 		Invocations: []daemon.InvocationDTO{
@@ -535,7 +535,7 @@ func TestModel_WorkspaceView_ShowsUnifiedActionsAndActivityProjection(t *testing
 	})
 	m.width = 420
 	m.height = 28
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Repos:     []daemon.RepoDTO{{RepoID: repoID, RepoKey: "github.com/acme/one"}},
 		Worktrees: []daemon.WorktreeDTO{{WorktreeID: worktreeID, WorktreeName: "feature-auth"}},
 		Invocations: []daemon.InvocationDTO{
@@ -607,13 +607,13 @@ func TestModel_WorkspaceView_ShowsHeadedSessionFacts(t *testing.T) {
 
 	m := newModel(context.Background(), nil, RunOptions{
 		Recreate: func(context.Context, string, string) (string, error) { return "", nil },
-		SessionLoader: func(context.Context, string, string) (daemon.InvocationSessionData, error) {
-			return daemon.InvocationSessionData{}, nil
-		},
 	})
+	m.sessionLoader = func(context.Context, string, string) (daemon.InvocationSessionData, error) {
+		return daemon.InvocationSessionData{}, nil
+	}
 	m.width = 360
 	m.height = 28
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Repos: []daemon.RepoDTO{{RepoID: "repo-1", RepoKey: "github.com/acme/one"}},
 		Invocations: []daemon.InvocationDTO{
 			{
@@ -673,7 +673,7 @@ func TestTruncateWithEllipsis_UTF8Safe(t *testing.T) {
 	assert.LessOrEqual(t, lipgloss.Width(wide), 5)
 
 	row := model{
-		snapshot: Snapshot{
+		snapshot: snapshot{
 			Invocations: []daemon.InvocationDTO{
 				{
 					InvocationID:   "inv-wide",

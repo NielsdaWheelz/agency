@@ -29,43 +29,38 @@ func (f *invocationLogFiles) Close() {
 	}
 }
 
-func (s *Server) preferredInvocationLogsDir(repoID, invocationID string) string {
-	return s.Store.InvocationLogsDir(repoID, invocationID)
-}
-
 func (s *Server) readableInvocationLogPath(repoID, invocationID, kind string) string {
 	switch kind {
-	case "stderr":
-		return s.Store.InvocationStderrLogPath(repoID, invocationID)
-	case "stream":
-		return s.Store.InvocationStreamLogPath(repoID, invocationID)
-	case "hooks":
-		return s.Store.InvocationHooksLogPath(repoID, invocationID)
-	case "terminal":
-		return s.Store.InvocationTerminalLogPath(repoID, invocationID)
+	case InvocationLogKindStderr:
+		return s.store.InvocationStderrLogPath(repoID, invocationID)
+	case InvocationLogKindStream:
+		return s.store.InvocationStreamLogPath(repoID, invocationID)
+	case InvocationLogKindHooks:
+		return s.store.InvocationHooksLogPath(repoID, invocationID)
+	case InvocationLogKindTerminal:
+		return s.store.InvocationTerminalLogPath(repoID, invocationID)
 	default:
-		return s.Store.InvocationRawLogPath(repoID, invocationID)
+		return s.store.InvocationRawLogPath(repoID, invocationID)
 	}
 }
 
 func (s *Server) prepareWritableInvocationLogPath(repoID, invocationID, kind string) (string, error) {
-	path, err := s.Store.PrepareInvocationLogPath(repoID, invocationID, kind)
-	if err != nil {
+	if _, err := s.store.EnsureInvocationLogsDir(repoID, invocationID); err != nil {
 		return "", fmt.Errorf("prepare invocation %s log path: %w", kind, err)
 	}
-	return path, nil
+	return s.readableInvocationLogPath(repoID, invocationID, kind), nil
 }
 
 func (s *Server) openInvocationLogFiles(repoID, invocationID string) (*invocationLogFiles, error) {
-	rawPath, err := s.prepareWritableInvocationLogPath(repoID, invocationID, "raw")
+	rawPath, err := s.prepareWritableInvocationLogPath(repoID, invocationID, InvocationLogKindRaw)
 	if err != nil {
 		return nil, err
 	}
-	stderrPath, err := s.prepareWritableInvocationLogPath(repoID, invocationID, "stderr")
+	stderrPath, err := s.prepareWritableInvocationLogPath(repoID, invocationID, InvocationLogKindStderr)
 	if err != nil {
 		return nil, err
 	}
-	streamPath, err := s.prepareWritableInvocationLogPath(repoID, invocationID, "stream")
+	streamPath, err := s.prepareWritableInvocationLogPath(repoID, invocationID, InvocationLogKindStream)
 	if err != nil {
 		return nil, err
 	}

@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -124,8 +123,12 @@ func TestRequestIDContractMatrix_InvocationMutationAndCheckEndpoints(t *testing.
 
 			requestID, ok := payload["request_id"].(string)
 			require.True(t, ok, "response body must include request_id")
-			assert.Equal(t, customRequestID, requestID)
-			assert.Equal(t, requestID, w.Header().Get("X-Request-ID"))
+			if requestID != customRequestID {
+				t.Fatalf("response request_id = %q, want %q", requestID, customRequestID)
+			}
+			if got := w.Header().Get("X-Request-ID"); got != requestID {
+				t.Fatalf("X-Request-ID header = %q, want %q", got, requestID)
+			}
 		})
 	}
 }

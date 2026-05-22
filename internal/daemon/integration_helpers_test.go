@@ -18,7 +18,18 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
+	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
+
+type testDaemonTmuxClient interface {
+	HasSession(ctx context.Context, name string) (bool, error)
+	NewSession(ctx context.Context, name, cwd string, argv []string, env map[string]string) error
+	KillSession(ctx context.Context, name string) error
+	InterruptSession(ctx context.Context, name string) error
+	CaptureScrollback(ctx context.Context, target string) (string, error)
+	PipePane(ctx context.Context, target, logPath string) error
+	ListAttachedClients(ctx context.Context, name string) ([]tmux.AttachedClient, error)
+}
 
 // fakeRunnerPath returns the path to the compiled fake runner binary.
 // Set by TestMain in testmain_test.go via environment variable.
@@ -49,7 +60,7 @@ type fakeRunnerLaunchCapture struct {
 // startTestDaemon boots a real daemon server on a temp Unix socket and
 // returns a connected client. The server and socket are cleaned up when
 // the test finishes.
-func startTestDaemon(t *testing.T) *testDaemonEnv {
+func startTestDaemon(t *testing.T, tmuxClients ...testDaemonTmuxClient) *testDaemonEnv {
 	t.Helper()
 
 	dataDir := t.TempDir()
@@ -61,11 +72,15 @@ func startTestDaemon(t *testing.T) *testDaemonEnv {
 	})
 
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
-	srv := daemon.NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
-
-	// Use short debounce for checkpoint engine in tests.
-	testDebounce := 100 * time.Millisecond
-	srv.CheckpointDebounceOverride = &testDebounce
+	var tmuxClient testDaemonTmuxClient
+	if len(tmuxClients) > 0 {
+		tmuxClient = tmuxClients[0]
+	}
+	runner := exec.NewRealRunner()
+	if tmuxClient != nil {
+		runner = testutil.NewFakeTmuxCommandRunner(runner, tmuxClient)
+	}
+	srv := daemon.NewServer(st, runner, fs.NewRealFS(), configDir)
 
 	// Unix sockets on macOS have a ~104 byte path limit.
 	// Use a short temp dir for the socket to avoid exceeding it.
@@ -210,7 +225,7 @@ func createTestWorktree(t *testing.T, client *daemonclient.Client, repoRoot, nam
 	t.Helper()
 	ctx := context.Background()
 
-	resp, err := client.WorktreeCreate(ctx, daemonclient.WorktreeCreateOpts{
+	resp, err := client.WorktreeCreate(ctx, daemon.WorktreeCreateRequest{
 		RepoRoot:   repoRoot,
 		Name:       name,
 		BaseBranch: "main",
@@ -232,7 +247,7 @@ func startTestInvocationWithRunner(t *testing.T, client *daemonclient.Client, re
 	t.Helper()
 	ctx := context.Background()
 
-	resp, err := client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+	resp, err := client.ControlPlaneStartHeadless(ctx, daemon.ControlPlaneStartRequest{
 		RepoRoot:    repoRoot,
 		WorktreeRef: worktreeRef,
 		Runner:      runner,
@@ -268,10 +283,20 @@ func waitForInvocationTerminal(t *testing.T, st *store.Store, repoID, invocation
 func gitExec(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cr := exec.NewRealRunner()
-	result, err := cr.Run(context.Background(), "git", args, exec.RunOpts{Dir: dir, Env: hermeticGitEnv(t)})
-	require.NoError(t, err, "git %s", strings.Join(args, " "))
-	require.Equal(t, 0, result.ExitCode, "git %s: exit %d, stderr: %s", strings.Join(args, " "), result.ExitCode, result.Stderr)
-	return strings.TrimSpace(result.Stdout)
+	env := hermeticGitEnv(t)
+	for attempt := 0; ; attempt++ {
+		result, err := cr.Run(context.Background(), "git", args, exec.RunOpts{Dir: dir, Env: env})
+		if err == nil && result.ExitCode == 0 {
+			return strings.TrimSpace(result.Stdout)
+		}
+		if err == nil && result.ExitCode == 128 && strings.Contains(result.Stderr, "index.lock") && attempt < 40 {
+			time.Sleep(25 * time.Millisecond)
+			continue
+		}
+		require.NoError(t, err, "git %s", strings.Join(args, " "))
+		require.Equal(t, 0, result.ExitCode, "git %s: exit %d, stderr: %s", strings.Join(args, " "), result.ExitCode, result.Stderr)
+		return strings.TrimSpace(result.Stdout)
+	}
 }
 
 // startTestHeadedInvocation starts a headed invocation via the daemon client.
@@ -280,7 +305,7 @@ func startTestHeadedInvocation(t *testing.T, client *daemonclient.Client, repoRo
 	t.Helper()
 	ctx := context.Background()
 
-	resp, err := client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
+	resp, err := client.ControlPlaneStartHeaded(ctx, daemon.ControlPlaneStartRequest{
 		RepoRoot:    repoRoot,
 		WorktreeRef: worktreeRef,
 		Runner:      "claude-code",

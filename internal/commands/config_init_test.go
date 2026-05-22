@@ -96,9 +96,7 @@ func TestConfigInit_FailsWithoutSupportedRunnerAndWritesNothing(t *testing.T) {
 	require.Error(t, err, "expected ConfigInit to fail without a supported runner")
 	assert.Equal(t, errors.ERunnerNotFound, errors.GetCode(err))
 	assert.NoFileExists(t, config.UserConfigPath(configDir))
-
-	_, statErr := os.Stat(configDir)
-	assert.True(t, os.IsNotExist(statErr), "config directory should not be created on failure")
+	assert.NoDirExists(t, configDir, "config directory should not be created on failure")
 	assert.Empty(t, stdout.String())
 }
 
@@ -120,9 +118,7 @@ func TestConfigInit_FailsWithoutSupportedEditorAndWritesNothing(t *testing.T) {
 	require.Error(t, err, "expected ConfigInit to fail without a supported editor")
 	assert.Equal(t, errors.EEditorNotConfigured, errors.GetCode(err))
 	assert.NoFileExists(t, config.UserConfigPath(configDir))
-
-	_, statErr := os.Stat(configDir)
-	assert.True(t, os.IsNotExist(statErr), "config directory should not be created on failure")
+	assert.NoDirExists(t, configDir, "config directory should not be created on failure")
 	assert.Empty(t, stdout.String())
 }
 

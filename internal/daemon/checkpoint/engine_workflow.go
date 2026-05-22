@@ -113,7 +113,7 @@ func (e *Engine) createCheckpointFlow(ctx context.Context, trigger *TriggerEvent
 	}
 
 	plan.cpFile.Checkpoints = append(plan.cpFile.Checkpoints, plan.checkpoint)
-	if len(plan.cpFile.Checkpoints) > MaxCheckpoints {
+	if len(plan.cpFile.Checkpoints) > maxCheckpoints {
 		e.pruneCheckpoints(ctx, plan.cpFile)
 	}
 
@@ -172,7 +172,7 @@ func (e *Engine) buildCheckpointPlan(ctx context.Context, trigger *TriggerEvent)
 		}
 	}
 
-	checkpointID := cpFile.NextID()
+	checkpointID := cpFile.nextID()
 	snapshotRef := fmt.Sprintf("%s%s/%d", RefPrefix, e.invocationID, checkpointID)
 	snapshotCommit, err := e.createCheckpointCommit(ctx, treeHash, checkpointID)
 	if err != nil {

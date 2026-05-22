@@ -8,11 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
-	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/watch"
 )
 
@@ -36,7 +34,6 @@ type watchLaunchOptions struct {
 	output          io.Writer
 	isInteractive   func() bool
 	dataDirOverride string
-	runWatch        func(context.Context, *daemonclient.Client, watch.RunOptions) (watch.RunResult, error)
 }
 
 func launchWatchWorkspace(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, stdout, stderr io.Writer, opts watchLaunchOptions) error {
@@ -60,26 +57,12 @@ func launchWatchWorkspace(ctx context.Context, cr exec.CommandRunner, fsys fs.FS
 		)
 	}
 
-	var dataDir string
-	if opts.dataDirOverride != "" {
-		dataDir = opts.dataDirOverride
-	} else {
-		dirs, err := resolveCommandDirs("", "")
-		if err != nil {
-			return err
-		}
-		dataDir = dirs.DataDir
-	}
-
-	st := store.NewStore(fsys, dataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
+	dirs, err := resolveCommandDirs(opts.dataDirOverride, "")
 	if err != nil {
 		return err
 	}
-	if err := client.CheckAPIVersion(ctx); err != nil {
+	client, err := ensureDaemonClientFromDirs(ctx, fsys, dirs)
+	if err != nil {
 		return err
 	}
 
@@ -110,11 +93,6 @@ func launchWatchWorkspace(ctx context.Context, cr exec.CommandRunner, fsys fs.FS
 		}
 
 		return output, err
-	}
-
-	runWatch := opts.runWatch
-	if runWatch == nil {
-		runWatch = watch.Run
 	}
 
 	runOpts := watch.RunOptions{
@@ -225,7 +203,7 @@ func launchWatchWorkspace(ctx context.Context, cr exec.CommandRunner, fsys fs.FS
 		},
 	}
 
-	result, err := runWatch(ctx, client, runOpts)
+	result, err := watch.Run(ctx, client, runOpts)
 	if err != nil {
 		return err
 	}
@@ -249,6 +227,5 @@ func Watch(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, o
 		output:          opts.Output,
 		isInteractive:   opts.IsInteractive,
 		dataDirOverride: opts.DataDirOverride,
-		runWatch:        watch.Run,
 	})
 }

@@ -26,28 +26,21 @@ func findPresentWorktreeContainingCWD(ctx context.Context, client *daemonclient.
 		return daemon.WorktreeDTO{}, false, err
 	}
 
-	cursor := ""
-	for {
-		result, err := client.ListWorktrees(ctx, daemonclient.ListWorktreesOpts{State: "present", Limit: 500, Cursor: cursor})
+	worktrees, err := client.DrainWorktrees(ctx, daemon.ListWorktreesParams{State: "present", Limit: 500})
+	if err != nil {
+		return daemon.WorktreeDTO{}, false, err
+	}
+	for _, worktree := range worktrees {
+		if strings.TrimSpace(worktree.TreePath) == "" {
+			continue
+		}
+		treePath, err := filepath.EvalSymlinks(worktree.TreePath)
 		if err != nil {
-			return daemon.WorktreeDTO{}, false, err
+			continue
 		}
-		for _, worktree := range result.Data.Worktrees {
-			if strings.TrimSpace(worktree.TreePath) == "" {
-				continue
-			}
-			treePath, err := filepath.EvalSymlinks(worktree.TreePath)
-			if err != nil {
-				continue
-			}
-			if pathIsAtOrUnder(treePath, cwdPath) {
-				return worktree, true, nil
-			}
+		if pathIsAtOrUnder(treePath, cwdPath) {
+			return worktree, true, nil
 		}
-		if result.Data.NextCursor == "" {
-			break
-		}
-		cursor = result.Data.NextCursor
 	}
 
 	return daemon.WorktreeDTO{}, false, nil
@@ -67,52 +60,38 @@ func agencyManagedTreeRepoID(ctx context.Context, client *daemonclient.Client, p
 		return "", false, err
 	}
 
-	cursor := ""
-	for {
-		result, err := client.ListWorktrees(ctx, daemonclient.ListWorktreesOpts{State: "all", Limit: 500, Cursor: cursor})
+	worktrees, err := client.DrainWorktrees(ctx, daemon.ListWorktreesParams{State: "all", Limit: 500})
+	if err != nil {
+		return "", false, err
+	}
+	for _, worktree := range worktrees {
+		if strings.TrimSpace(worktree.TreePath) == "" {
+			continue
+		}
+		treePath, err := filepath.EvalSymlinks(worktree.TreePath)
 		if err != nil {
-			return "", false, err
+			continue
 		}
-		for _, worktree := range result.Data.Worktrees {
-			if strings.TrimSpace(worktree.TreePath) == "" {
-				continue
-			}
-			treePath, err := filepath.EvalSymlinks(worktree.TreePath)
-			if err != nil {
-				continue
-			}
-			if pathIsAtOrUnder(treePath, cleanPath) {
-				return worktree.RepoID, true, nil
-			}
+		if pathIsAtOrUnder(treePath, cleanPath) {
+			return worktree.RepoID, true, nil
 		}
-		if result.Data.NextCursor == "" {
-			break
-		}
-		cursor = result.Data.NextCursor
 	}
 
-	cursor = ""
-	for {
-		result, err := client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{State: "all", Mode: "all", Limit: 500, Cursor: cursor})
+	invocations, err := client.DrainInvocations(ctx, daemon.ListInvocationsParams{State: "all", Mode: "all", Limit: 500})
+	if err != nil {
+		return "", false, err
+	}
+	for _, invocation := range invocations {
+		if strings.TrimSpace(invocation.SandboxPath) == "" {
+			continue
+		}
+		sandboxPath, err := filepath.EvalSymlinks(invocation.SandboxPath)
 		if err != nil {
-			return "", false, err
+			continue
 		}
-		for _, invocation := range result.Data.Invocations {
-			if strings.TrimSpace(invocation.SandboxPath) == "" {
-				continue
-			}
-			sandboxPath, err := filepath.EvalSymlinks(invocation.SandboxPath)
-			if err != nil {
-				continue
-			}
-			if pathIsAtOrUnder(sandboxPath, cleanPath) {
-				return invocation.RepoID, true, nil
-			}
+		if pathIsAtOrUnder(sandboxPath, cleanPath) {
+			return invocation.RepoID, true, nil
 		}
-		if result.Data.NextCursor == "" {
-			break
-		}
-		cursor = result.Data.NextCursor
 	}
 
 	return "", false, nil

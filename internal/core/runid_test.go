@@ -2,10 +2,10 @@ package core
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,12 +22,15 @@ func TestNewRunID_FormatAndUTC(t *testing.T) {
 	pattern := `^\d{14}-[0-9a-f]{4}$`
 	matched, err := regexp.MatchString(pattern, runID)
 	require.NoError(t, err)
-	assert.True(t, matched, "runID %q does not match pattern %q", runID, pattern)
+	if !matched {
+		t.Fatalf("runID %q does not match pattern %q", runID, pattern)
+	}
 
 	// Verify timestamp portion
 	expectedPrefix := "20260109013207-"
-	assert.True(t, len(runID) >= len(expectedPrefix) && runID[:len(expectedPrefix)] == expectedPrefix,
-		"runID %q does not start with expected prefix %q", runID, expectedPrefix)
+	if !strings.HasPrefix(runID, expectedPrefix) {
+		t.Fatalf("runID %q does not start with expected prefix %q", runID, expectedPrefix)
+	}
 }
 
 func TestNewRunID_UniqueRandomSuffix(t *testing.T) {
@@ -68,12 +71,13 @@ func TestShortID(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
 			got := ShortID(tt.runID)
-			assert.Equal(t, tt.expect, got)
+			if got != tt.expect {
+				t.Fatalf("ShortID(%q) = %q, want %q", tt.runID, got, tt.expect)
+			}
 		})
 	}
 }

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"time"
 
@@ -32,7 +32,7 @@ func (s *Server) runRecoveryScan() error {
 }
 
 func (s *Server) discoverDurableRepoIDs() ([]string, error) {
-	reposDir := filepath.Join(s.Store.DataDir, "repos")
+	reposDir := filepath.Join(s.store.DataDir, "repos")
 	entries, err := os.ReadDir(reposDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -47,12 +47,12 @@ func (s *Server) discoverDurableRepoIDs() ([]string, error) {
 			repoIDs = append(repoIDs, entry.Name())
 		}
 	}
-	sort.Strings(repoIDs)
+	slices.Sort(repoIDs)
 	return repoIDs, nil
 }
 
 func (s *Server) recoverRepoInvocations(repoID string) error {
-	records, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
+	records, err := s.store.ScanInvocationsForRepo(repoID)
 	if err != nil {
 		return err
 	}
@@ -60,7 +60,7 @@ func (s *Server) recoverRepoInvocations(repoID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	nowTime := s.Clock()
+	nowTime := s.clock()
 	for _, r := range records {
 		if r.Broken || r.Meta == nil {
 			continue
@@ -91,7 +91,7 @@ func (s *Server) recoverRepoInvocations(repoID string) error {
 
 		pid := *r.Meta.PID
 		if r.Meta.Status == store.InvocationStatusStopping {
-			if !s.PIDChecker(pid) {
+			if !s.pidChecker(pid) {
 				s.failInvocationStopped(repoID, r.InvocationID, "stopped")
 				continue
 			}
@@ -108,11 +108,11 @@ func (s *Server) recoverRepoInvocations(repoID string) error {
 			go s.stopEscalation(repoID, r.InvocationID, pgid, false, nil)
 			continue
 		}
-		if !s.PIDChecker(pid) {
+		if !s.pidChecker(pid) {
 			s.failInvocationUnknown(repoID, r.InvocationID, "runner_exit_nonzero", true)
 			continue
 		}
-		if r.Meta.DaemonInstanceID != s.InstanceID {
+		if r.Meta.DaemonInstanceID != s.instanceID {
 			s.markInvocationOrphaned(repoID, r.InvocationID)
 		}
 	}
@@ -126,11 +126,13 @@ func (s *Server) recoverHeadedInvocation(ctx context.Context, repoID string, r s
 		return
 	}
 
-	sessionName := r.Meta.TmuxSession
-	if sessionName == "" {
-		sessionName = tmux.SessionName(r.InvocationID)
+	sessionName, ok := headedInvocationSessionName(r.Meta)
+	if !ok {
+		s.failInvocationStart(repoID, r.InvocationID, "tmux_session_missing", false)
+		s.clearInvocationProcess(r.InvocationID)
+		return
 	}
-	exists, err := s.TmuxClient.HasSession(ctx, sessionName)
+	exists, err := s.tmuxClient.HasSession(ctx, sessionName)
 	if err != nil && !tmux.IsNoSessionErr(err) {
 		s.recordInvocationWarning(repoID, r.InvocationID, "recovery_tmux_has_session_failed", err.Error(), map[string]any{
 			"session_name": sessionName,
@@ -154,8 +156,8 @@ func (s *Server) recoverHeadedInvocation(ctx context.Context, repoID string, r s
 			}
 		}
 		if r.Meta.Status == store.InvocationStatusStopping && !supervised {
-			if err := s.TmuxClient.SendKeys(ctx, sessionName, []tmux.Key{tmux.KeyCtrlC}); err != nil {
-				s.recordInvocationWarning(repoID, r.InvocationID, "recovery_headed_stop_send_keys_failed", err.Error(), map[string]any{
+			if err := s.tmuxClient.InterruptSession(ctx, sessionName); err != nil {
+				s.recordInvocationWarning(repoID, r.InvocationID, "recovery_headed_stop_interrupt_failed", err.Error(), map[string]any{
 					"session_name": sessionName,
 				})
 			}
@@ -181,18 +183,18 @@ func (s *Server) recoverHeadedInvocation(ctx context.Context, repoID string, r s
 }
 
 func (s *Server) recoverRepoWorktreeMerges(repoID string) error {
-	records, err := store.ScanIntegrationWorktreesForRepo(s.Store.DataDir, repoID)
+	records, err := s.store.ScanIntegrationWorktreesForRepo(repoID)
 	if err != nil {
 		return err
 	}
 
-	now := s.Clock().UTC().Format(time.RFC3339)
+	now := s.clock().UTC().Format(time.RFC3339)
 	for _, r := range records {
 		if r.Broken || r.Meta == nil {
 			continue
 		}
 
-		mergeMeta, err := s.Store.ReadIntegrationWorktreeMerge(repoID, r.WorktreeID)
+		mergeMeta, err := s.store.ReadIntegrationWorktreeMerge(repoID, r.WorktreeID)
 		if err != nil {
 			return err
 		}
@@ -203,7 +205,7 @@ func (s *Server) recoverRepoWorktreeMerges(repoID string) error {
 			continue
 		}
 
-		if err := s.Store.UpdateIntegrationWorktreeMerge(repoID, r.WorktreeID, func(m *store.IntegrationWorktreeMergeMeta) {
+		if err := s.store.UpdateIntegrationWorktreeMerge(repoID, r.WorktreeID, func(m *store.IntegrationWorktreeMergeMeta) {
 			m.Status = store.WorktreeMergeStatusFailed
 			m.UpdatedAt = now
 			m.FinishedAt = now
@@ -237,12 +239,4 @@ func ReadPidFile(pidPath string) (int, error) {
 		return 0, err
 	}
 	return strconv.Atoi(string(data[:len(data)-1]))
-}
-
-func RemovePidFile(pidPath string) error {
-	return os.Remove(pidPath)
-}
-
-func RemoveSocketFile(socketPath string) error {
-	return os.Remove(socketPath)
 }

@@ -130,7 +130,7 @@ func TestWriteJSONAtomic_ReplacesAndIsValidJSON(t *testing.T) {
 
 	// Write initial file
 	initial := map[string]string{"key": "initial"}
-	err := WriteJSONAtomic(path, initial, 0o644)
+	err := WriteJSONAtomic(NewRealFS(), path, initial, 0o644)
 	require.NoError(t, err, "initial write failed")
 
 	// Verify initial content
@@ -144,7 +144,7 @@ func TestWriteJSONAtomic_ReplacesAndIsValidJSON(t *testing.T) {
 
 	// Overwrite with new content
 	updated := map[string]string{"key": "updated", "new": "value"}
-	err = WriteJSONAtomic(path, updated, 0o644)
+	err = WriteJSONAtomic(NewRealFS(), path, updated, 0o644)
 	require.NoError(t, err, "update failed")
 
 	// Verify updated content
@@ -166,7 +166,7 @@ func TestWriteJSONAtomic_PermApplied(t *testing.T) {
 	path := filepath.Join(dir, "test_perm.json")
 
 	data := map[string]int{"num": 42}
-	err := WriteJSONAtomic(path, data, 0o600)
+	err := WriteJSONAtomic(NewRealFS(), path, data, 0o600)
 	require.NoError(t, err, "WriteJSONAtomic failed")
 
 	info, err := os.Stat(path)
@@ -188,7 +188,7 @@ func TestWriteJSONAtomic_PrettyFormat(t *testing.T) {
 		},
 	}
 
-	err := WriteJSONAtomic(path, data, 0o644)
+	err := WriteJSONAtomic(NewRealFS(), path, data, 0o644)
 	require.NoError(t, err, "WriteJSONAtomic failed")
 
 	content, err := os.ReadFile(path)
@@ -212,7 +212,7 @@ func TestWriteJSONAtomic_StructType(t *testing.T) {
 	}
 
 	data := TestStruct{Name: "test", Value: 123}
-	err := WriteJSONAtomic(path, data, 0o644)
+	err := WriteJSONAtomic(NewRealFS(), path, data, 0o644)
 	require.NoError(t, err, "WriteJSONAtomic failed")
 
 	content, err := os.ReadFile(path)
@@ -231,6 +231,6 @@ func TestWriteJSONAtomic_ParentDirMustExist(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "nonexistent", "test.json")
 
-	err := WriteJSONAtomic(path, "test", 0o644)
+	err := WriteJSONAtomic(NewRealFS(), path, "test", 0o644)
 	require.Error(t, err, "WriteJSONAtomic should fail when parent dir doesn't exist")
 }

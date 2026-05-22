@@ -35,13 +35,6 @@ type DaemonStartOpts struct {
 
 	// DataDirOverride, if set, is used instead of resolving from environment.
 	DataDirOverride string
-
-	// backgroundStartFn, if non-nil, overrides the default background start.
-	// Used in tests to avoid real process spawning.
-	backgroundStartFn func(logPath string) error
-
-	// waitTimeout overrides the health-check wait duration (default 10s).
-	waitTimeout time.Duration
 }
 
 // DaemonStart starts the agency daemon.
@@ -104,8 +97,8 @@ func daemonStartForeground(ctx context.Context, cr exec.CommandRunner, fsys fs.F
 			_, _ = fmt.Fprintf(stdout, "Daemon is already running (pid %d)\n", existingPid)
 			return nil
 		}
-		_ = daemon.RemovePidFile(pidPath)
-		_ = daemon.RemoveSocketFile(socketPath)
+		_ = os.Remove(pidPath)
+		_ = os.Remove(socketPath)
 	}
 
 	// Clean up any stale socket file
@@ -127,8 +120,8 @@ func daemonStartForeground(ctx context.Context, cr exec.CommandRunner, fsys fs.F
 	}
 
 	defer func() {
-		_ = daemon.RemovePidFile(pidPath)
-		_ = daemon.RemoveSocketFile(socketPath)
+		_ = os.Remove(pidPath)
+		_ = os.Remove(socketPath)
 	}()
 
 	server := daemon.NewServer(st, cr, fsys, configDir)
@@ -147,7 +140,7 @@ func daemonStartForeground(ctx context.Context, cr exec.CommandRunner, fsys fs.F
 
 	_, _ = fmt.Fprintf(stdout, "Agency daemon started (pid %d)\n", os.Getpid())
 	_, _ = fmt.Fprintf(stdout, "Socket: %s\n", socketPath)
-	_, _ = fmt.Fprintf(stdout, "Instance ID: %s\n", server.InstanceID)
+	_, _ = fmt.Fprintf(stdout, "Instance ID: %s\n", server.InstanceID())
 
 	err = server.Serve(listener)
 	if err != nil && !stderrors.Is(err, http.ErrServerClosed) {
@@ -175,26 +168,18 @@ func daemonStartBackground(ctx context.Context, st *store.Store, socketPath, pid
 	// Clean stale PID/socket if the process is dead.
 	existingPid, err := daemon.ReadPidFile(pidPath)
 	if err == nil && !daemon.IsPIDAlive(existingPid) {
-		_ = daemon.RemovePidFile(pidPath)
-		_ = daemon.RemoveSocketFile(socketPath)
+		_ = os.Remove(pidPath)
+		_ = os.Remove(socketPath)
 	}
 
 	// Start background process.
 	logPath := st.DaemonLogPath()
-	startFn := opts.backgroundStartFn
-	if startFn == nil {
-		startFn = daemonclient.StartDaemonBackground
-	}
-	if err := startFn(logPath); err != nil {
+	if err := daemonclient.StartDaemonBackground(ctx, logPath); err != nil {
 		return errors.Wrap(errors.EDaemonStartFailed, "failed to start daemon in background", err)
 	}
 
 	// Wait for the daemon to become healthy.
-	waitTimeout := opts.waitTimeout
-	if waitTimeout == 0 {
-		waitTimeout = 10 * time.Second
-	}
-	if err := client.WaitForReady(ctx, waitTimeout); err != nil {
+	if err := client.WaitForReady(ctx, 10*time.Second); err != nil {
 		return errors.Wrap(errors.EDaemonStartFailed,
 			fmt.Sprintf("daemon process started but failed health check; see %s", logPath), err)
 	}
@@ -291,8 +276,8 @@ func DaemonStop(ctx context.Context, fsys fs.FS, opts DaemonStopOpts, stdout, st
 		return errors.New(errors.Code(resp.ErrorCode), resp.Message)
 	}
 
-	// RPC failed - fall back to PID file
-	_, _ = fmt.Fprintf(stderr, "RPC shutdown failed, falling back to PID file...\n")
+	// RPC failed; use the PID file shutdown path.
+	_, _ = fmt.Fprintf(stderr, "RPC shutdown failed, using PID file shutdown...\n")
 
 	pid, err := daemon.ReadPidFile(pidPath)
 	if err != nil {
@@ -301,8 +286,8 @@ func DaemonStop(ctx context.Context, fsys fs.FS, opts DaemonStopOpts, stdout, st
 
 	if !daemon.IsPIDAlive(pid) {
 		// Clean up stale files
-		_ = daemon.RemovePidFile(pidPath)
-		_ = daemon.RemoveSocketFile(socketPath)
+		_ = os.Remove(pidPath)
+		_ = os.Remove(socketPath)
 		_, _ = fmt.Fprintf(stdout, "Cleaned up stale daemon files\n")
 		return nil
 	}
@@ -316,8 +301,8 @@ func DaemonStop(ctx context.Context, fsys fs.FS, opts DaemonStopOpts, stdout, st
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if !daemon.IsPIDAlive(pid) {
-			_ = daemon.RemovePidFile(pidPath)
-			_ = daemon.RemoveSocketFile(socketPath)
+			_ = os.Remove(pidPath)
+			_ = os.Remove(socketPath)
 			_, _ = fmt.Fprintf(stdout, "Daemon stopped\n")
 			return nil
 		}
@@ -330,35 +315,22 @@ func DaemonStop(ctx context.Context, fsys fs.FS, opts DaemonStopOpts, stdout, st
 
 	// Wait a bit more
 	time.Sleep(500 * time.Millisecond)
-	_ = daemon.RemovePidFile(pidPath)
-	_ = daemon.RemoveSocketFile(socketPath)
+	_ = os.Remove(pidPath)
+	_ = os.Remove(socketPath)
 	_, _ = fmt.Fprintf(stdout, "Daemon killed\n")
 
 	return nil
 }
 
 // DaemonInstallOpts holds options for the daemon install command.
-type DaemonInstallOpts struct {
-	// manager, if non-nil, overrides Detect() for testing.
-	manager servicemanager.Manager
-	// detectOS, if non-empty, overrides runtime.GOOS for testing.
-	detectOS string
-}
+type DaemonInstallOpts struct{}
 
 // DaemonInstall installs the daemon as an OS service (launchd on macOS,
 // systemd on Linux).
 func DaemonInstall(ctx context.Context, cr exec.CommandRunner, opts DaemonInstallOpts, stdout, stderr io.Writer) error {
-	mgr := opts.manager
-	if mgr == nil {
-		goos := opts.detectOS
-		if goos == "" {
-			goos = runtime.GOOS
-		}
-		var err error
-		mgr, err = servicemanager.DetectForOS(cr, goos)
-		if err != nil {
-			return err
-		}
+	mgr, err := servicemanager.DetectForOS(cr, runtime.GOOS)
+	if err != nil {
+		return err
 	}
 
 	homeDir, err := os.UserHomeDir()
@@ -395,26 +367,13 @@ func DaemonInstall(ctx context.Context, cr exec.CommandRunner, opts DaemonInstal
 }
 
 // DaemonUninstallOpts holds options for the daemon uninstall command.
-type DaemonUninstallOpts struct {
-	// manager, if non-nil, overrides Detect() for testing.
-	manager servicemanager.Manager
-	// detectOS, if non-empty, overrides runtime.GOOS for testing.
-	detectOS string
-}
+type DaemonUninstallOpts struct{}
 
 // DaemonUninstall removes the daemon OS service.
 func DaemonUninstall(ctx context.Context, cr exec.CommandRunner, opts DaemonUninstallOpts, stdout, stderr io.Writer) error {
-	mgr := opts.manager
-	if mgr == nil {
-		goos := opts.detectOS
-		if goos == "" {
-			goos = runtime.GOOS
-		}
-		var err error
-		mgr, err = servicemanager.DetectForOS(cr, goos)
-		if err != nil {
-			return err
-		}
+	mgr, err := servicemanager.DetectForOS(cr, runtime.GOOS)
+	if err != nil {
+		return err
 	}
 
 	homeDir, err := os.UserHomeDir()

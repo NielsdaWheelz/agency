@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/core"
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
@@ -22,14 +24,19 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
-	"github.com/NielsdaWheelz/agency/internal/runnerstatus"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/testutil"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
-	"github.com/NielsdaWheelz/agency/internal/watch"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type testAPIResponse struct {
+	OK         bool   `json:"ok"`
+	APIVersion int    `json:"api_version,omitempty"`
+	RequestID  string `json:"request_id,omitempty"`
+	Data       any    `json:"data,omitempty"`
+}
 
 // createTestInvocation creates a test invocation for testing attach/stop/kill.
 func createTestInvocation(t *testing.T, dataDir, repoID, worktreeID, invocationID string, mode store.RunnerMode, status store.InvocationStatus) {
@@ -65,6 +72,14 @@ func createTestInvocation(t *testing.T, dataDir, repoID, worktreeID, invocationI
 	require.NoError(t, os.WriteFile(metaPath, metaBytes, 0644))
 }
 
+func stubInvocationCleanupCommands(cr *testutil.FakeCommandRunner, repoRoot, dataDir, repoID, invocationID string) {
+	sandboxPath := filepath.Join(dataDir, "repos", repoID, "sandboxes", invocationID, "tree")
+	sandboxBranch := "agency/sandbox-" + invocationID
+	cr.Responses["git -C "+repoRoot+" worktree remove --force "+sandboxPath] = testutil.FakeResponse{ExitCode: 0}
+	cr.Responses["git -C "+repoRoot+" show-ref --quiet --verify refs/heads/"+sandboxBranch] = testutil.FakeResponse{ExitCode: 1}
+	cr.Responses["git -C "+repoRoot+" for-each-ref --format=%(refname) refs/agency/snapshots/"+invocationID+"/"] = testutil.FakeResponse{ExitCode: 0}
+}
+
 // setupAgentTestEnvShort creates a test environment using a short dataDir (for socket
 // path length safety on macOS) and starts a test daemon. Returns all the same values as
 // setupAgentTestEnv plus the daemon socket path.
@@ -98,6 +113,7 @@ func setupAgentTestEnvShort(t *testing.T, worktreeName string) (string, string, 
 	cr.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
 	cr.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: originURL + "\n"}
 	cr.Responses["git -C "+repoDir+" rev-parse agency/"+worktreeName+"-abcd"] = testutil.FakeResponse{Stdout: "abc123def456\n"}
+	cr.RespondToPrefix("git -C "+repoDir+" worktree add -b agency/sandbox-", testutil.FakeResponse{ExitCode: 0})
 
 	fsys := fs.NewRealFS()
 	st := store.NewStore(fsys, dataDir, time.Now)
@@ -181,8 +197,7 @@ func setupAgentTestEnvShort(t *testing.T, worktreeName string) (string, string, 
     }
   }
 }`), 0o644))
-	srv := daemon.NewServer(st, cr, fsys, configDir)
-	srv.TmuxClient = testutil.NewFakeTmuxClient()
+	srv := daemon.NewServer(st, testutil.NewFakeTmuxCommandRunner(cr, testutil.NewFakeTmuxClient()), fsys, configDir)
 
 	socketPath := st.DaemonSocketPath()
 	listener, err := net.Listen("unix", socketPath)
@@ -215,10 +230,9 @@ type agentStartHeadedTestEnv struct {
 	WorktreePath string
 	Runner       exec.CommandRunner
 	FS           fs.FS
-	RecordFile   string
 }
 
-func setupAgentStartHeadedTestEnv(t *testing.T, worktreeName string, tmuxExitCode int) agentStartHeadedTestEnv {
+func setupAgentStartHeadedTestEnv(t *testing.T, worktreeName string) agentStartHeadedTestEnv {
 	t.Helper()
 
 	repoDir, dataDir, repoID, worktreeID, fakeRunner, fsys := setupAgentTestEnvShort(t, worktreeName)
@@ -253,13 +267,6 @@ func setupAgentStartHeadedTestEnv(t *testing.T, worktreeName string, tmuxExitCod
 	t.Setenv("AGENCY_DATA_DIR", dataDir)
 	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 
-	shimDir := t.TempDir()
-	recordFile := filepath.Join(shimDir, "record.txt")
-	shimPath := filepath.Join(shimDir, "tmux")
-	script := fmt.Sprintf("#!/bin/sh\npwd > '%s'\necho \"$@\" >> '%s'\nexit %d\n", recordFile, recordFile, tmuxExitCode)
-	require.NoError(t, os.WriteFile(shimPath, []byte(script), 0o755))
-	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
 	return agentStartHeadedTestEnv{
 		RepoDir:      repoDir,
 		DataDir:      dataDir,
@@ -268,7 +275,6 @@ func setupAgentStartHeadedTestEnv(t *testing.T, worktreeName string, tmuxExitCod
 		WorktreePath: filepath.Join(dataDir, "repos", repoID, "integration_worktrees", worktreeID, "tree"),
 		Runner:       fakeRunner,
 		FS:           fsys,
-		RecordFile:   recordFile,
 	}
 }
 
@@ -283,6 +289,43 @@ type agentNavTestEnv struct {
 	InvocationID string
 	SandboxPath  string
 	Tmux         *testutil.FakeTmuxClient
+}
+
+func seedAgentLatestActivity(t *testing.T, env agentNavTestEnv) {
+	t.Helper()
+
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(env.RepoID, env.InvocationID), 0o700))
+
+	streamLines := strings.Join([]string{
+		`{"schema_version":"1.0","seq":9,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + env.InvocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"updated renderer"}}`,
+		`{"schema_version":"1.0","seq":10,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + env.InvocationID + `","runner":"claude-code","kind":"tool_end","data":{"name":"Bash","command":"go test ./...","exit_code":1}}`,
+	}, "\n") + "\n"
+	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(env.RepoID, env.InvocationID), []byte(streamLines), 0o644))
+
+	eventLine := `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:12Z","invocation_id":"` + env.InvocationID + `","kind":"agency.checkpoint_created","data":{"checkpoint_id":4}}` + "\n"
+	require.NoError(t, os.WriteFile(st.InvocationEventsPath(env.RepoID, env.InvocationID), []byte(eventLine), 0o644))
+
+	cpFile := checkpoint.CheckpointsFile{
+		SchemaVersion: checkpoint.SchemaVersion,
+		Checkpoints: []checkpoint.Checkpoint{
+			{
+				ID:                4,
+				SnapshotRef:       checkpoint.RefPrefix + env.InvocationID + "/4",
+				SnapshotCommit:    "4444444",
+				SandboxHeadSHA:    "abc123def456",
+				CreatedAt:         "2026-02-05T11:50:12Z",
+				IncludesUntracked: true,
+				Diffstat:          "2 files changed, 10 insertions(+), 2 deletions(-)",
+				Description:       "checkpoint after renderer update",
+				ChangedPaths:      []string{"internal/apply.go", "internal/apply_test.go"},
+				ChangedPathCount:  2,
+			},
+		},
+	}
+	cpBytes, err := json.Marshal(cpFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(st.InvocationCheckpointsPath(env.RepoID, env.InvocationID), cpBytes, 0o644))
 }
 
 // setupAgentNavEnv creates a test environment with a daemon, one integration
@@ -403,9 +446,8 @@ func setupAgentNavEnv(t *testing.T, name string, mode store.RunnerMode) agentNav
 	cfgBytes, err := json.Marshal(cfg)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), cfgBytes, 0o644))
-	srv := daemon.NewServer(st, cr, fsys, configDir)
 	fakeTmux := testutil.NewFakeTmuxClient()
-	srv.TmuxClient = fakeTmux
+	srv := daemon.NewServer(st, testutil.NewFakeTmuxCommandRunner(cr, fakeTmux), fsys, configDir)
 
 	socketPath := st.DaemonSocketPath()
 	listener, listenErr := net.Listen("unix", socketPath)
@@ -470,11 +512,12 @@ func seedRepoIndexForNavigationTests(t *testing.T, dataDir, repoID string) {
 }
 
 // ---------------------------------------------------------------------------
-// Agent ls/show daemon-of-record read behavior.
+// Agent ls/show rendering.
 // ---------------------------------------------------------------------------
 
-func TestAgentLS_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
+func TestAgentLS_RendersInvocationListFromDaemon(t *testing.T) {
 	env := setupAgentNavEnv(t, "ls-test", store.RunnerModeHeaded)
+	seedAgentLatestActivity(t, env)
 
 	var stdout, stderr bytes.Buffer
 	err := AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
@@ -485,6 +528,9 @@ func TestAgentLS_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
 	assert.Contains(t, out, env.InvocationID)
 	assert.Contains(t, out, "claude-code")
 	assert.Contains(t, out, "headed")
+	assert.Contains(t, out, "repo: root ("+env.RepoID+")")
+	assert.Contains(t, out, "worktree: ls-test ("+env.WorktreeID+")")
+	assert.Contains(t, out, "latest[stream:9]: [assistant] updated renderer (tools=1, checkpoint=4)")
 }
 
 func TestAgentLS_DefaultRequestsUnresolvedState(t *testing.T) {
@@ -505,12 +551,12 @@ func TestAgentLS_DefaultRequestsUnresolvedState(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/health":
-			_ = json.NewEncoder(w).Encode(daemon.APIResponse{
+			_ = json.NewEncoder(w).Encode(testAPIResponse{
 				OK:         true,
 				APIVersion: daemon.APIVersion,
 			})
 		case "/repos/repo-1":
-			_ = json.NewEncoder(w).Encode(daemon.APIResponse{
+			_ = json.NewEncoder(w).Encode(testAPIResponse{
 				OK: true,
 				Data: daemon.RepoDTO{
 					RepoID: "repo-1",
@@ -518,7 +564,7 @@ func TestAgentLS_DefaultRequestsUnresolvedState(t *testing.T) {
 			})
 		case "/invocations":
 			requestedState = r.URL.Query().Get("state")
-			_ = json.NewEncoder(w).Encode(daemon.APIResponse{
+			_ = json.NewEncoder(w).Encode(testAPIResponse{
 				OK: true,
 				Data: daemon.ListInvocationsData{
 					Invocations: []daemon.InvocationDTO{},
@@ -550,8 +596,9 @@ func TestAgentLS_DefaultRequestsUnresolvedState(t *testing.T) {
 	assert.Equal(t, "unresolved", requestedState)
 }
 
-func TestAgentShow_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
+func TestAgentShow_RendersInvocationDetailsFromDaemon(t *testing.T) {
 	env := setupAgentNavEnv(t, "show-test", store.RunnerModeHeaded)
+	seedAgentLatestActivity(t, env)
 
 	var stdout, stderr bytes.Buffer
 	err := AgentShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
@@ -566,249 +613,15 @@ func TestAgentShow_DaemonOfRecord_RendersDaemonDTO(t *testing.T) {
 	assert.Contains(t, out, "runner:                 claude-code")
 	assert.Contains(t, out, "mode:                   headed")
 	assert.Contains(t, out, "sandbox_path:           "+env.SandboxPath)
-	assert.Contains(t, out, "attach_command:         agency agent "+env.InvocationID+" attach --repo "+env.RepoID)
-}
-
-func TestAgentLS_JSONOutput_DirectDaemonDTO(t *testing.T) {
-	env := setupAgentNavEnv(t, "lsjson", store.RunnerModeHeadless)
-
-	var stdout, stderr bytes.Buffer
-	err := AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentLSOpts{RepoRef: env.RepoID, JSON: true}, &stdout, &stderr)
-	require.NoError(t, err)
-
-	var dtos []daemon.InvocationDTO
-	require.NoError(t, json.Unmarshal(stdout.Bytes(), &dtos))
-	require.Len(t, dtos, 1)
-
-	assert.Equal(t, env.InvocationID, dtos[0].InvocationID)
-	assert.Equal(t, env.RepoID, dtos[0].RepoID)
-	assert.NotEmpty(t, dtos[0].RepoName)
-	assert.Equal(t, "lsjson", dtos[0].WorktreeName)
-	assert.Equal(t, "claude-code", dtos[0].Runner)
-	assert.Equal(t, "headless", dtos[0].Mode)
-	assert.Equal(t, env.SandboxPath, dtos[0].SandboxPath)
-}
-
-func TestAgentShow_JSONOutput_DirectDaemonDTO(t *testing.T) {
-	env := setupAgentNavEnv(t, "showjson", store.RunnerModeHeaded)
-
-	var stdout, stderr bytes.Buffer
-	err := AgentShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentShowOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID, JSON: true}, &stdout, &stderr)
-	require.NoError(t, err)
-
-	var dto daemon.InvocationDTO
-	require.NoError(t, json.Unmarshal(stdout.Bytes(), &dto))
-
-	assert.Equal(t, env.InvocationID, dto.InvocationID)
-	assert.Equal(t, "showjson", dto.WorktreeName)
-	assert.Equal(t, env.RepoID, dto.RepoID)
-	assert.NotEmpty(t, dto.RepoName)
-	assert.Equal(t, "claude-code", dto.Runner)
-	assert.Equal(t, env.SandboxPath, dto.SandboxPath)
-}
-
-func TestAgentActivitySurfaces_ConvergeLatestActivityStatusSummaryAndNavigation(t *testing.T) {
-	env := setupAgentNavEnv(t, "activity-converge", store.RunnerModeHeadless)
-
-	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
-	runnerStatusPath := st.InvocationRunnerStatusPath(env.RepoID, env.InvocationID)
-	require.NoError(t, os.MkdirAll(filepath.Dir(runnerStatusPath), 0o700))
-	runner := runnerstatus.RunnerStatus{
-		SchemaVersion: runnerstatus.SchemaVersion,
-		State:         runnerstatus.StateRunning,
-		UpdatedAt:     "2026-02-05T11:59:30Z",
-		Summary:       "waiting on api contract",
-		Questions:     []string{},
-		HowToTest:     "",
-	}
-	runnerBytes, err := json.Marshal(runner)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(runnerStatusPath, runnerBytes, 0o600))
-
-	logsDir := st.InvocationLogsDir(env.RepoID, env.InvocationID)
-	require.NoError(t, os.MkdirAll(logsDir, 0o700))
-	streamLine := `{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:59:00Z","invocation_id":"` + env.InvocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"latest activity summary"}}`
-	require.NoError(t, os.WriteFile(st.InvocationStreamLogPath(env.RepoID, env.InvocationID), []byte(streamLine+"\n"), 0o644))
-
-	var lsJSON, showJSON, checkJSON, stderr bytes.Buffer
-
-	err = AgentLS(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentLSOpts{RepoRef: env.RepoID, JSON: true}, &lsJSON, &stderr)
-	require.NoError(t, err)
-
-	var listedRows []daemon.InvocationDTO
-	require.NoError(t, json.Unmarshal(lsJSON.Bytes(), &listedRows))
-	require.Len(t, listedRows, 1)
-	listed := listedRows[0]
-	require.NotNil(t, listed.LatestActivity)
-	require.NotNil(t, listed.Navigation)
-
-	err = AgentShow(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentShowOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID, JSON: true}, &showJSON, &stderr)
-	require.NoError(t, err)
-	var shown daemon.InvocationDTO
-	require.NoError(t, json.Unmarshal(showJSON.Bytes(), &shown))
-	require.NotNil(t, shown.LatestActivity)
-	require.NotNil(t, shown.Navigation)
-
-	err = AgentCheck(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentCheckOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID, JSON: true, DataDirOverride: env.DataDir}, &checkJSON, &stderr)
-	require.NoError(t, err)
-	var check daemon.InvocationCheckData
-	require.NoError(t, json.Unmarshal(checkJSON.Bytes(), &check))
-
-	assert.Equal(t, listed.State, shown.State)
-	assert.Equal(t, shown.State, check.State)
-	assert.Equal(t, string(runnerstatus.StateRunning), check.RunnerState)
-
-	assert.Equal(t, listed.StatusSummary, shown.StatusSummary)
-	assert.Equal(t, shown.StatusSummary, check.RunnerSummary)
-	assert.Equal(t, "waiting on api contract", check.RunnerSummary)
-
-	assert.Equal(t, listed.LatestActivity.TurnID, shown.LatestActivity.TurnID)
-	assert.Equal(t, listed.LatestActivity.Summary, shown.LatestActivity.Summary)
-
-	assert.Equal(t, listed.Navigation.HistoryCommand, shown.Navigation.HistoryCommand)
-	assert.Equal(t, shown.Navigation.HistoryCommand, check.Navigation.HistoryCommand)
-	assert.Equal(t, listed.Navigation.DiffCommand, shown.Navigation.DiffCommand)
-	assert.Equal(t, shown.Navigation.DiffCommand, check.Navigation.DiffCommand)
-	assert.Equal(t, listed.Navigation.LatestTurnID, shown.Navigation.LatestTurnID)
-	assert.Equal(t, shown.Navigation.LatestTurnID, check.Navigation.LatestTurnID)
-}
-
-func TestWriteAgentLSHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T) {
-	t.Parallel()
-
-	var out bytes.Buffer
-	err := writeAgentLSHumanFromDTO(&out, []daemon.InvocationDTO{
-		{
-			InvocationID: "inv-1",
-			RepoID:       "repo-1",
-			RepoName:     "agency",
-			WorktreeID:   "wt-1",
-			WorktreeName: "feature-x",
-			Runner:       "claude-code",
-			Mode:         "headless",
-			State:        string(runnerstatus.StateRunning),
-			LatestActivity: &daemon.InvocationLatestActivity{
-				TurnID:        "stream:9",
-				Kind:          "assistant",
-				Summary:       "applied migration",
-				ToolCallCount: 2,
-				CheckpointID:  4,
-				Restorable:    true,
-			},
-		},
-	})
-	require.NoError(t, err)
-	assert.Contains(t, out.String(), "repo: agency (repo-1)")
-	assert.Contains(t, out.String(), "worktree: feature-x (wt-1)")
-	assert.Contains(t, out.String(), "latest[stream:9]: [assistant] applied migration (tools=2, checkpoint=4)")
-}
-
-func TestWriteAgentShowHumanFromDTO_IncludesLatestActivityMetadata(t *testing.T) {
-	t.Parallel()
-
-	var out bytes.Buffer
-	err := writeAgentShowHumanFromDTO(&out, &daemon.InvocationDTO{
-		InvocationID: "inv-1",
-		RepoID:       "repo-1",
-		RepoName:     "agency",
-		WorktreeID:   "wt-1",
-		WorktreeName: "feature-x",
-		Runner:       "claude-code",
-		Mode:         "headed",
-		State:        string(runnerstatus.StateRunning),
-		StartedAt:    "2026-02-05T11:50:00Z",
-		SandboxPath:  "/tmp/sandbox/inv-1",
-		LatestActivity: &daemon.InvocationLatestActivity{
-			TurnID:                 "stream:9",
-			Kind:                   "assistant",
-			Summary:                "applied migration",
-			ToolCallCount:          1,
-			ToolCalls:              []daemon.InvocationActivityToolCall{{Name: "Bash", Command: "go test ./...", HasExit: true, ExitCode: 1}},
-			CheckpointID:           4,
-			Restorable:             true,
-			CheckpointDescription:  "checkpoint after migration",
-			CheckpointDiffstat:     "2 files changed, 10 insertions(+), 2 deletions(-)",
-			CheckpointChangedPaths: []string{"internal/apply.go", "internal/apply_test.go"},
-			CheckpointChangedCount: 2,
-		},
-		Navigation: &daemon.InvocationActivityNavigation{
-			AttachCommand: "agency agent inv-1 attach --repo repo-1",
-		},
-	})
-	require.NoError(t, err)
-	output := out.String()
-	assert.Contains(t, output, "repo:                   agency (repo-1)")
-	assert.Contains(t, output, "worktree:               feature-x (wt-1)")
-	assert.Contains(t, output, "latest_activity:        [assistant] applied migration (tools=1, checkpoint=4)")
-	assert.Contains(t, output, "latest_activity_tool:   ▶ Bash go test ./... (exit=1)")
-	assert.Contains(t, output, "latest_activity_checkpoint: 4")
-	assert.Contains(t, output, "latest_activity_checkpoint_description: checkpoint after migration")
-	assert.Contains(t, output, "latest_activity_checkpoint_diffstat: 2 files changed, 10 insertions(+), 2 deletions(-)")
-	assert.Contains(t, output, "latest_activity_checkpoint_paths: internal/apply.go, internal/apply_test.go")
-	assert.Contains(t, output, "attach_command:         agency agent inv-1 attach --repo repo-1")
-}
-
-func TestWriteAgentCheckHumanFromDTO_IncludesRunnerMetadata(t *testing.T) {
-	t.Parallel()
-
-	var out bytes.Buffer
-	check := &daemon.InvocationCheckData{
-		InvocationID:    "inv-1",
-		RepoID:          "repo-1",
-		State:           string(runnerstatus.StateRunning),
-		RunnerState:     string(runnerstatus.StateWaiting),
-		RunnerReason:    "awaiting_user_input",
-		RunnerSummary:   "needs your answer",
-		RunnerUpdatedAt: "2026-02-05T12:00:00Z",
-		HowToTest:       "run go test ./...",
-		Navigation: daemon.InvocationCheckNavigation{
-			HistoryCommand: "agency agent inv-1 history --repo repo-1",
-			AttachCommand:  "agency agent inv-1 attach --repo repo-1",
-		},
-	}
-	err := writeAgentCheckHumanFromDTO(&out, check)
-	require.NoError(t, err)
-	output := out.String()
-	assert.Contains(t, output, "runner_state:         waiting")
-	assert.Contains(t, output, "runner_reason:        awaiting_user_input")
-	assert.Contains(t, output, "runner_summary:       needs your answer")
-	assert.Contains(t, output, "runner_updated_at:    2026-02-05T12:00:00Z")
-	assert.Contains(t, output, "how_to_test:          run go test ./...")
-	assert.Contains(t, output, "attach_command:      agency agent inv-1 attach --repo repo-1")
-}
-
-func TestWriteAgentCheckHumanFromDTO_RendersSucceededState(t *testing.T) {
-	t.Parallel()
-
-	var out bytes.Buffer
-	check := &daemon.InvocationCheckData{
-		InvocationID: "inv-1",
-		RepoID:       "repo-1",
-		State:        string(runnerstatus.StateSucceeded),
-		RunnerState:  string(runnerstatus.StateSucceeded),
-		Navigation: daemon.InvocationCheckNavigation{
-			HistoryCommand: "agency agent inv-1 history --repo repo-1",
-		},
-	}
-
-	err := writeAgentCheckHumanFromDTO(&out, check)
-	require.NoError(t, err)
-	assert.Contains(t, out.String(), "state:                succeeded")
-	assert.Contains(t, out.String(), "runner_state:         succeeded")
-}
-
-func TestWriteAgentCheckHumanFromDTO_NilCheckReturnsInternalError(t *testing.T) {
-	t.Parallel()
-
-	var out bytes.Buffer
-	err := writeAgentCheckHumanFromDTO(&out, nil)
-	require.Error(t, err)
-	assert.Equal(t, errors.EInternal, errors.GetCode(err))
+	assert.Contains(t, out, "latest_activity:        [assistant] updated renderer (tools=1, checkpoint=4)")
+	assert.Contains(t, out, "latest_activity_tool:   ▶ Bash go test ./... (exit=1)")
+	assert.Contains(t, out, "latest_activity_checkpoint: 4")
+	assert.Contains(t, out, "latest_activity_checkpoint_description: checkpoint after renderer update")
+	assert.Contains(t, out, "latest_activity_checkpoint_diffstat: 2 files changed, 10 insertions(+), 2 deletions(-)")
+	assert.Contains(t, out, "latest_activity_checkpoint_paths: internal/apply.go, internal/apply_test.go")
+	assert.Contains(t, out, "history_command:        agency agent "+env.InvocationID+" history --repo "+env.RepoID)
+	assert.Contains(t, out, "diff_command:           agency agent "+env.InvocationID+" diff --repo "+env.RepoID)
+	assert.NotContains(t, out, "attach_command:")
 }
 
 func TestAgentShow_AmbiguousPreservesCandidates(t *testing.T) {
@@ -890,14 +703,14 @@ func TestAgentShow_AmbiguousPreservesCandidates(t *testing.T) {
 	assert.Equal(t, errors.EInvocationIDAmbiguous, errors.GetCode(showErr),
 		"agent show must return entity-specific ambiguity code, not E_AMBIGUOUS")
 
-	dre, ok := daemonclient.AsDaemonReadError(showErr)
-	require.True(t, ok, "error must be DaemonReadError with rich details")
+	var dre *daemonclient.DaemonReadError
+	require.True(t, stderrors.As(showErr, &dre), "error must be DaemonReadError with rich details")
 	candidates := dre.Candidates()
 	assert.Len(t, candidates, 2, "daemon should return both candidate IDs")
 }
 
 // ---------------------------------------------------------------------------
-// Canonical agent path/open/shell/attach daemon-first navigation.
+// Agent path/open/shell/attach navigation.
 // ---------------------------------------------------------------------------
 
 func TestAgentPath_UsesDaemonResolution(t *testing.T) {
@@ -912,16 +725,17 @@ func TestAgentPath_UsesDaemonResolution(t *testing.T) {
 		"stdout must be exactly the daemon-resolved sandbox_path plus newline")
 }
 
-func TestAgentOpen_UsesDaemonResolution_NoLocalResolve(t *testing.T) {
+func TestAgentOpen_UsesResolvedSandboxPath(t *testing.T) {
 	env := setupAgentNavEnv(t, "open-test", store.RunnerModeHeaded)
-	shimPath, recordFile := createShimScript(t)
+	commandPath, recordFile := createNamedRecordingExecutable(t, "code")
+	t.Setenv("PATH", filepath.Dir(commandPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	var stdout, stderr bytes.Buffer
-	err := AgentOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentOpenOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID, Editor: shimPath}, &stdout, &stderr)
+	err := AgentOpen(context.Background(), exec.NewRealRunner(), fs.NewRealFS(), "",
+		AgentOpenOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
-	cwd, args := readShimRecord(t, recordFile)
+	cwd, args := readCommandRecord(t, recordFile)
 
 	assert.Equal(t, env.SandboxPath, cwd,
 		"editor dispatch cwd must equal daemon-resolved sandbox_path")
@@ -929,17 +743,17 @@ func TestAgentOpen_UsesDaemonResolution_NoLocalResolve(t *testing.T) {
 		"editor must receive daemon-resolved sandbox_path as argument")
 }
 
-func TestAgentShell_UsesDaemonResolution_NoLocalResolve(t *testing.T) {
+func TestAgentShell_UsesResolvedSandboxPath(t *testing.T) {
 	env := setupAgentNavEnv(t, "shell-test", store.RunnerModeHeaded)
-	shimPath, recordFile := createShimScript(t)
-	t.Setenv("SHELL", shimPath)
+	commandPath, recordFile := createNamedRecordingExecutable(t, "record-command")
+	t.Setenv("SHELL", commandPath)
 
 	var stdout, stderr bytes.Buffer
 	err := AgentShell(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 		AgentShellOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID}, &stdout, &stderr)
 	require.NoError(t, err)
 
-	cwd, args := readShimRecord(t, recordFile)
+	cwd, args := readCommandRecord(t, recordFile)
 
 	assert.Equal(t, env.SandboxPath, cwd,
 		"shell cwd must equal daemon-resolved sandbox_path")
@@ -948,29 +762,32 @@ func TestAgentShell_UsesDaemonResolution_NoLocalResolve(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Headed start attach cutover.
+// Headed start attach.
 // ---------------------------------------------------------------------------
 
 func TestAgentStart_Headed_NonInteractiveFailsFast(t *testing.T) {
-	env := setupAgentStartHeadedTestEnv(t, "start-noterm", 1)
+	env := setupAgentStartHeadedTestEnv(t, "start-noterm")
 
 	var stdout, stderr bytes.Buffer
+	attachCalled := false
 	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
 		RepoRef:       env.RepoID,
 		WorktreeRef:   "start-noterm",
 		Runner:        "claude-code",
 		IsInteractive: func() bool { return false },
+		TmuxAttachFn: func(context.Context, string) error {
+			attachCalled = true
+			return nil
+		},
 	}, &stdout, &stderr)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.ENotInteractive, errors.GetCode(err))
 
 	invocationsDir := filepath.Join(env.DataDir, "repos", env.RepoID, "invocations")
-	_, statErr := os.Stat(invocationsDir)
-	assert.True(t, os.IsNotExist(statErr), "headed start must not create an invocation before the interactive gate")
+	assert.NoDirExists(t, invocationsDir, "headed start must not create an invocation before the interactive gate")
 
-	_, recordErr := os.Stat(env.RecordFile)
-	assert.True(t, os.IsNotExist(recordErr), "tmux attach shim must not be invoked")
+	assert.False(t, attachCalled, "tmux attach must not be invoked")
 }
 
 func TestAgentStart_NormalRepoRequiresWorktree(t *testing.T) {
@@ -989,7 +806,7 @@ func TestAgentStart_NormalRepoRequiresWorktree(t *testing.T) {
 }
 
 func TestAgentStart_UnrelatedCWDRequiresRepo(t *testing.T) {
-	env := setupAgentStartHeadedTestEnv(t, "start-no-repo-context", 1)
+	env := setupAgentStartHeadedTestEnv(t, "start-no-repo-context")
 
 	var stdout, stderr bytes.Buffer
 	err := AgentStart(context.Background(), exec.NewRealRunner(), env.FS, t.TempDir(), AgentStartOpts{
@@ -1001,7 +818,7 @@ func TestAgentStart_UnrelatedCWDRequiresRepo(t *testing.T) {
 	assert.Equal(t, errors.ENoRepoContext, errors.GetCode(err))
 }
 
-func TestAgentStart_HeadlessPromptRequiredBeforeDaemon(t *testing.T) {
+func TestAgentStart_HeadlessPromptRequired(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := AgentStart(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentStartOpts{
 		Mode: "headless",
@@ -1010,7 +827,7 @@ func TestAgentStart_HeadlessPromptRequiredBeforeDaemon(t *testing.T) {
 	assert.Equal(t, errors.EPromptRequired, errors.GetCode(err))
 }
 
-func TestAgentStart_InvalidModeBeforeDaemon(t *testing.T) {
+func TestAgentStart_InvalidMode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := AgentStart(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentStartOpts{
 		Mode:   "bogus",
@@ -1020,7 +837,7 @@ func TestAgentStart_InvalidModeBeforeDaemon(t *testing.T) {
 	assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
 }
 
-func TestAgentStart_HeadedPromptRejectedBeforeDaemon(t *testing.T) {
+func TestAgentStart_HeadedPromptRejected(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := AgentStart(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentStartOpts{
 		Mode:     "headed",
@@ -1031,7 +848,7 @@ func TestAgentStart_HeadedPromptRejectedBeforeDaemon(t *testing.T) {
 	assert.Equal(t, errors.EUsage, errors.GetCode(err))
 }
 
-func TestAgentStart_HeadlessDetachedRejectedBeforeDaemon(t *testing.T) {
+func TestAgentStart_HeadlessDetachedRejected(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := AgentStart(context.Background(), testutil.NewFakeCommandRunner(), nil, "", AgentStartOpts{
 		Mode:     "headless",
@@ -1043,7 +860,7 @@ func TestAgentStart_HeadlessDetachedRejectedBeforeDaemon(t *testing.T) {
 }
 
 func TestAgentStart_DefaultsRepoAndWorktreeFromIntegrationCWD(t *testing.T) {
-	env := setupAgentStartHeadedTestEnv(t, "start-infer", 1)
+	env := setupAgentStartHeadedTestEnv(t, "start-infer")
 
 	var stdout, stderr bytes.Buffer
 	err := AgentStart(context.Background(), env.Runner, env.FS, env.WorktreePath, AgentStartOpts{
@@ -1058,8 +875,8 @@ func TestAgentStart_DefaultsRepoAndWorktreeFromIntegrationCWD(t *testing.T) {
 	assert.Contains(t, output, "  worktree:       start-infer ("+env.WorktreeID+")")
 	invocationID := ""
 	for _, line := range strings.Split(output, "\n") {
-		if strings.HasPrefix(line, "  invocation_id:") {
-			invocationID = strings.TrimSpace(strings.TrimPrefix(line, "  invocation_id:"))
+		if value, ok := strings.CutPrefix(line, "  invocation_id:"); ok {
+			invocationID = strings.TrimSpace(value)
 			break
 		}
 	}
@@ -1069,9 +886,10 @@ func TestAgentStart_DefaultsRepoAndWorktreeFromIntegrationCWD(t *testing.T) {
 }
 
 func TestAgentStart_Headed_DetachedSkipsAttach(t *testing.T) {
-	env := setupAgentStartHeadedTestEnv(t, "start-detached", 1)
+	env := setupAgentStartHeadedTestEnv(t, "start-detached")
 
 	var stdout, stderr bytes.Buffer
+	attachCalled := false
 	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
 		RepoRef:       env.RepoID,
 		WorktreeRef:   "start-detached",
@@ -1079,6 +897,10 @@ func TestAgentStart_Headed_DetachedSkipsAttach(t *testing.T) {
 		Mode:          "headed",
 		Detached:      true,
 		IsInteractive: func() bool { return false },
+		TmuxAttachFn: func(context.Context, string) error {
+			attachCalled = true
+			return nil
+		},
 	}, &stdout, &stderr)
 	require.NoError(t, err)
 
@@ -1086,8 +908,8 @@ func TestAgentStart_Headed_DetachedSkipsAttach(t *testing.T) {
 	assert.Contains(t, output, "Session started in detached mode.")
 	invocationID := ""
 	for _, line := range strings.Split(output, "\n") {
-		if strings.HasPrefix(line, "  invocation_id:") {
-			invocationID = strings.TrimSpace(strings.TrimPrefix(line, "  invocation_id:"))
+		if value, ok := strings.CutPrefix(line, "  invocation_id:"); ok {
+			invocationID = strings.TrimSpace(value)
 			break
 		}
 	}
@@ -1100,12 +922,11 @@ func TestAgentStart_Headed_DetachedSkipsAttach(t *testing.T) {
 	require.NoError(t, readErr)
 	require.Len(t, entries, 1, "headed start should create exactly one invocation")
 
-	_, recordErr := os.Stat(env.RecordFile)
-	assert.True(t, os.IsNotExist(recordErr), "detached headed start must not attach")
+	assert.False(t, attachCalled, "detached headed start must not attach")
 }
 
 func TestAgentStart_UsesUserRunnerDefaultsWhenCLIUnset(t *testing.T) {
-	env := setupAgentStartHeadedTestEnv(t, "start-user-runner-defaults", 1)
+	env := setupAgentStartHeadedTestEnv(t, "start-user-runner-defaults")
 
 	cfg := map[string]any{
 		"version": 4,
@@ -1151,7 +972,7 @@ func TestAgentStart_UsesUserRunnerDefaultsWhenCLIUnset(t *testing.T) {
 }
 
 func TestAgentStart_AgencyConfigRunnerDefaultsOverrideUserConfig(t *testing.T) {
-	env := setupAgentStartHeadedTestEnv(t, "start-agency-runner-defaults", 1)
+	env := setupAgentStartHeadedTestEnv(t, "start-agency-runner-defaults")
 
 	cfg := map[string]any{
 		"version": 4,
@@ -1226,7 +1047,7 @@ func TestAgentStart_AgencyConfigRunnerDefaultsOverrideUserConfig(t *testing.T) {
 }
 
 func TestAgentStart_CLIOverridesAgencyAndUserRunnerDefaults(t *testing.T) {
-	env := setupAgentStartHeadedTestEnv(t, "start-cli-runner-defaults", 1)
+	env := setupAgentStartHeadedTestEnv(t, "start-cli-runner-defaults")
 
 	cfg := map[string]any{
 		"version": 4,
@@ -1303,7 +1124,7 @@ func TestAgentStart_CLIOverridesAgencyAndUserRunnerDefaults(t *testing.T) {
 }
 
 func TestAgentStart_UsesUserClaudePermissionModeWhenCLIUnset(t *testing.T) {
-	env := setupAgentStartHeadedTestEnv(t, "start-user-runner-permission-mode", 1)
+	env := setupAgentStartHeadedTestEnv(t, "start-user-runner-permission-mode")
 
 	cfg := map[string]any{
 		"version": 4,
@@ -1348,7 +1169,7 @@ func TestAgentStart_UsesUserClaudePermissionModeWhenCLIUnset(t *testing.T) {
 }
 
 func TestAgentStart_HeadlessClaudeDefaultsPermissionModeToBypassPermissions(t *testing.T) {
-	env := setupAgentStartHeadedTestEnv(t, "start-headless-default-permission-mode", 1)
+	env := setupAgentStartHeadedTestEnv(t, "start-headless-default-permission-mode")
 
 	var stdout, stderr bytes.Buffer
 	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
@@ -1371,7 +1192,7 @@ func TestAgentStart_HeadlessClaudeDefaultsPermissionModeToBypassPermissions(t *t
 }
 
 func TestAgentStart_HeadlessClaudeRejectsPromptingPermissionModes(t *testing.T) {
-	env := setupAgentStartHeadedTestEnv(t, "start-headless-invalid-permission-mode", 1)
+	env := setupAgentStartHeadedTestEnv(t, "start-headless-invalid-permission-mode")
 
 	var stdout, stderr bytes.Buffer
 	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
@@ -1389,7 +1210,7 @@ func TestAgentStart_HeadlessClaudeRejectsPromptingPermissionModes(t *testing.T) 
 }
 
 func TestAgentStart_ExplicitMissingAgencyConfigFails(t *testing.T) {
-	env := setupAgentStartHeadedTestEnv(t, "start-missing-agency-config", 1)
+	env := setupAgentStartHeadedTestEnv(t, "start-missing-agency-config")
 
 	var stdout, stderr bytes.Buffer
 	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
@@ -1405,7 +1226,7 @@ func TestAgentStart_ExplicitMissingAgencyConfigFails(t *testing.T) {
 }
 
 func TestAgentStart_InvalidRepoAgencyConfigIncludesPathSourceAndHint(t *testing.T) {
-	env := setupAgentStartHeadedTestEnv(t, "start-invalid-agency-config", 1)
+	env := setupAgentStartHeadedTestEnv(t, "start-invalid-agency-config")
 	require.NoError(t, os.WriteFile(filepath.Join(env.RepoDir, "agency.json"), []byte(`{
   "version": 1,
   "scripts": {
@@ -1440,19 +1261,24 @@ func TestAgentStart_InvalidRepoAgencyConfigIncludesPathSourceAndHint(t *testing.
 	}
 	assert.Equal(t, filepath.Join(expectedRepoDir, "agency.json"), ae.Details["path"])
 	assert.Equal(t, "repo", ae.Details["source"])
-	assert.Contains(t, ae.Details["hint"], "agency init --path "+shellQuoteForTest(expectedRepoDir)+" --repo-config --force")
+	assert.Contains(t, ae.Details["hint"], "agency init --path "+core.ShellEscapePosix(expectedRepoDir)+" --repo-config --force")
 }
 
 func TestAgentStart_Headed_AttachFailureWarnsButSucceeds(t *testing.T) {
 	t.Setenv("TMUX", "")
-	env := setupAgentStartHeadedTestEnv(t, "start-attach-fail", 1)
+	env := setupAgentStartHeadedTestEnv(t, "start-attach-fail")
 
 	var stdout, stderr bytes.Buffer
+	attachedSession := ""
 	err := AgentStart(context.Background(), env.Runner, env.FS, env.RepoDir, AgentStartOpts{
 		RepoRef:       env.RepoID,
 		WorktreeRef:   "start-attach-fail",
 		Runner:        "claude-code",
 		IsInteractive: func() bool { return true },
+		TmuxAttachFn: func(_ context.Context, sessionName string) error {
+			attachedSession = sessionName
+			return fmt.Errorf("attach failed")
+		},
 	}, &stdout, &stderr)
 	require.NoError(t, err)
 
@@ -1460,21 +1286,19 @@ func TestAgentStart_Headed_AttachFailureWarnsButSucceeds(t *testing.T) {
 	require.Contains(t, output, "tmux_session:")
 	session := ""
 	for _, line := range strings.Split(output, "\n") {
-		if strings.HasPrefix(line, "  tmux_session:") {
-			session = strings.TrimSpace(strings.TrimPrefix(line, "  tmux_session:"))
+		if value, ok := strings.CutPrefix(line, "  tmux_session:"); ok {
+			session = strings.TrimSpace(value)
 			break
 		}
 	}
 	require.NotEmpty(t, session, "headed start must print the tmux session it attached to")
 
-	cwd, args := readShimRecord(t, env.RecordFile)
-	assert.NotEmpty(t, cwd)
-	assert.Equal(t, "attach-session -t "+session, args)
-	assert.Contains(t, stderr.String(), "warning: could not attach to tmux session:")
+	assert.Equal(t, session, attachedSession)
+	assert.Contains(t, stderr.String(), "warning: could not attach to tmux session: attach failed")
 	invocationID := ""
 	for _, line := range strings.Split(output, "\n") {
-		if strings.HasPrefix(line, "  invocation_id:") {
-			invocationID = strings.TrimSpace(strings.TrimPrefix(line, "  invocation_id:"))
+		if value, ok := strings.CutPrefix(line, "  invocation_id:"); ok {
+			invocationID = strings.TrimSpace(value)
 			break
 		}
 	}
@@ -1547,7 +1371,7 @@ func TestAgentRecreate_Headed_AttachFailureWarnsWithCanonicalAttachCommand(t *te
 			RepoRef:         env.RepoID,
 			DataDirOverride: env.DataDir,
 			IsInteractive:   func() bool { return true },
-			TmuxAttachFn: func(sessionName string) error {
+			TmuxAttachFn: func(_ context.Context, sessionName string) error {
 				attachedSession = sessionName
 				return fmt.Errorf("attach failed")
 			},
@@ -1560,7 +1384,7 @@ func TestAgentRecreate_Headed_AttachFailureWarnsWithCanonicalAttachCommand(t *te
 }
 
 func TestAgentStart_ExplicitSelectorsWorkFromUnrelatedCWD(t *testing.T) {
-	env := setupAgentStartHeadedTestEnv(t, "start-explicit-selectors", 1)
+	env := setupAgentStartHeadedTestEnv(t, "start-explicit-selectors")
 
 	var stdout, stderr bytes.Buffer
 	err := AgentStart(context.Background(), env.Runner, env.FS, t.TempDir(), AgentStartOpts{
@@ -1576,127 +1400,38 @@ func TestAgentStart_ExplicitSelectorsWorkFromUnrelatedCWD(t *testing.T) {
 	assert.Empty(t, stderr.String())
 }
 
-func TestAgentAttach_UsesStoredTmuxSessionWithFallback(t *testing.T) {
-	t.Run("stored session wins", func(t *testing.T) {
-		env := setupAgentNavEnv(t, "attach-stored", store.RunnerModeHeaded)
-		st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
-		storedSession := "agency_explicit_attach"
-		require.NoError(t, st.UpdateInvocationMeta(env.RepoID, env.InvocationID, func(meta *store.InvocationMeta) {
-			meta.TmuxSession = storedSession
-		}))
-		env.Tmux.Sessions[storedSession] = testutil.FakeTmuxSession{Name: storedSession}
+func TestAgentAttach_UsesStoredTmuxSession(t *testing.T) {
+	env := setupAgentNavEnv(t, "attach-stored", store.RunnerModeHeaded)
+	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
+	storedSession := "agency_explicit_attach"
+	require.NoError(t, st.UpdateInvocationMeta(env.RepoID, env.InvocationID, func(meta *store.InvocationMeta) {
+		meta.TmuxSession = storedSession
+	}))
+	env.Tmux.Sessions[storedSession] = testutil.FakeTmuxSession{Name: storedSession}
 
-		var attachCalled bool
-		var attachedSession string
+	var attachCalled bool
+	var attachedSession string
+	type attachContextKey string
+	attachCtx := context.WithValue(context.Background(), attachContextKey("marker"), "attach-context")
 
-		var stdout, stderr bytes.Buffer
-		err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-			AgentAttachOpts{
-				InvocationRef:   env.InvocationID,
-				RepoRef:         env.RepoID,
-				IsInteractive:   func() bool { return true },
-				DataDirOverride: env.DataDir,
-				TmuxAttachFn: func(sess string) error {
-					attachCalled = true
-					attachedSession = sess
-					return nil
-				},
-			}, &stdout, &stderr)
-		require.NoError(t, err)
+	var stdout, stderr bytes.Buffer
+	err := AgentAttach(attachCtx, testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+		AgentAttachOpts{
+			InvocationRef:   env.InvocationID,
+			RepoRef:         env.RepoID,
+			IsInteractive:   func() bool { return true },
+			DataDirOverride: env.DataDir,
+			TmuxAttachFn: func(gotCtx context.Context, sess string) error {
+				attachCalled = true
+				attachedSession = sess
+				assert.Equal(t, "attach-context", gotCtx.Value(attachContextKey("marker")))
+				return nil
+			},
+		}, &stdout, &stderr)
+	require.NoError(t, err)
 
-		assert.True(t, attachCalled, "tmux attach must be called")
-		assert.Equal(t, storedSession, attachedSession, "stored tmux_session must win over the derived name")
-	})
-
-	t.Run("fallback to derived session", func(t *testing.T) {
-		env := setupAgentNavEnv(t, "attach-fallback", store.RunnerModeHeaded)
-		st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
-		require.NoError(t, st.UpdateInvocationMeta(env.RepoID, env.InvocationID, func(meta *store.InvocationMeta) {
-			meta.TmuxSession = ""
-		}))
-
-		fallbackSession := tmux.SessionName(env.InvocationID)
-		env.Tmux.Sessions[fallbackSession] = testutil.FakeTmuxSession{Name: fallbackSession}
-
-		var attachCalled bool
-		var attachedSession string
-
-		var stdout, stderr bytes.Buffer
-		err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-			AgentAttachOpts{
-				InvocationRef:   env.InvocationID,
-				RepoRef:         env.RepoID,
-				IsInteractive:   func() bool { return true },
-				DataDirOverride: env.DataDir,
-				TmuxAttachFn: func(sess string) error {
-					attachCalled = true
-					attachedSession = sess
-					return nil
-				},
-			}, &stdout, &stderr)
-		require.NoError(t, err)
-
-		assert.True(t, attachCalled, "tmux attach must be called")
-		assert.Equal(t, fallbackSession, attachedSession, "agent attach must fall back to tmux.SessionName(invocation_id)")
-	})
-}
-
-func TestAgentAttach_UsesExplicitTmuxClientBehavior(t *testing.T) {
-	t.Run("outside tmux uses attach-session", func(t *testing.T) {
-		env := setupAgentNavEnv(t, "attach-outside-tmux", store.RunnerModeHeaded)
-		sessionName := tmux.SessionName(env.InvocationID)
-		env.Tmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
-
-		shimDir := t.TempDir()
-		recordFile := filepath.Join(shimDir, "record.txt")
-		shimPath := filepath.Join(shimDir, "tmux")
-		script := fmt.Sprintf("#!/bin/sh\npwd > '%s'\necho \"$@\" >> '%s'\n", recordFile, recordFile)
-		require.NoError(t, os.WriteFile(shimPath, []byte(script), 0o755))
-
-		t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-		t.Setenv("TMUX", "")
-
-		var stdout, stderr bytes.Buffer
-		err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-			AgentAttachOpts{
-				InvocationRef:   env.InvocationID,
-				RepoRef:         env.RepoID,
-				IsInteractive:   func() bool { return true },
-				DataDirOverride: env.DataDir,
-			}, &stdout, &stderr)
-		require.NoError(t, err)
-
-		_, args := readShimRecord(t, recordFile)
-		assert.Equal(t, "attach-session -t "+sessionName, args)
-	})
-
-	t.Run("inside tmux uses switch-client", func(t *testing.T) {
-		env := setupAgentNavEnv(t, "attach-inside-tmux", store.RunnerModeHeaded)
-		sessionName := tmux.SessionName(env.InvocationID)
-		env.Tmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
-
-		shimDir := t.TempDir()
-		recordFile := filepath.Join(shimDir, "record.txt")
-		shimPath := filepath.Join(shimDir, "tmux")
-		script := fmt.Sprintf("#!/bin/sh\npwd > '%s'\necho \"$@\" >> '%s'\n", recordFile, recordFile)
-		require.NoError(t, os.WriteFile(shimPath, []byte(script), 0o755))
-
-		t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-		t.Setenv("TMUX", "/tmp/tmux-test/default,123,0")
-
-		var stdout, stderr bytes.Buffer
-		err := AgentAttach(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-			AgentAttachOpts{
-				InvocationRef:   env.InvocationID,
-				RepoRef:         env.RepoID,
-				IsInteractive:   func() bool { return true },
-				DataDirOverride: env.DataDir,
-			}, &stdout, &stderr)
-		require.NoError(t, err)
-
-		_, args := readShimRecord(t, recordFile)
-		assert.Equal(t, "switch-client -t "+sessionName, args)
-	})
+	assert.True(t, attachCalled, "tmux attach must be called")
+	assert.Equal(t, storedSession, attachedSession, "stored tmux_session must drive attach")
 }
 
 func TestAgentAttach_MissingSessionReturnsESessionEnded(t *testing.T) {
@@ -1710,7 +1445,7 @@ func TestAgentAttach_MissingSessionReturnsESessionEnded(t *testing.T) {
 			RepoRef:         env.RepoID,
 			IsInteractive:   func() bool { return true },
 			DataDirOverride: env.DataDir,
-			TmuxAttachFn: func(string) error {
+			TmuxAttachFn: func(context.Context, string) error {
 				attachCalled = true
 				return nil
 			},
@@ -1900,19 +1635,13 @@ func TestAgentOpen_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 	t.Setenv("AGENCY_DATA_DIR", dataTmp)
 	t.Setenv("AGENCY_CONFIG_DIR", configDir)
 
-	shimPath, recordFile := createShimScript(t)
-
 	var stdout, stderr bytes.Buffer
 	openErr := AgentOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentOpenOpts{InvocationRef: "20260201000000", RepoRef: repoID, Editor: shimPath}, &stdout, &stderr)
+		AgentOpenOpts{InvocationRef: "20260201000000", RepoRef: repoID}, &stdout, &stderr)
 
 	require.Error(t, openErr)
 	assert.Equal(t, errors.EAmbiguous, errors.GetCode(openErr),
 		"navigation ambiguity must return E_AMBIGUOUS")
-
-	_, readErr := os.ReadFile(recordFile)
-	assert.True(t, os.IsNotExist(readErr),
-		"editor shim must NOT be executed on ambiguous target")
 }
 
 func TestAgentAttach_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
@@ -1989,7 +1718,7 @@ func TestAgentAttach_AmbiguityUsesEAmbiguous_NoDispatch(t *testing.T) {
 			RepoRef:         repoID,
 			IsInteractive:   func() bool { return true },
 			DataDirOverride: dataTmp,
-			TmuxAttachFn: func(sess string) error {
+			TmuxAttachFn: func(_ context.Context, sess string) error {
 				attachCalled = true
 				return nil
 			},
@@ -2101,19 +1830,6 @@ func TestAgentLS_JSONOutput_PreservesRepoScopedIDs(t *testing.T) {
 	assert.True(t, repoIDs[repo2], "repo2 must appear in JSON output")
 }
 
-func TestAgentPath_OutputsDaemonResolvedPath(t *testing.T) {
-	env := setupAgentNavEnv(t, "pathout", store.RunnerModeHeaded)
-
-	var stdout, stderr bytes.Buffer
-	err := AgentPath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentPathOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID}, &stdout, &stderr)
-	require.NoError(t, err)
-
-	printedPath := strings.TrimSpace(stdout.String())
-	assert.Equal(t, env.SandboxPath, printedPath,
-		"printed path must equal daemon DTO sandbox_path (not re-derived)")
-}
-
 func TestAgentHumanOutput_RemainsHumanOriented_ScriptContractViaJSON(t *testing.T) {
 	env := setupAgentNavEnv(t, "human", store.RunnerModeHeaded)
 
@@ -2157,7 +1873,7 @@ func TestAgentAttach_HeadlessInvocation_ReturnsInvalidMode(t *testing.T) {
 			RepoRef:         env.RepoID,
 			IsInteractive:   func() bool { return true },
 			DataDirOverride: env.DataDir,
-			TmuxAttachFn: func(sess string) error {
+			TmuxAttachFn: func(_ context.Context, sess string) error {
 				attachCalled = true
 				return nil
 			},
@@ -2211,12 +1927,11 @@ func TestAgentNavigation_DoesNotReturnEInvocationBrokenForTargetResolution(t *te
 				navErr = AgentPath(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 					AgentPathOpts{InvocationRef: ref, RepoRef: env.RepoID}, &stdout, &stderr)
 			case "open":
-				shimPath, _ := createShimScript(t)
 				navErr = AgentOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-					AgentOpenOpts{InvocationRef: ref, RepoRef: env.RepoID, Editor: shimPath}, &stdout, &stderr)
+					AgentOpenOpts{InvocationRef: ref, RepoRef: env.RepoID}, &stdout, &stderr)
 			case "shell":
-				shimPath, _ := createShimScript(t)
-				t.Setenv("SHELL", shimPath)
+				commandPath, _ := createNamedRecordingExecutable(t, "record-command")
+				t.Setenv("SHELL", commandPath)
 				navErr = AgentShell(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 					AgentShellOpts{InvocationRef: ref, RepoRef: env.RepoID}, &stdout, &stderr)
 			case "attach":
@@ -2226,14 +1941,14 @@ func TestAgentNavigation_DoesNotReturnEInvocationBrokenForTargetResolution(t *te
 						RepoRef:         env.RepoID,
 						IsInteractive:   func() bool { return true },
 						DataDirOverride: env.DataDir,
-						TmuxAttachFn:    func(string) error { return nil },
+						TmuxAttachFn:    func(context.Context, string) error { return nil },
 					}, &stdout, &stderr)
 			}
 
 			require.Error(t, navErr)
 			code := errors.GetCode(navErr)
 			assert.Equal(t, errors.EInvocationNotFound, code,
-				"expected daemon-first E_INVOCATION_NOT_FOUND for missing target")
+				"expected E_INVOCATION_NOT_FOUND for missing target")
 		})
 	}
 }
@@ -2247,11 +1962,9 @@ func TestAgentOpen_SandboxMissing_UsesDaemonResolvedPath(t *testing.T) {
 
 	require.NoError(t, os.RemoveAll(env.SandboxPath))
 
-	shimPath, recordFile := createShimScript(t)
-
 	var stdout, stderr bytes.Buffer
 	err := AgentOpen(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
-		AgentOpenOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID, Editor: shimPath}, &stdout, &stderr)
+		AgentOpenOpts{InvocationRef: env.InvocationID, RepoRef: env.RepoID}, &stdout, &stderr)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.ESandboxMissing, errors.GetCode(err))
@@ -2261,9 +1974,6 @@ func TestAgentOpen_SandboxMissing_UsesDaemonResolvedPath(t *testing.T) {
 	assert.Equal(t, env.SandboxPath, ae.Details["sandbox_path"],
 		"error details must include daemon-resolved sandbox_path")
 
-	_, readErr := os.ReadFile(recordFile)
-	assert.True(t, os.IsNotExist(readErr),
-		"editor shim must NOT be executed when sandbox is missing")
 }
 
 func TestAgentShell_SandboxMissing_UsesDaemonResolvedPath(t *testing.T) {
@@ -2271,8 +1981,8 @@ func TestAgentShell_SandboxMissing_UsesDaemonResolvedPath(t *testing.T) {
 
 	require.NoError(t, os.RemoveAll(env.SandboxPath))
 
-	shimPath, recordFile := createShimScript(t)
-	t.Setenv("SHELL", shimPath)
+	commandPath, recordFile := createNamedRecordingExecutable(t, "record-command")
+	t.Setenv("SHELL", commandPath)
 
 	var stdout, stderr bytes.Buffer
 	err := AgentShell(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
@@ -2286,9 +1996,7 @@ func TestAgentShell_SandboxMissing_UsesDaemonResolvedPath(t *testing.T) {
 	assert.Equal(t, env.SandboxPath, ae.Details["sandbox_path"],
 		"error details must include daemon-resolved sandbox_path")
 
-	_, readErr := os.ReadFile(recordFile)
-	assert.True(t, os.IsNotExist(readErr),
-		"shell shim must NOT be executed when sandbox is missing")
+	assert.NoFileExists(t, recordFile, "shell command must NOT be executed when sandbox is missing")
 }
 
 // ---------------------------------------------------------------------------
@@ -2428,42 +2136,6 @@ func TestAgentHistory_PaginationStableContinuation(t *testing.T) {
 	assert.Equal(t, allIDs, pagedIDs)
 }
 
-func TestAgentHistory_InteractiveUsesSharedWatchRuntime(t *testing.T) {
-	t.Parallel()
-
-	repoDir, dataDir, repoID, worktreeID, _, fsys := setupAgentTestEnvShort(t, "history-watch")
-	invocationID := "20260131190500-watch"
-	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
-
-	cr2 := testutil.NewFakeCommandRunner()
-	cr2.Responses["git rev-parse --show-toplevel"] = testutil.FakeResponse{Stdout: repoDir + "\n"}
-	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
-
-	var captured watch.RunOptions
-	var stdout, stderr bytes.Buffer
-	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
-		InvocationRef:   invocationID,
-		Limit:           50,
-		DataDirOverride: dataDir,
-		IsInteractive: func() bool {
-			return true
-		},
-		RunWatch: func(_ context.Context, client *daemonclient.Client, opts watch.RunOptions) (watch.RunResult, error) {
-			require.NotNil(t, client)
-			captured = opts
-			return watch.RunResult{}, nil
-		},
-	}, &stdout, &stderr)
-	require.NoError(t, err)
-
-	assert.Equal(t, watch.InitialPageHistory, captured.InitialPage)
-	assert.Equal(t, invocationID, captured.InvocationID)
-	assert.Equal(t, repoID, captured.RepoID)
-	assert.NotNil(t, captured.Open)
-	assert.NotNil(t, captured.PRSync)
-	assert.NotNil(t, captured.Restore)
-}
-
 // ---------------------------------------------------------------------------
 // Agent history log integration tests.
 // ---------------------------------------------------------------------------
@@ -2513,26 +2185,22 @@ func TestAgentHistoryLogs_FollowMode(t *testing.T) {
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	appendCalls := 0
-	sleepFn := func(d time.Duration) {
-		appendCalls++
-		// Simulate new data appearing after first poll
-		if appendCalls == 1 {
-			f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0o644)
-			if err == nil {
-				_, _ = f.WriteString("line2\n")
-				_ = f.Close()
-			}
-			return
+	defer cancel()
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0o644)
+		if err == nil {
+			_, _ = f.WriteString("line2\n")
+			_ = f.Close()
 		}
+		time.Sleep(650 * time.Millisecond)
 		cancel()
-	}
+	}()
 
 	var stdout, stderr bytes.Buffer
 	err := AgentHistoryLogs(ctx, cr2, fsys, repoDir, AgentHistoryLogsOpts{
 		InvocationRef:   invocationID,
 		Follow:          true,
-		SleepFn:         sleepFn,
 		DataDirOverride: dataDir,
 	}, &stdout, &stderr)
 	require.NoError(t, err)
@@ -2558,16 +2226,16 @@ func TestAgentHistoryLogs_ContextCancellation(t *testing.T) {
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	ctx, cancel := context.WithCancel(context.Background())
-
-	sleepFn := func(d time.Duration) {
-		cancel() // cancel on first poll sleep
-	}
+	defer cancel()
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
 
 	var stdout, stderr bytes.Buffer
 	err := AgentHistoryLogs(ctx, cr2, fsys, repoDir, AgentHistoryLogsOpts{
 		InvocationRef:   invocationID,
 		Follow:          true,
-		SleepFn:         sleepFn,
 		DataDirOverride: dataDir,
 	}, &stdout, &stderr)
 	require.NoError(t, err)
@@ -2837,7 +2505,7 @@ func TestAgentHistory_DefaultHumanIsConciseWhileJSONRetainsFullPayload(t *testin
 		meta.StartedAt = "2026-02-05T11:50:00Z"
 	}))
 
-	payloadMarker := "S8_PR03_LARGE_TOOL_PAYLOAD_" + strings.Repeat("x", 256)
+	payloadMarker := "LARGE_TOOL_PAYLOAD_SHOULD_REMAIN_JSON_ONLY_" + strings.Repeat("x", 256)
 	streamLines := []string{
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"applying edits","content_blocks":[{"type":"tool_use","name":"Edit","input":{"patch":"` + payloadMarker + `"}}]}}`,
 		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"tool_end","data":{"name":"Edit","command":"internal/service.go","exit_code":0}}`,
@@ -3039,15 +2707,6 @@ func TestAgentFollowup_HumanAndJSONAligned(t *testing.T) {
 	assertMutationEnvelopeShape(t, payload)
 	assert.Equal(t, true, payload["ok"])
 	assert.Equal(t, invocationID, payload["invocation_id"])
-}
-
-func TestResolveBoundedPromptInput_MissingPromptUsesContextMessage(t *testing.T) {
-	t.Parallel()
-
-	_, err := resolveBoundedPromptInput("", "", 64, "custom missing prompt message", "custom empty prompt message")
-	require.Error(t, err)
-	assert.Equal(t, errors.EPromptRequired, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "custom missing prompt message")
 }
 
 func TestResolveBoundedPromptInput_RejectsPromptAndFileTogether(t *testing.T) {

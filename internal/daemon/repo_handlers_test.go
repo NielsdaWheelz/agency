@@ -208,7 +208,7 @@ func TestRepoRegister_PreferredRootPersistence(t *testing.T) {
 	assert.True(t, got.Data.PreferredRootAccessible)
 }
 
-// TestRepoRegister_InaccessiblePreferredRoot verifies fallback when preferred_root disappears.
+// TestRepoRegister_InaccessiblePreferredRoot verifies preferred_root accessibility when the path disappears.
 func TestRepoRegister_InaccessiblePreferredRoot(t *testing.T) {
 	t.Parallel()
 	env := startTestDaemon(t)
@@ -270,8 +270,7 @@ func TestRepoRm_ExactRepoIDResolvesBrokenRepoJSONAndRetainsRepoDir(t *testing.T)
 	_, stillPresent := idx.Repos[repoKey]
 	assert.False(t, stillPresent, "repo_index entry should be removed")
 
-	_, statErr := os.Stat(env.Store.RepoDir(repoID))
-	require.NoError(t, statErr)
+	require.DirExists(t, env.Store.RepoDir(repoID))
 }
 
 func TestRepoRm_BlocksWhenRepoHasChildren(t *testing.T) {

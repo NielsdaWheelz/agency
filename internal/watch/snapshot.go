@@ -1,8 +1,9 @@
 package watch
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
@@ -12,20 +13,20 @@ import (
 
 const workspacePageLimit = 500
 
-// Snapshot is one full workspace state refresh composed from daemon read APIs.
-type Snapshot struct {
+// snapshot is one full workspace state refresh composed from daemon read APIs.
+type snapshot struct {
 	Repos       []daemon.RepoDTO
 	Worktrees   []daemon.WorktreeDTO
 	Invocations []daemon.InvocationDTO
 	UpdatedAt   time.Time
 }
 
-func loadWorkspaceSnapshot(ctx context.Context, client *daemonclient.Client, repoID, worktreeID, worktreeState, invocationState string) (Snapshot, error) {
+func loadWorkspaceSnapshot(ctx context.Context, client *daemonclient.Client, repoID, worktreeID, worktreeState, invocationState string) (snapshot, error) {
 	if client == nil {
-		return Snapshot{}, errors.New(errors.EInternal, "watch runtime requires a daemon client")
+		return snapshot{}, errors.New(errors.EInternal, "watch runtime requires a daemon client")
 	}
 	if worktreeID != "" && repoID == "" {
-		return Snapshot{}, errors.New(errors.EInternal, "worktree-scoped workspace load requires repo scope")
+		return snapshot{}, errors.New(errors.EInternal, "worktree-scoped workspace load requires repo scope")
 	}
 	if worktreeState == "" {
 		worktreeState = "present"
@@ -36,20 +37,20 @@ func loadWorkspaceSnapshot(ctx context.Context, client *daemonclient.Client, rep
 
 	reposResult, err := client.ListRepos(ctx)
 	if err != nil {
-		return Snapshot{}, err
+		return snapshot{}, err
 	}
 
 	worktrees, err := loadAllWorkspaceWorktrees(ctx, client, repoID, worktreeState)
 	if err != nil {
-		return Snapshot{}, err
+		return snapshot{}, err
 	}
 
 	invocations, err := loadAllWorkspaceInvocations(ctx, client, repoID, worktreeID, invocationState)
 	if err != nil {
-		return Snapshot{}, err
+		return snapshot{}, err
 	}
 
-	return Snapshot{
+	return snapshot{
 		Repos:       reposResult.Data.Repos,
 		Worktrees:   worktrees,
 		Invocations: invocations,
@@ -58,65 +59,32 @@ func loadWorkspaceSnapshot(ctx context.Context, client *daemonclient.Client, rep
 }
 
 func loadAllWorkspaceWorktrees(ctx context.Context, client *daemonclient.Client, repoID, state string) ([]daemon.WorktreeDTO, error) {
-	worktrees := make([]daemon.WorktreeDTO, 0, 128)
-	cursor := ""
-
-	for {
-		result, err := client.ListWorktrees(ctx, daemonclient.ListWorktreesOpts{
-			RepoID: repoID,
-			State:  state,
-			Limit:  workspacePageLimit,
-			Cursor: cursor,
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		worktrees = append(worktrees, result.Data.Worktrees...)
-		if result.Data.NextCursor == "" {
-			return worktrees, nil
-		}
-		if result.Data.NextCursor == cursor {
-			return nil, errors.New(errors.EInternal, "worktree pagination cursor did not advance")
-		}
-		cursor = result.Data.NextCursor
-	}
+	return client.DrainWorktrees(ctx, daemon.ListWorktreesParams{
+		RepoID: repoID,
+		State:  state,
+		Limit:  workspacePageLimit,
+	})
 }
 
 func loadAllWorkspaceInvocations(ctx context.Context, client *daemonclient.Client, repoID, worktreeID, state string) ([]daemon.InvocationDTO, error) {
-	invocations := make([]daemon.InvocationDTO, 0, 128)
-	cursor := ""
-
-	for {
-		result, err := client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
-			RepoID:      repoID,
-			WorktreeRef: worktreeID,
-			State:       state,
-			Limit:       workspacePageLimit,
-			Cursor:      cursor,
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		invocations = append(invocations, result.Data.Invocations...)
-		if result.Data.NextCursor == "" {
-			break
-		}
-		if result.Data.NextCursor == cursor {
-			return nil, errors.New(errors.EInternal, "invocation pagination cursor did not advance")
-		}
-		cursor = result.Data.NextCursor
+	invocations, err := client.DrainInvocations(ctx, daemon.ListInvocationsParams{
+		RepoID:      repoID,
+		WorktreeRef: worktreeID,
+		State:       state,
+		Limit:       workspacePageLimit,
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	sort.Slice(invocations, func(i, j int) bool {
-		if invocations[i].SortKey != invocations[j].SortKey {
-			return invocations[i].SortKey < invocations[j].SortKey
+	slices.SortFunc(invocations, func(a, b daemon.InvocationDTO) int {
+		if a.SortKey != b.SortKey {
+			return cmp.Compare(a.SortKey, b.SortKey)
 		}
-		if invocations[i].StartedAt != invocations[j].StartedAt {
-			return invocations[i].StartedAt > invocations[j].StartedAt
+		if a.StartedAt != b.StartedAt {
+			return cmp.Compare(b.StartedAt, a.StartedAt)
 		}
-		return invocations[i].InvocationID < invocations[j].InvocationID
+		return cmp.Compare(a.InvocationID, b.InvocationID)
 	})
 
 	return invocations, nil

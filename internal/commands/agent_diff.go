@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/NielsdaWheelz/agency/internal/daemonclient"
+	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -48,12 +48,10 @@ func AgentDiff(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return err
 	}
 
-	result, err := ns.client.GetInvocationDiff(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationDiffOpts{
-		IncludePatch:       true,
-		IncludeUncommitted: true,
-		TurnID:             strings.TrimSpace(opts.TurnID),
-		TurnStartID:        turnStart,
-		TurnEndID:          turnEnd,
+	result, err := ns.client.GetInvocationDiff(ctx, opts.InvocationRef, repoCtx.RepoID, daemon.GetDiffParams{
+		TurnID:      strings.TrimSpace(opts.TurnID),
+		TurnStartID: turnStart,
+		TurnEndID:   turnEnd,
 	})
 	if err != nil {
 		return err

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
@@ -69,7 +70,7 @@ type AgentStartOpts struct {
 	NoIncludeUntracked bool
 
 	IsInteractive func() bool
-	TmuxAttachFn  func(sessionName string) error
+	TmuxAttachFn  func(context.Context, string) error
 }
 
 func resolveAgentStartRepo(ctx context.Context, cr exec.CommandRunner, ns *daemonNavSetup, cwd, repoRef string) (daemon.RepoDTO, cwdTargetSelection, error) {
@@ -240,11 +241,7 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 
 // agentStartHeadedControlPlane handles headed invocation start via daemon control plane.
 func agentStartHeadedControlPlane(ctx context.Context, repoRootPath string, client *daemonclient.Client, opts AgentStartOpts, runner string, stdout, stderr io.Writer) error {
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
-	}
-
-	resp, err := client.ControlPlaneStartHeaded(ctx, daemonclient.ControlPlaneStartHeadedOpts{
+	resp, err := client.ControlPlaneStartHeaded(ctx, daemon.ControlPlaneStartRequest{
 		RepoRoot:           repoRootPath,
 		WorktreeRef:        opts.WorktreeRef,
 		Runner:             runner,
@@ -284,7 +281,7 @@ func agentStartHeadedControlPlane(ctx context.Context, repoRootPath string, clie
 			SandboxPath:      resp.SandboxPath,
 			ExecutionProfile: resp.ExecutionProfile,
 			CheckoutRoot:     resp.CheckoutRoot,
-			CustomEnvKeys:    append([]string(nil), resp.CustomEnvKeys...),
+			CustomEnvKeys:    slices.Clone(resp.CustomEnvKeys),
 			TmuxSession:      resp.TmuxSession,
 			DaemonInstanceID: resp.DaemonInstanceID,
 			AlreadyRunning:   resp.AlreadyRunning,
@@ -316,17 +313,16 @@ func agentStartHeadedControlPlane(ctx context.Context, repoRootPath string, clie
 
 	// If not detached, attach to the tmux session
 	if !opts.Detached {
-		_, _ = fmt.Fprintf(stdout, "\nAttaching to tmux session... (detach with Ctrl+b, d)\n")
-
-		attachFn := opts.TmuxAttachFn
-		if attachFn == nil {
-			attachFn = realTmuxAttach
-		}
-		if err := attachFn(resp.TmuxSession); err != nil {
-			// Attach failed but session exists - not a fatal error
-			_, _ = fmt.Fprintf(stderr, "warning: could not attach to tmux session: %v\n", err)
-			_, _ = fmt.Fprintf(stderr, "Use 'agency agent %s attach --repo %s' to attach later.\n", resp.InvocationID, resp.RepoID)
-		}
+		attachHeadedSession(ctx, headedAttachOpts{
+			AttachFn:    opts.TmuxAttachFn,
+			Stdout:      stdout,
+			Stderr:      stderr,
+			SessionName: resp.TmuxSession,
+			Invocation:  resp.InvocationID,
+			RepoID:      resp.RepoID,
+			Banner:      true,
+			LaterHint:   true,
+		})
 	} else {
 		_, _ = fmt.Fprintf(stdout, "\nSession started in detached mode.\n")
 		_, _ = fmt.Fprintf(stdout, "Use 'agency agent %s attach --repo %s' to attach.\n", resp.InvocationID, resp.RepoID)
@@ -337,11 +333,7 @@ func agentStartHeadedControlPlane(ctx context.Context, repoRootPath string, clie
 
 // agentStartHeadlessControlPlane handles headless invocation start via daemon control plane.
 func agentStartHeadlessControlPlane(ctx context.Context, repoRootPath string, client *daemonclient.Client, opts AgentStartOpts, runner string, prompt string, stdout, stderr io.Writer) error {
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return err
-	}
-
-	resp, err := client.ControlPlaneStartHeadless(ctx, daemonclient.ControlPlaneStartOpts{
+	resp, err := client.ControlPlaneStartHeadless(ctx, daemon.ControlPlaneStartRequest{
 		RepoRoot:           repoRootPath,
 		WorktreeRef:        opts.WorktreeRef,
 		Runner:             runner,
@@ -383,7 +375,7 @@ func agentStartHeadlessControlPlane(ctx context.Context, repoRootPath string, cl
 			SandboxPath:      resp.SandboxPath,
 			ExecutionProfile: resp.ExecutionProfile,
 			CheckoutRoot:     resp.CheckoutRoot,
-			CustomEnvKeys:    append([]string(nil), resp.CustomEnvKeys...),
+			CustomEnvKeys:    slices.Clone(resp.CustomEnvKeys),
 			PID:              resp.PID,
 			PGID:             resp.PGID,
 			DaemonInstanceID: resp.DaemonInstanceID,

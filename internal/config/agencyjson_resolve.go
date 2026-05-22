@@ -75,7 +75,7 @@ func ResolveAgencyConfig(filesystem fs.FS, repoConfigRoot, configDir, repoID, ex
 }
 
 func validateResolvedAgencyConfig(cfg AgencyConfig, repoRoot, path, source string) (ResolvedAgencyConfig, error) {
-	cfg, err := ValidateAgencyConfig(cfg)
+	cfg, err := validateAgencyConfig(cfg)
 	if err != nil {
 		return ResolvedAgencyConfig{}, invalidResolvedAgencyConfigError(err, repoRoot, path, source)
 	}

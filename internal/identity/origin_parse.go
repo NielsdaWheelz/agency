@@ -63,11 +63,11 @@ func parseScpLike(raw string) (owner, repo string, ok bool) {
 
 // parseHTTPS parses https://github.com/owner/repo.git format.
 func parseHTTPS(raw string) (owner, repo string, ok bool) {
-	if !strings.HasPrefix(raw, "https://github.com/") {
+	path, ok := strings.CutPrefix(raw, "https://github.com/")
+	if !ok {
 		return "", "", false
 	}
 
-	path := strings.TrimPrefix(raw, "https://github.com/")
 	return parseOwnerRepo(path)
 }
 
@@ -76,14 +76,11 @@ func parseOwnerRepo(path string) (owner, repo string, ok bool) {
 	// Strip trailing .git if present
 	path = strings.TrimSuffix(path, ".git")
 
-	// Must have exactly one slash separating owner/repo
-	parts := strings.Split(path, "/")
-	if len(parts) != 2 {
+	// Must have exactly one slash separating owner/repo.
+	owner, repo, ok = strings.Cut(path, "/")
+	if !ok || strings.Contains(repo, "/") {
 		return "", "", false
 	}
-
-	owner = parts[0]
-	repo = parts[1]
 
 	// Validate owner and repo names
 	if owner == "" || repo == "" {

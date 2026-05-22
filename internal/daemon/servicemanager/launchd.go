@@ -74,9 +74,9 @@ func (m *LaunchdManager) IsInstalled(cfg ServiceConfig) bool {
 	return err == nil
 }
 
-// GenerateLaunchdPlist returns the rendered launchd plist XML.
+// generateLaunchdPlist returns the rendered launchd plist XML.
 // All dynamic values are XML-escaped to prevent injection.
-func GenerateLaunchdPlist(cfg ServiceConfig) (string, error) {
+func generateLaunchdPlist(cfg ServiceConfig) (string, error) {
 	data := struct {
 		Label   string
 		ExePath string
@@ -84,7 +84,7 @@ func GenerateLaunchdPlist(cfg ServiceConfig) (string, error) {
 	}{
 		Label:   LaunchdLabel,
 		ExePath: cfg.ExePath,
-		LogPath: filepath.Join(cfg.DataDir, "agencyd.log"),
+		LogPath: daemonLogPath(cfg),
 	}
 	var buf bytes.Buffer
 	if err := launchdPlistTmpl.Execute(&buf, data); err != nil {
@@ -101,7 +101,7 @@ func (m *LaunchdManager) Install(ctx context.Context, cfg ServiceConfig) error {
 			fmt.Sprintf("service already installed at %s", plistPath))
 	}
 
-	content, err := GenerateLaunchdPlist(cfg)
+	content, err := generateLaunchdPlist(cfg)
 	if err != nil {
 		return errors.Wrap(errors.EDaemonServiceInstallFailed, "failed to generate plist", err)
 	}

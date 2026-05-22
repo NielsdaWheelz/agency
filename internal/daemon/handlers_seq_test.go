@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,7 +40,9 @@ func TestLoadMaxStreamSeq_ExtractsSeqFromOversizedLinePrefix(t *testing.T) {
 	require.Greater(t, len(line), maxTimelineLineBytes)
 	require.NoError(t, os.WriteFile(streamPath, append(line, '\n'), 0o644))
 
-	assert.Equal(t, uint64(42), loadMaxStreamSeq(streamPath))
+	if got := loadMaxStreamSeq(streamPath); got != 42 {
+		t.Fatalf("loadMaxStreamSeq() = %d, want 42", got)
+	}
 }
 
 func TestLoadMaxStreamSeq_ContinuesAfterOversizedRows(t *testing.T) {
@@ -66,5 +67,7 @@ func TestLoadMaxStreamSeq_ContinuesAfterOversizedRows(t *testing.T) {
 	validLine := []byte(`{"schema_version":"1.0","seq":9,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"text":"ok"}}` + "\n")
 	require.NoError(t, os.WriteFile(streamPath, append(append(oversizedLine, '\n'), validLine...), 0o644))
 
-	assert.Equal(t, uint64(9), loadMaxStreamSeq(streamPath))
+	if got := loadMaxStreamSeq(streamPath); got != 9 {
+		t.Fatalf("loadMaxStreamSeq() = %d, want 9", got)
+	}
 }

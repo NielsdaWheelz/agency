@@ -21,7 +21,7 @@ func EnsureDaemonRunning(ctx context.Context, socketPath, logPath string) (*Clie
 		return client, nil
 	}
 
-	if err := StartDaemonBackground(logPath); err != nil {
+	if err := StartDaemonBackground(ctx, logPath); err != nil {
 		return nil, err
 	}
 
@@ -33,7 +33,7 @@ func EnsureDaemonRunning(ctx context.Context, socketPath, logPath string) (*Clie
 }
 
 // StartDaemonBackground starts the daemon in the background.
-func StartDaemonBackground(logPath string) error {
+func StartDaemonBackground(ctx context.Context, logPath string) error {
 	exePath, err := os.Executable()
 	if err != nil {
 		return errors.Wrap(errors.EDaemonStartFailed, "failed to get executable path", err)
@@ -42,12 +42,15 @@ func StartDaemonBackground(logPath string) error {
 		return errors.New(errors.EDaemonStartFailed, "refusing to autostart daemon from Go test binary")
 	}
 
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
+		return errors.Wrap(errors.EDaemonStartFailed, "failed to open daemon log file", err)
+	}
 	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return errors.Wrap(errors.EDaemonStartFailed, "failed to open daemon log file", err)
 	}
 
-	proc, err := agencyexec.StartProcess(context.Background(), exePath, []string{"daemon", "start", "--foreground"}, agencyexec.StartOpts{
+	proc, err := agencyexec.StartProcess(ctx, exePath, []string{"daemon", "start", "--foreground"}, agencyexec.StartOpts{
 		Setpgid: true,
 		Stdout:  logFile,
 		Stderr:  logFile,

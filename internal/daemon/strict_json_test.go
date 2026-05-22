@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -12,11 +11,11 @@ func TestStrictJSONDecodeErrorMessage(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name   string
-		body   string
-		dst    any
-		decode func(string, any) error
-		want   string
+		name     string
+		body     string
+		dst      any
+		optional bool
+		want     string
 	}{
 		{
 			name: "unknown field",
@@ -24,8 +23,7 @@ func TestStrictJSONDecodeErrorMessage(t *testing.T) {
 			dst: &struct {
 				Known bool `json:"known"`
 			}{},
-			decode: decodeRequiredJSONForTest,
-			want:   `invalid request body: unknown field "unknown"`,
+			want: `invalid request body: unknown field "unknown"`,
 		},
 		{
 			name: "malformed json",
@@ -33,8 +31,7 @@ func TestStrictJSONDecodeErrorMessage(t *testing.T) {
 			dst: &struct {
 				Known bool `json:"known"`
 			}{},
-			decode: decodeRequiredJSONForTest,
-			want:   "invalid request body: malformed JSON",
+			want: "invalid request body: malformed JSON",
 		},
 		{
 			name: "typed field",
@@ -42,55 +39,49 @@ func TestStrictJSONDecodeErrorMessage(t *testing.T) {
 			dst: &struct {
 				Known bool `json:"known"`
 			}{},
-			decode: decodeRequiredJSONForTest,
-			want:   `invalid request body: field "known" must be bool`,
+			want: `invalid request body: field "known" must be bool`,
 		},
 		{
-			name:   "invalid value type",
-			body:   `"bad"`,
-			dst:    &struct{}{},
-			decode: decodeRequiredJSONForTest,
-			want:   "invalid request body: invalid value type",
+			name: "invalid value type",
+			body: `"bad"`,
+			dst:  &struct{}{},
+			want: "invalid request body: invalid value type",
 		},
 		{
-			name:   "trailing object",
-			body:   `{} {}`,
-			dst:    &struct{}{},
-			decode: decodeRequiredJSONForTest,
-			want:   "invalid request body: expected a single JSON object",
+			name: "trailing object",
+			body: `{} {}`,
+			dst:  &struct{}{},
+			want: "invalid request body: expected a single JSON object",
 		},
 		{
-			name:   "null object",
-			body:   `null`,
-			dst:    &struct{}{},
-			decode: decodeOptionalJSONForTest,
-			want:   "invalid request body: expected a JSON object",
+			name:     "null object",
+			body:     `null`,
+			dst:      &struct{}{},
+			optional: true,
+			want:     "invalid request body: expected a JSON object",
 		},
 		{
-			name:   "request shape error",
-			body:   `{"env":null}`,
-			dst:    &TaskStartRequest{},
-			decode: decodeRequiredJSONForTest,
-			want:   "invalid request body: env must be an object",
+			name: "request shape error",
+			body: `{"env":null}`,
+			dst:  &TaskStartRequest{},
+			want: "invalid request body: env must be an object",
 		},
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := tt.decode(tt.body, tt.dst)
+			var err error
+			if tt.optional {
+				err = decodeOptionalStrictJSON(strings.NewReader(tt.body), tt.dst)
+			} else {
+				err = decodeStrictJSON(strings.NewReader(tt.body), tt.dst)
+			}
 			require.Error(t, err)
-			assert.Equal(t, tt.want, strictJSONDecodeErrorMessage(err))
+			if got := strictJSONDecodeErrorMessage(err); got != tt.want {
+				t.Fatalf("strictJSONDecodeErrorMessage() = %q, want %q", got, tt.want)
+			}
 		})
 	}
-}
-
-func decodeRequiredJSONForTest(body string, dst any) error {
-	return decodeStrictJSON(strings.NewReader(body), dst)
-}
-
-func decodeOptionalJSONForTest(body string, dst any) error {
-	return decodeOptionalStrictJSON(strings.NewReader(body), dst)
 }

@@ -1,10 +1,6 @@
 package core
 
-import (
-	"testing"
-
-	"github.com/stretchr/testify/assert"
-)
+import "testing"
 
 func TestShellEscapePosix_Table(t *testing.T) {
 	t.Parallel()
@@ -28,12 +24,13 @@ func TestShellEscapePosix_Table(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
 			got := ShellEscapePosix(tt.input)
-			assert.Equal(t, tt.expect, got)
+			if got != tt.expect {
+				t.Fatalf("ShellEscapePosix(%q) = %q, want %q", tt.input, got, tt.expect)
+			}
 		})
 	}
 }

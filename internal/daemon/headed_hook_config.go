@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/NielsdaWheelz/agency/internal/core"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/runners"
@@ -18,7 +19,7 @@ func (s *Server) installHeadedRunnerHooks(ctx context.Context, repoID, invocatio
 		return nil
 	}
 
-	logsDir, err := s.Store.EnsureInvocationLogsDir(repoID, invocationID)
+	logsDir, err := s.store.EnsureInvocationLogsDir(repoID, invocationID)
 	if err != nil {
 		return err
 	}
@@ -27,16 +28,16 @@ func (s *Server) installHeadedRunnerHooks(ctx context.Context, repoID, invocatio
 	if err != nil {
 		return err
 	}
-	script := "#!/bin/sh\nexec " + shellQuoteArg(exe) +
-		" internal headed-hook --repo-id " + shellQuoteArg(repoID) +
-		" --invocation-id " + shellQuoteArg(invocationID) +
-		" --runner " + shellQuoteArg(runner) +
-		" --data-dir " + shellQuoteArg(s.Store.DataDir) + "\n"
+	script := "#!/bin/sh\nexec " + core.ShellEscapePosix(exe) +
+		" internal headed-hook --repo-id " + core.ShellEscapePosix(repoID) +
+		" --invocation-id " + core.ShellEscapePosix(invocationID) +
+		" --runner " + core.ShellEscapePosix(runner) +
+		" --data-dir " + core.ShellEscapePosix(s.store.DataDir) + "\n"
 	if err := os.WriteFile(scriptPath, []byte(script), 0o700); err != nil {
 		return err
 	}
 
-	command := shellQuoteArg(scriptPath)
+	command := core.ShellEscapePosix(scriptPath)
 	switch runner {
 	case runners.RunnerClaudeCode:
 		settingsPath := filepath.Join(sandboxPath, ".claude", "settings.local.json")
@@ -55,7 +56,7 @@ func (s *Server) installHeadedRunnerHooks(ctx context.Context, repoID, invocatio
 				break
 			}
 		}
-		if err := writeClaudeHeadedHookConfig(settingsPath, command, skipDangerousModePrompt); err != nil {
+		if err := writeClaudeHeadedHookConfig(s.fsys, settingsPath, command, skipDangerousModePrompt); err != nil {
 			return err
 		}
 		if err := s.excludeSandboxFiles(ctx, sandboxPath, []string{".claude/settings.local.json"}, env); err != nil {
@@ -68,7 +69,7 @@ func (s *Server) installHeadedRunnerHooks(ctx context.Context, repoID, invocatio
 		if err := os.MkdirAll(filepath.Dir(hooksPath), 0o700); err != nil {
 			return err
 		}
-		if err := writeCodexHeadedHookConfig(hooksPath, command); err != nil {
+		if err := writeCodexHeadedHookConfig(s.fsys, hooksPath, command); err != nil {
 			return err
 		}
 		if err := s.excludeSandboxFiles(ctx, sandboxPath, []string{".codex/hooks.json"}, env); err != nil {
@@ -80,7 +81,7 @@ func (s *Server) installHeadedRunnerHooks(ctx context.Context, repoID, invocatio
 	return nil
 }
 
-func writeClaudeHeadedHookConfig(path, command string, skipDangerousModePrompt bool) error {
+func writeClaudeHeadedHookConfig(fsys agencyfs.FS, path, command string, skipDangerousModePrompt bool) error {
 	settings, err := readJSONObject(path)
 	if err != nil {
 		return err
@@ -126,10 +127,10 @@ func writeClaudeHeadedHookConfig(path, command string, skipDangerousModePrompt b
 		appendHeadedHook(hooks, event, "", command)
 	}
 	settings["hooks"] = hooks
-	return agencyfs.WriteJSONAtomic(path, settings, 0o600)
+	return agencyfs.WriteJSONAtomic(fsys, path, settings, 0o600)
 }
 
-func writeCodexHeadedHookConfig(path, command string) error {
+func writeCodexHeadedHookConfig(fsys agencyfs.FS, path, command string) error {
 	settings, err := readJSONObject(path)
 	if err != nil {
 		return err
@@ -141,7 +142,7 @@ func writeCodexHeadedHookConfig(path, command string) error {
 	appendHeadedHook(hooks, "UserPromptSubmit", "", command)
 	appendHeadedHook(hooks, "Stop", "", command)
 	settings["hooks"] = hooks
-	return agencyfs.WriteJSONAtomic(path, settings, 0o600)
+	return agencyfs.WriteJSONAtomic(fsys, path, settings, 0o600)
 }
 
 func readJSONObject(path string) (map[string]any, error) {
@@ -185,7 +186,7 @@ func appendHeadedHook(hooks map[string]any, event, matcher, command string) {
 }
 
 func (s *Server) excludeSandboxFiles(ctx context.Context, sandboxPath string, patterns []string, env map[string]string) error {
-	result, err := s.Runner.Run(ctx, "git", []string{"-C", sandboxPath, "rev-parse", "--git-path", "info/exclude"}, exec.RunOpts{Env: env})
+	result, err := s.runner.Run(ctx, "git", []string{"-C", sandboxPath, "rev-parse", "--git-path", "info/exclude"}, exec.RunOpts{Env: env})
 	if err != nil {
 		return err
 	}
@@ -226,8 +227,4 @@ func (s *Server) excludeSandboxFiles(ctx context.Context, sandboxPath string, pa
 	defer func() { _ = f.Close() }()
 	_, err = f.WriteString(b.String())
 	return err
-}
-
-func shellQuoteArg(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }

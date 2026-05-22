@@ -9,7 +9,7 @@ import (
 
 func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 	if routePathEquals(r.URL.Path, "/invocations") {
-		if !s.requireMethod(w, r, http.MethodGet) {
+		if !s.requireAPIResponseMethod(w, r, http.MethodGet) {
 			return
 		}
 		s.handleListInvocations(w, r)
@@ -18,11 +18,11 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 
 	remaining, ok := trimRoutePrefix(r.URL.Path, "/invocations/")
 	if !ok {
-		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "not found", "")
+		s.writeError(w, http.StatusNotFound, string(errors.ENotFound), "not found", "")
 		return
 	}
 	if remaining == "" {
-		if !s.requireMethod(w, r, http.MethodGet) {
+		if !s.requireAPIResponseMethod(w, r, http.MethodGet) {
 			return
 		}
 		s.handleListInvocations(w, r)
@@ -53,7 +53,7 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 
 	switch routeFirstAction(action) {
 	case "":
-		if !s.requireMethod(w, r, http.MethodGet) {
+		if !s.requireAPIResponseMethod(w, r, http.MethodGet) {
 			return
 		}
 		s.handleGetInvocation(w, r, invocationRef)
@@ -85,12 +85,12 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 		}
 		s.handleDiscard(w, r, invocationRef)
 	case "diff":
-		if !s.requireMethod(w, r, http.MethodGet) {
+		if !s.requireAPIResponseMethod(w, r, http.MethodGet) {
 			return
 		}
 		s.handleGetInvocationDiff(w, r, invocationRef)
 	case "logs":
-		if !s.requireMethod(w, r, http.MethodGet) {
+		if !s.requireAPIResponseMethod(w, r, http.MethodGet) {
 			return
 		}
 		s.handleGetInvocationLogs(w, r, invocationRef)
@@ -100,17 +100,17 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 		}
 		s.handleHeadedHook(w, r, invocationRef)
 	case "timeline":
-		if !s.requireMethod(w, r, http.MethodGet) {
+		if !s.requireAPIResponseMethod(w, r, http.MethodGet) {
 			return
 		}
 		s.handleGetInvocationTimeline(w, r, invocationRef)
 	case "check":
-		if !s.requireMethod(w, r, http.MethodGet) {
+		if !s.requireAPIResponseMethod(w, r, http.MethodGet) {
 			return
 		}
 		s.handleGetInvocationCheck(w, r, invocationRef)
 	case "session":
-		if !s.requireMethod(w, r, http.MethodGet) {
+		if !s.requireAPIResponseMethod(w, r, http.MethodGet) {
 			return
 		}
 		s.handleGetInvocationSession(w, r, invocationRef)
@@ -120,7 +120,7 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 		}
 		s.handleControlPlaneFollowUp(w, r, invocationRef)
 	default:
-		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown action: "+action, "")
+		s.writeError(w, http.StatusNotFound, string(errors.ENotFound), "unknown action: "+action, "")
 	}
 }
 
@@ -129,7 +129,7 @@ func (s *Server) handleCheckpointsRoute(w http.ResponseWriter, r *http.Request, 
 
 	switch subAction {
 	case "":
-		if !s.requireMethod(w, r, http.MethodGet) {
+		if !s.requireAPIResponseMethod(w, r, http.MethodGet) {
 			return
 		}
 		s.handleGetInvocationCheckpoints(w, r, invocationRef)
@@ -139,6 +139,6 @@ func (s *Server) handleCheckpointsRoute(w http.ResponseWriter, r *http.Request, 
 		}
 		s.handleCheckpointApply(w, r, invocationRef)
 	default:
-		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown checkpoints action: "+subAction, "")
+		s.writeError(w, http.StatusNotFound, string(errors.ENotFound), "unknown checkpoints action: "+subAction, "")
 	}
 }

@@ -56,10 +56,6 @@ func ResolveRepoViaClient(ctx context.Context, cr exec.CommandRunner, client *da
 
 	// Explicit --repo: resolve once here, then pass canonical repo_id below the command boundary.
 	if opts.RepoRef != "" {
-		if client == nil {
-			return nil, errors.New(errors.EInternal, "daemon client is required to resolve --repo")
-		}
-
 		result, err := client.GetRepo(ctx, opts.RepoRef)
 		if err != nil {
 			return nil, err

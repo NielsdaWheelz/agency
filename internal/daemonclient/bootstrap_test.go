@@ -1,13 +1,13 @@
 package daemonclient
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,11 +18,14 @@ func TestStartDaemonBackgroundRefusesGoTestBinary(t *testing.T) {
 
 	logPath := filepath.Join(t.TempDir(), "daemon.log")
 
-	err = StartDaemonBackground(logPath)
+	err = StartDaemonBackground(context.Background(), logPath)
 	require.Error(t, err)
-	assert.Equal(t, errors.EDaemonStartFailed, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "refusing to autostart daemon from Go test binary")
+	if got := errors.GetCode(err); got != errors.EDaemonStartFailed {
+		t.Fatalf("error code = %s, want %s", got, errors.EDaemonStartFailed)
+	}
+	if !strings.Contains(err.Error(), "refusing to autostart daemon from Go test binary") {
+		t.Fatalf("error = %q, want Go test binary refusal", err.Error())
+	}
 
-	_, statErr := os.Stat(logPath)
-	require.ErrorIs(t, statErr, os.ErrNotExist)
+	require.NoFileExists(t, logPath)
 }

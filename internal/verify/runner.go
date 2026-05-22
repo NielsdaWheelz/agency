@@ -8,9 +8,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/exec"
-	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
@@ -32,57 +30,45 @@ type RunConfig struct {
 	// Verify runner does not modify it.
 	Env []string
 
-	// Timeout is the maximum duration for the script. Default 30m if zero.
+	// Timeout is the maximum duration for the script. Callers must provide a
+	// positive, resolved configuration value.
 	Timeout time.Duration
 
 	// LogPath is the absolute path to write verify.log.
 	LogPath string
-
-	// VerifyJSONPath is the absolute path to read verify.json (workspace output).
-	VerifyJSONPath string
-
-	// RecordPath is the absolute path to write verify_record.json.
-	RecordPath string
 }
 
 const gracePeriod = 3 * time.Second
 
-// Run executes the verify script and writes the canonical verify_record.json.
+// Run executes the verify script and returns the canonical verify record.
 //
 // The function returns a VerifyRecord (always populated) and an error.
-// The error is only returned for internal failures that prevent running or writing:
+// The error is only returned for internal failures that prevent running:
 //   - log file open failure
 //   - exec start failure
-//   - verify_record.json write failure
 //
 // Verify failure (non-zero exit, timeout, cancel) is represented in
 // VerifyRecord.OK/ExitCode, NOT as a returned error.
 func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
-	// Timeout should be set by caller from config; this is defensive fallback
-	timeout := cfg.Timeout
-	if timeout == 0 {
-		timeout = config.DefaultVerifyTimeout
-	}
-
 	record := store.VerifyRecord{
-		SchemaVersion: "1.0",
+		SchemaVersion: store.VerifyRecordSchemaVersion,
 		RepoID:        cfg.RepoID,
 		RunID:         cfg.RunID,
 		ScriptPath:    cfg.Script,
-		TimeoutMS:     timeout.Milliseconds(),
+		TimeoutMS:     cfg.Timeout.Milliseconds(),
 		LogPath:       cfg.LogPath,
 	}
+	if cfg.Timeout <= 0 {
+		errStr := "verify timeout must be positive"
+		record.Error = &errStr
+		return record, fmt.Errorf("%s", errStr)
+	}
 
-	// Ensure parent directories exist for log and record
+	// Ensure parent directory exists for the log.
 	if err := os.MkdirAll(filepath.Dir(cfg.LogPath), 0o755); err != nil {
 		errStr := fmt.Sprintf("failed to create log directory: %v", err)
 		record.Error = &errStr
 		return record, fmt.Errorf("failed to create log directory: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(cfg.RecordPath), 0o755); err != nil {
-		errStr := fmt.Sprintf("failed to create record directory: %v", err)
-		record.Error = &errStr
-		return record, fmt.Errorf("failed to create record directory: %w", err)
 	}
 
 	// Open log file (truncate/create)
@@ -105,7 +91,7 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 	_, _ = fmt.Fprintf(logFile, "# ---\n\n")
 
 	// Create context with timeout
-	timeoutCtx, cancelTimeout := context.WithTimeout(ctx, timeout)
+	timeoutCtx, cancelTimeout := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancelTimeout()
 
 	// Open /dev/null for stdin
@@ -116,7 +102,6 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 		record.Error = &errStr
 		record.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		record.DurationMS = time.Since(startTime).Milliseconds()
-		writeRecordBestEffort(cfg.RecordPath, record)
 		return record, fmt.Errorf("failed to open /dev/null: %w", err)
 	}
 	// Start process in its own process group for clean signal handling.
@@ -135,7 +120,6 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 		record.Error = &errStr
 		record.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		record.DurationMS = time.Since(startTime).Milliseconds()
-		writeRecordBestEffort(cfg.RecordPath, record)
 		return record, fmt.Errorf("failed to start verify script: %w", err)
 	}
 
@@ -209,10 +193,10 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 		record.Signal = &sig
 	}
 
-	// Read verify.json (optional structured output)
-	vjResult := readVerifyJSON(cfg.VerifyJSONPath)
+	verifyJSONPath := filepath.Join(cfg.WorkDir, ".agency", "out", "verify.json")
+	vjResult := readVerifyJSON(verifyJSONPath)
 	if vjResult.exists {
-		record.VerifyJSONPath = &cfg.VerifyJSONPath
+		record.VerifyJSONPath = &verifyJSONPath
 		if vjResult.err != nil && record.Error == nil {
 			// Record parse/validation error only if no other internal error
 			errStr := vjResult.err.Error()
@@ -223,11 +207,6 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 	// Derive OK and Summary using precedence rules
 	record.OK = deriveOK(timedOut, cancelled, record.ExitCode, vjResult.value)
 	record.Summary = deriveSummary(timedOut, cancelled, record.ExitCode, vjResult.value)
-
-	// Write verify_record.json atomically
-	if err := fs.WriteJSONAtomic(cfg.RecordPath, record, 0o644); err != nil {
-		return record, fmt.Errorf("failed to write verify_record.json: %w", err)
-	}
 
 	return record, nil
 }
@@ -243,10 +222,4 @@ func killProcessGroup(pgid int) {
 
 	// Send SIGKILL to process group
 	_ = syscall.Kill(-pgid, syscall.SIGKILL)
-}
-
-// writeRecordBestEffort attempts to write the verify record but ignores errors.
-// Used when we need to record state before returning an error.
-func writeRecordBestEffort(path string, record store.VerifyRecord) {
-	_ = fs.WriteJSONAtomic(path, record, 0o644)
 }

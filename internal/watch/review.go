@@ -410,18 +410,17 @@ func reviewFilesFromRange(section string, diffRange *daemon.DiffRange) []reviewF
 
 		current.lines = append(current.lines, line)
 
-		switch {
-		case strings.HasPrefix(line, "rename to "):
-			if path := reviewNormalizeDiffPath(strings.TrimPrefix(line, "rename to ")); path != "" {
+		if tail, ok := strings.CutPrefix(line, "rename to "); ok {
+			if path := reviewNormalizeDiffPath(tail); path != "" {
 				current.title = path
 			}
-		case strings.HasPrefix(line, "+++ "):
-			if path := reviewNormalizeDiffPath(strings.TrimPrefix(line, "+++ ")); path != "" && path != "/dev/null" {
+		} else if tail, ok := strings.CutPrefix(line, "+++ "); ok {
+			if path := reviewNormalizeDiffPath(tail); path != "" && path != "/dev/null" {
 				current.title = path
 			}
-		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
+		} else if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
 			current.added++
-		case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---"):
+		} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
 			current.deleted++
 		}
 	}
@@ -444,14 +443,13 @@ func reviewFilesFromRange(section string, diffRange *daemon.DiffRange) []reviewF
 
 func reviewNormalizeDiffPath(path string) string {
 	path = strings.TrimSpace(strings.Trim(path, `"`))
-	switch {
-	case strings.HasPrefix(path, "a/"):
-		return strings.TrimPrefix(path, "a/")
-	case strings.HasPrefix(path, "b/"):
-		return strings.TrimPrefix(path, "b/")
-	default:
-		return path
+	if tail, ok := strings.CutPrefix(path, "a/"); ok {
+		return tail
 	}
+	if tail, ok := strings.CutPrefix(path, "b/"); ok {
+		return tail
+	}
+	return path
 }
 
 func reviewSectionLabel(section string) string {

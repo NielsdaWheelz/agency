@@ -74,7 +74,7 @@ func (s *Server) handleControlPlaneFollowUp(w http.ResponseWriter, r *http.Reque
 	}
 
 	if existing, found, err := s.findFollowUpClientRequest(record.RepoID, req.ClientRequestID); err != nil {
-		s.writeFollowUpError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", "failed to check follow-up idempotency: "+err.Error(), "", req.ClientRequestID)
+		s.writeFollowUpError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to check follow-up idempotency: "+err.Error(), "", req.ClientRequestID)
 		return
 	} else if found && (existing.InvocationID != record.InvocationID || existing.Prompt != req.Prompt) {
 		s.writeFollowUpError(w, http.StatusConflict, requestID, string(errors.EIdempotencyConflict),
@@ -90,17 +90,27 @@ func (s *Server) handleControlPlaneFollowUp(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	eventsPath := s.Store.InvocationEventsPath(record.RepoID, record.InvocationID)
+	eventsPath := s.store.InvocationEventsPath(record.RepoID, record.InvocationID)
 	timelineEntryID, alreadyApplied, err := s.appendFollowUpPromptEvent(eventsPath, record.InvocationID, req.ClientRequestID, req.Prompt)
 	if err != nil {
-		s.writeFollowUpError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", "failed to append follow-up prompt event: "+err.Error(), "", req.ClientRequestID)
+		s.writeFollowUpError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to append follow-up prompt event: "+err.Error(), "", req.ClientRequestID)
 		return
 	}
 
 	// Deliver via follow-up relay (audit event is already persisted above).
 	deliveryMode := s.deliverFollowUp(record.InvocationID, req.Prompt)
 
-	s.writeFollowUpSuccessWithDelivery(w, record.InvocationID, timelineEntryID, req.ClientRequestID, requestID, alreadyApplied, deliveryMode)
+	s.writeJSON(w, http.StatusOK, ControlPlaneFollowUpResponse{
+		OK:              true,
+		InvocationID:    record.InvocationID,
+		TimelineEntry:   timelineEntryID,
+		AlreadyApplied:  alreadyApplied,
+		DeliveryMode:    deliveryMode,
+		RequestID:       requestID,
+		APIVersion:      APIVersion,
+		BuildVersion:    daemonBuildVersion(),
+		ClientRequestID: req.ClientRequestID,
+	})
 }
 
 // deliverFollowUp sends the prompt to the runner via its follow-up relay.
@@ -111,31 +121,31 @@ func (s *Server) deliverFollowUp(invocationID, prompt string) string {
 	proc, ok := s.processes[invocationID]
 	s.mu.Unlock()
 
-	if !ok || proc.Relay == nil {
+	if !ok || proc.relay == nil {
 		return "audit_only"
 	}
 
-	switch proc.Relay.Mode() {
+	switch proc.relay.Mode() {
 	case relay.ModeStdin:
-		proc.IncrementExpectedTurns()
-		if err := proc.Relay.Send(context.Background(), prompt); err != nil {
+		proc.incrementExpectedTurns()
+		if err := proc.relay.Send(context.Background(), prompt); err != nil {
 			// Delivery failure is best-effort; the audit event is durable.
-			proc.DecrementExpectedTurns()
-			if proc.SuccessfulCompletionObserved() {
+			proc.decrementExpectedTurns()
+			if proc.successfulCompletionObserved() {
 				s.scheduleStdinCompletionFinalize(proc)
 			}
 			return "audit_only"
 		}
 		return "delivered"
 	case relay.ModeResume:
-		proc.IncrementExpectedTurns()
-		if err := proc.Relay.Send(context.Background(), prompt); err != nil {
-			proc.DecrementExpectedTurns()
+		proc.incrementExpectedTurns()
+		if err := proc.relay.Send(context.Background(), prompt); err != nil {
+			proc.decrementExpectedTurns()
 			return "audit_only"
 		}
 		return "queued"
 	default:
-		if err := proc.Relay.Send(context.Background(), prompt); err != nil {
+		if err := proc.relay.Send(context.Background(), prompt); err != nil {
 			// Delivery failure is best-effort; the audit event is durable.
 			return "audit_only"
 		}
@@ -144,12 +154,7 @@ func (s *Server) deliverFollowUp(invocationID, prompt string) string {
 }
 
 func (s *Server) appendFollowUpPromptEvent(eventsPath, invocationID, clientRequestID, prompt string) (string, bool, error) {
-	writer := s.InvocationEvents
-	if writer == nil {
-		writer = eventlog.NewWriter("invocation_id", s.Clock)
-	}
-
-	result, err := writer.Append(
+	result, err := s.invocationEvents.Append(
 		eventsPath,
 		invocationID,
 		followUpPromptEventKind,
@@ -178,12 +183,12 @@ type followUpClientRequest struct {
 }
 
 func (s *Server) findFollowUpClientRequest(repoID, clientRequestID string) (followUpClientRequest, bool, error) {
-	records, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
+	records, err := s.store.ScanInvocationsForRepo(repoID)
 	if err != nil {
 		return followUpClientRequest{}, false, err
 	}
 	for _, record := range records {
-		existing, found, err := s.findFollowUpClientRequestInFile(s.Store.InvocationEventsPath(repoID, record.InvocationID), clientRequestID)
+		existing, found, err := s.findFollowUpClientRequestInFile(s.store.InvocationEventsPath(repoID, record.InvocationID), clientRequestID)
 		if err != nil {
 			return followUpClientRequest{}, false, err
 		}

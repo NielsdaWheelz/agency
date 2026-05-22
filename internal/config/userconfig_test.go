@@ -61,76 +61,11 @@ func TestLoadUserConfig_UnknownDefaultsKeys(t *testing.T) {
 	assert.Contains(t, err.Error(), "defaults contains unknown field")
 }
 
-func TestLoadUserConfig_RemovedDefaultsModelRejected(t *testing.T) {
-	t.Parallel()
-	stub := newStubFS()
-	data, err := os.ReadFile("testdata/user_removed_defaults_model.json")
-	require.NoError(t, err, "failed to read fixture")
-	stub.files["/cfg/config.json"] = data
-
-	_, err = LoadUserConfig(stub, "/cfg")
-	require.Error(t, err)
-	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "defaults.model is not supported")
-	assert.Contains(t, err.Error(), "runner_defaults.<runner>.model")
-}
-
-func TestLoadUserConfig_RemovedDefaultsEffortRejected(t *testing.T) {
-	t.Parallel()
-	stub := newStubFS()
-	data, err := os.ReadFile("testdata/user_removed_defaults_effort.json")
-	require.NoError(t, err, "failed to read fixture")
-	stub.files["/cfg/config.json"] = data
-
-	_, err = LoadUserConfig(stub, "/cfg")
-	require.Error(t, err)
-	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "defaults.effort is not supported")
-	assert.Contains(t, err.Error(), "runner_defaults.<runner>.effort")
-}
-
-func TestLoadUserConfig_DefaultsThinkingRejected(t *testing.T) {
+func TestLoadUserConfig_NonCurrentVersionRejected(t *testing.T) {
 	t.Parallel()
 	stub := newStubFS()
 	stub.files["/cfg/config.json"] = []byte(`{
-  "version": 4,
-  "defaults": {
-    "runner": "claude-code",
-    "editor": "code",
-    "execution_profile": "personal",
-    "thinking": "high"
-  },
-  "execution_profiles": { "personal": { "env": {} } }
-}`)
-	_, err := LoadUserConfig(stub, "/cfg")
-	require.Error(t, err)
-	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "defaults.thinking is not supported")
-	assert.Contains(t, err.Error(), "runner_defaults.<runner>.model")
-}
-
-func TestLoadUserConfig_Version1Rejected(t *testing.T) {
-	t.Parallel()
-	stub := newStubFS()
-	stub.files["/cfg/config.json"] = []byte(`{
-  "version": 1,
-  "defaults": {
-    "runner": "claude-code",
-    "editor": "code"
-  }
-}`)
-
-	_, err := LoadUserConfig(stub, "/cfg")
-	require.Error(t, err)
-	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "version must be 4")
-}
-
-func TestLoadUserConfig_Version2Rejected(t *testing.T) {
-	t.Parallel()
-	stub := newStubFS()
-	stub.files["/cfg/config.json"] = []byte(`{
-  "version": 2,
+  "version": 3,
   "defaults": {
     "runner": "claude-code",
     "editor": "code"
@@ -226,7 +161,6 @@ func TestLoadUserConfig_RunnerDefaultsWrongTypes(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			data, err := os.ReadFile(filepath.Join("testdata", tt.fixture))
@@ -255,7 +189,6 @@ func TestLoadUserConfig_RunnerDefaultsValidation(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			data, err := os.ReadFile(filepath.Join("testdata", tt.fixture))
@@ -352,42 +285,10 @@ func TestValidateUserConfig_RequiredFields(t *testing.T) {
 	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
 }
 
-func TestValidateUserConfig_WrongVersion(t *testing.T) {
+func TestValidateUserConfig_NonCurrentVersionRejected(t *testing.T) {
 	t.Parallel()
 	cfg := UserConfig{
-		Version: 1,
-		Defaults: UserDefaults{
-			Runner: "claude-code",
-			Editor: "code",
-		},
-	}
-
-	_, err := ValidateUserConfig(cfg)
-	require.Error(t, err)
-	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "version must be 4")
-}
-
-func TestValidateUserConfig_Version2Rejected(t *testing.T) {
-	t.Parallel()
-	cfg := UserConfig{
-		Version: 2,
-		Defaults: UserDefaults{
-			Runner: "claude-code",
-			Editor: "code",
-		},
-	}
-
-	_, err := ValidateUserConfig(cfg)
-	require.Error(t, err)
-	assert.Equal(t, errors.EInvalidUserConfig, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "version must be 4")
-}
-
-func TestValidateUserConfig_UnsupportedVersion(t *testing.T) {
-	t.Parallel()
-	cfg := UserConfig{
-		Version: 5,
+		Version: AgencyConfigVersion + 1,
 		Defaults: UserDefaults{
 			Runner:           "claude-code",
 			Editor:           "code",

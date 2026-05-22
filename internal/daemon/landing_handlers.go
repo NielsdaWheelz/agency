@@ -41,14 +41,14 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 	}
 	defer func() { _ = mutation.unlock() }()
 
-	meta, err := s.Store.ReadInvocationMeta(mutation.record.RepoID, mutation.record.InvocationID)
+	meta, err := s.store.ReadInvocationMeta(mutation.record.RepoID, mutation.record.InvocationID)
 	if err != nil {
 		s.writeLandError(w, http.StatusInternalServerError, requestID, string(errors.ELandFailed), "failed to read invocation meta: "+err.Error(), "", nil)
 		return
 	}
 	switch meta.Status {
 	case store.InvocationStatusStarting, store.InvocationStatusRunning, store.InvocationStatusStopping:
-		now := s.Clock().UTC().Format(time.RFC3339)
+		now := s.clock().UTC().Format(time.RFC3339)
 		record := store.InvocationRecord{
 			InvocationID: mutation.record.InvocationID,
 			RepoID:       mutation.record.RepoID,
@@ -189,7 +189,7 @@ func (s *Server) prepareLandingMutation(w http.ResponseWriter, r *http.Request, 
 		return nil, false
 	}
 
-	wtMeta, err := s.Store.ReadIntegrationWorktreeMeta(record.RepoID, record.Meta.IntegrationWorktreeID)
+	wtMeta, err := s.store.ReadIntegrationWorktreeMeta(record.RepoID, record.Meta.IntegrationWorktreeID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, requestID, string(errors.ELandFailed), "failed to read integration worktree meta: "+err.Error(), "")
 		return nil, false
@@ -213,7 +213,7 @@ func (s *Server) prepareLandingMutation(w http.ResponseWriter, r *http.Request, 
 		discardEnv = prSyncNonInteractiveEnv(invocationProfileEnv)
 	}
 
-	repoRoot, err := git.GetRepoRoot(r.Context(), s.Runner, wtMeta.TreePath, landEnv)
+	repoRoot, err := git.GetRepoRoot(r.Context(), s.runner, wtMeta.TreePath, landEnv)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, requestID, string(errors.ELandFailed), "failed to get repo root: "+err.Error(), "")
 		return nil, false
@@ -230,7 +230,7 @@ func (s *Server) prepareLandingMutation(w http.ResponseWriter, r *http.Request, 
 		repoRoot:   repoRoot.Path,
 		landEnv:    landEnv,
 		discardEnv: discardEnv,
-		service:    landing.NewServiceWithWriter(s.Store, s.Runner, s.FS, s.Clock, s.InvocationEvents),
+		service:    landing.NewService(s.store, s.runner, s.fsys, s.clock, s.invocationEvents),
 		unlock:     unlock,
 	}, true
 }
@@ -239,7 +239,7 @@ func (s *Server) prepareLandingMutation(w http.ResponseWriter, r *http.Request, 
 // This implements the stop -> wait 5s -> kill escalation.
 func (s *Server) stopInvocationForDiscard(ctx context.Context, repoID, invocationID string) error {
 	// Read invocation meta
-	meta, err := s.Store.ReadInvocationMeta(repoID, invocationID)
+	meta, err := s.store.ReadInvocationMeta(repoID, invocationID)
 	if err != nil {
 		return err
 	}
@@ -301,8 +301,8 @@ func (s *Server) stopInvocationForDiscard(ctx context.Context, repoID, invocatio
 
 		// Update meta if not supervised
 		if !supervised {
-			now := s.Clock().UTC().Format(time.RFC3339)
-			if err := s.Store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+			now := s.clock().UTC().Format(time.RFC3339)
+			if err := s.store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
 				m.Status = store.InvocationStatusFailed
 				m.ExitReason = store.ExitReasonDiscarded
 				m.FailureReason = "discarded"
@@ -318,11 +318,11 @@ func (s *Server) stopInvocationForDiscard(ctx context.Context, repoID, invocatio
 	}
 
 	if meta.Mode == store.RunnerModeHeaded {
-		sessionName := meta.TmuxSession
-		if sessionName == "" {
-			sessionName = tmux.SessionName(invocationID)
+		sessionName, ok := headedInvocationSessionName(meta)
+		if !ok {
+			return errors.New(errors.ETmuxSessionMissing, "headed invocation is missing tmux_session")
 		}
-		if err := s.TmuxClient.KillSession(ctx, sessionName); err != nil && !tmux.IsNoSessionErr(err) {
+		if err := s.tmuxClient.KillSession(ctx, sessionName); err != nil && !tmux.IsNoSessionErr(err) {
 			return fmt.Errorf("kill tmux session %s: %w", sessionName, err)
 		}
 	}

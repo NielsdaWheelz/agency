@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"slices"
 	"strings"
 	"time"
 
@@ -43,16 +44,16 @@ type ToolCall struct {
 	HasExit  bool
 }
 
-// TimelineTurnEntry is the input type for grouping projected history turns.
-type TimelineTurnEntry struct {
+// timelineTurnEntry is the input type for grouping projected history turns.
+type timelineTurnEntry struct {
 	EntryID   string
 	Kind      string
 	Timestamp string
 	Data      map[string]interface{}
 }
 
-// TurnCheckpointRef identifies a valid checkpoint that can be restored.
-type TurnCheckpointRef struct {
+// turnCheckpointRef identifies a valid checkpoint that can be restored.
+type turnCheckpointRef struct {
 	ID int
 
 	Description          string
@@ -62,20 +63,20 @@ type TurnCheckpointRef struct {
 	ChangedPathTruncated bool
 }
 
-// GroupTimelineIntoTurns converts a flat timeline into grouped conversation turns.
-func GroupTimelineIntoTurns(entries []TimelineTurnEntry, checkpoints []TurnCheckpointRef) []Turn {
+// groupTimelineIntoTurns converts a flat timeline into grouped conversation turns.
+func groupTimelineIntoTurns(entries []timelineTurnEntry, checkpoints []turnCheckpointRef) []Turn {
 	if len(entries) == 0 {
 		return nil
 	}
 
-	checkpointSet := make(map[int]TurnCheckpointRef, len(checkpoints))
+	checkpointSet := make(map[int]turnCheckpointRef, len(checkpoints))
 	for _, cp := range checkpoints {
 		checkpointSet[cp.ID] = cp
 	}
 
 	var turns []Turn
 	latestCheckpointID := 0
-	var latestCheckpoint TurnCheckpointRef
+	var latestCheckpoint turnCheckpointRef
 
 	for _, entry := range entries {
 		switch entry.Kind {
@@ -240,11 +241,11 @@ func GroupTimelineIntoTurns(entries []TimelineTurnEntry, checkpoints []TurnCheck
 
 func appendPromptLikeTurn(
 	turns []Turn,
-	entry TimelineTurnEntry,
+	entry timelineTurnEntry,
 	kind TurnKind,
 	summary string,
 	latestCheckpointID int,
-	latestCheckpoint TurnCheckpointRef,
+	latestCheckpoint turnCheckpointRef,
 ) []Turn {
 	trimmedSummary := strings.TrimSpace(summary)
 	if trimmedSummary == "" {
@@ -282,10 +283,10 @@ func appendPromptLikeTurn(
 
 func appendDiagnosticTurn(
 	turns []Turn,
-	entry TimelineTurnEntry,
+	entry timelineTurnEntry,
 	summary string,
 	latestCheckpointID int,
-	latestCheckpoint TurnCheckpointRef,
+	latestCheckpoint turnCheckpointRef,
 ) []Turn {
 	turns = append(turns, Turn{
 		EntryID:        entry.EntryID,
@@ -302,7 +303,7 @@ func promptSummaryEqual(a, b string) bool {
 	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }
 
-func applyCheckpointMetadata(turn *Turn, checkpointID int, checkpoint TurnCheckpointRef) {
+func applyCheckpointMetadata(turn *Turn, checkpointID int, checkpoint turnCheckpointRef) {
 	if turn == nil {
 		return
 	}
@@ -314,7 +315,7 @@ func applyCheckpointMetadata(turn *Turn, checkpointID int, checkpoint TurnCheckp
 
 	turn.CheckpointDescription = strings.TrimSpace(checkpoint.Description)
 	turn.CheckpointDiffstat = strings.TrimSpace(checkpoint.Diffstat)
-	turn.CheckpointChangedPaths = append([]string(nil), checkpoint.ChangedPaths...)
+	turn.CheckpointChangedPaths = slices.Clone(checkpoint.ChangedPaths)
 	turn.CheckpointChangedCount = checkpoint.ChangedPathCount
 	turn.CheckpointPathsTrimmed = checkpoint.ChangedPathTruncated
 
@@ -327,7 +328,7 @@ func shouldEnrichTurnSummary(summary string) bool {
 	return render.ShouldEnrichActivitySummary(summary)
 }
 
-func enrichTurnSummary(summary string, checkpoint TurnCheckpointRef) string {
+func enrichTurnSummary(summary string, checkpoint turnCheckpointRef) string {
 	parts := make([]string, 0, 3)
 	base := strings.TrimSpace(summary)
 	if base != "" {

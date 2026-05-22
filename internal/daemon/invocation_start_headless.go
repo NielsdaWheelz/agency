@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -140,7 +141,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 			writeErr(http.StatusConflict, string(errors.EIdempotencyConflict), "client_request_id was already used for a different headless invocation start request", "retry with the original request or choose a new client_request_id", req.ClientRequestID)
 			return
 		}
-		meta, err := s.Store.ReadInvocationMeta(repoIdentity.RepoID, entry.InvocationID)
+		meta, err := s.store.ReadInvocationMeta(repoIdentity.RepoID, entry.invocationID)
 		if err == nil {
 			if meta.Status == store.InvocationStatusStarting {
 				writeErr(http.StatusConflict, string(errors.EInvocationStartFailed), "client_request_id was already accepted but invocation start has not reached running state", "inspect invocation state before retrying", req.ClientRequestID)
@@ -154,7 +155,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 				writeErr(http.StatusConflict, string(errors.EInvocationStartFailed), message, "inspect invocation state before retrying", req.ClientRequestID)
 				return
 			}
-			s.writeControlPlaneSuccess(w, entry.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
+			s.writeControlPlaneSuccess(w, entry.invocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
 			return
 		}
 		writeErr(http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id was already accepted but invocation metadata is unreadable: "+err.Error(), "inspect invocation state before retrying", req.ClientRequestID)
@@ -202,7 +203,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		}
 	}
 
-	invSvc := invocation.NewService(s.Store, s.Runner, s.FS, s.Clock)
+	invSvc := invocation.NewService(s.store, s.runner, s.fsys, s.clock)
 	createResult, err := invSvc.Create(ctx, invocation.CreateOpts{
 		IntegrationWorktreeID:   prep.wtRecord.WorktreeID,
 		IntegrationWorktreeMeta: prep.wtRecord.Meta,
@@ -224,24 +225,24 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		return
 	}
 
-	logsDir := s.Store.InvocationLogsDir(repoIdentity.RepoID, createResult.InvocationID)
-	if err := s.FS.MkdirAll(logsDir, 0o700); err != nil {
+	logsDir := s.store.InvocationLogsDir(repoIdentity.RepoID, createResult.InvocationID)
+	if err := s.fsys.MkdirAll(logsDir, 0o700); err != nil {
 		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "start_failed", gitEnv)
-		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to create logs directory: "+err.Error(), "", req.ClientRequestID)
+		writeErr(http.StatusInternalServerError, string(errors.EInternal), "failed to create logs directory: "+err.Error(), "", req.ClientRequestID)
 		return
 	}
 
-	promptPath := s.Store.InvocationPromptPath(repoIdentity.RepoID, createResult.InvocationID)
-	if err := s.FS.WriteFile(promptPath, []byte(req.Prompt), 0o600); err != nil {
+	promptPath := s.store.InvocationPromptPath(repoIdentity.RepoID, createResult.InvocationID)
+	if err := s.fsys.WriteFile(promptPath, []byte(req.Prompt), 0o600); err != nil {
 		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "start_failed", gitEnv)
-		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to write prompt file: "+err.Error(), "", req.ClientRequestID)
+		writeErr(http.StatusInternalServerError, string(errors.EInternal), "failed to write prompt file: "+err.Error(), "", req.ClientRequestID)
 		return
 	}
 
 	promptHash := sha256.Sum256([]byte(req.Prompt))
 	promptSHA := hex.EncodeToString(promptHash[:])
 	envKeys := sortedEnvKeys(requestEnv)
-	runnerArgs := append([]string(nil), req.RunnerArgs...)
+	runnerArgs := slices.Clone(req.RunnerArgs)
 	claim := func(pid, pgid int) error {
 		return s.claimHeadlessInvocationStart(
 			repoIdentity.RepoID,
@@ -249,7 +250,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 			req.Runner,
 			pid,
 			pgid,
-			s.Store.InvocationPromptPath(repoIdentity.RepoID, createResult.InvocationID),
+			s.store.InvocationPromptPath(repoIdentity.RepoID, createResult.InvocationID),
 			promptSHA,
 			runnerArgs,
 			envKeys,
@@ -265,9 +266,9 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 
 	s.recordIdempotency(repoIdentity.RepoID, req.ClientRequestID, createResult.InvocationID, fingerprint)
 
-	meta, err := s.Store.ReadInvocationMeta(repoIdentity.RepoID, createResult.InvocationID)
+	meta, err := s.store.ReadInvocationMeta(repoIdentity.RepoID, createResult.InvocationID)
 	if err != nil {
-		writeErr(http.StatusInternalServerError, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "", req.ClientRequestID)
+		writeErr(http.StatusInternalServerError, string(errors.EInternal), "failed to read invocation meta: "+err.Error(), "", req.ClientRequestID)
 		return
 	}
 	s.writeControlPlaneSuccess(w, createResult.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, false)

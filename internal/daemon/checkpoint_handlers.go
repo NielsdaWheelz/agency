@@ -58,13 +58,13 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 	defer func() { _ = unlock() }()
 
 	// Read invocation meta
-	meta, err := s.Store.ReadInvocationMeta(record.RepoID, record.InvocationID)
+	meta, err := s.store.ReadInvocationMeta(record.RepoID, record.InvocationID)
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
 			s.writeCheckpointError(w, http.StatusNotFound, requestID, string(errors.EInvocationNotFound), "invocation not found", "")
 			return
 		}
-		s.writeCheckpointError(w, http.StatusInternalServerError, requestID, "E_INTERNAL", "failed to read invocation meta: "+err.Error(), "")
+		s.writeCheckpointError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to read invocation meta: "+err.Error(), "")
 		return
 	}
 
@@ -88,8 +88,8 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 
 	// Get sandbox path and checkpoints directory
 	sandboxPath := meta.SandboxPath
-	checkpointsDir := s.Store.InvocationDir(record.RepoID, record.InvocationID)
-	eventsPath := s.Store.InvocationEventsPath(record.RepoID, record.InvocationID)
+	checkpointsDir := s.store.InvocationDir(record.RepoID, record.InvocationID)
+	eventsPath := s.store.InvocationEventsPath(record.RepoID, record.InvocationID)
 	profileEnv, err := s.executionProfileEnv(meta.ExecutionProfile)
 	if err != nil {
 		code := errors.CodeOr(err, errors.EExecutionProfileNotFound)
@@ -103,10 +103,10 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 		sandboxPath,
 		checkpointsDir,
 		eventsPath,
-		s.Runner,
-		s.FS,
-		s.Clock,
-		s.InvocationEvents,
+		s.runner,
+		s.fsys,
+		s.clock,
+		s.invocationEvents,
 	)
 
 	cp, err := applier.ApplyWithOptions(r.Context(), req.CheckpointID, checkpoint.ApplyOptions{Env: prSyncNonInteractiveEnv(profileEnv)})
@@ -118,6 +118,9 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 		case errors.ERollbackFailed:
 			s.writeCheckpointError(w, http.StatusInternalServerError, requestID, string(errors.ERollbackFailed),
 				err.Error(), "")
+		case errors.EStoreCorrupt:
+			s.writeCheckpointError(w, http.StatusInternalServerError, requestID, string(errors.EStoreCorrupt),
+				err.Error(), "")
 		default:
 			s.writeCheckpointError(w, http.StatusInternalServerError, requestID, string(errors.ECheckpointFailed),
 				err.Error(), "")
@@ -125,5 +128,5 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 
-	s.writeCheckpointSuccess(w, requestID, cp.ID, cp.SnapshotCommit, s.Clock().UTC().Format("2006-01-02T15:04:05Z"))
+	s.writeCheckpointSuccess(w, requestID, cp.ID, cp.SnapshotCommit, s.clock().UTC().Format("2006-01-02T15:04:05Z"))
 }

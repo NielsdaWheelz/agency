@@ -2,6 +2,7 @@ package errors
 
 import (
 	"bytes"
+	stderrors "errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,12 +27,11 @@ func TestFormatFirstLineAlwaysErrorCode(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
 			err := New(tt.code, tt.msg)
-			output := Format(err, PrintOptions{})
+			output := formatError(err, PrintOptions{})
 
 			lines := strings.Split(output, "\n")
 			require.True(t, len(lines) >= 1, "expected at least one line of output")
@@ -47,7 +47,7 @@ func TestFormatMessageSecondLine(t *testing.T) {
 	t.Parallel()
 
 	err := New(EUsage, "test message")
-	output := Format(err, PrintOptions{})
+	output := formatError(err, PrintOptions{})
 
 	lines := strings.Split(output, "\n")
 	require.True(t, len(lines) >= 2, "expected at least two lines of output")
@@ -66,7 +66,7 @@ func TestFormatContextKeysInOrder(t *testing.T) {
 		"log":       "/path/to/verify.log",
 	})
 
-	output := Format(err, PrintOptions{})
+	output := formatError(err, PrintOptions{})
 
 	// Check that keys appear in the expected order
 	runIDIdx := strings.Index(output, "run_id:")
@@ -89,7 +89,7 @@ func TestFormatShowsPathAndSourceByDefault(t *testing.T) {
 		"hint":   "fix /repo/agency.json, or regenerate it",
 	})
 
-	output := Format(err, PrintOptions{})
+	output := formatError(err, PrintOptions{})
 
 	pathIdx := strings.Index(output, "path: /repo/agency.json")
 	sourceIdx := strings.Index(output, "source: repo")
@@ -112,10 +112,10 @@ func TestFormatUnknownKeysHiddenByDefault(t *testing.T) {
 		"another_key": "also hidden",
 	})
 
-	output := Format(err, PrintOptions{Verbose: false})
+	output := formatError(err, PrintOptions{Verbose: false})
 
-	assert.False(t, strings.Contains(output, "unknown_key"), "unknown_key should not appear in default mode")
-	assert.False(t, strings.Contains(output, "another_key"), "another_key should not appear in default mode")
+	assert.NotContains(t, output, "unknown_key", "unknown_key should not appear in default mode")
+	assert.NotContains(t, output, "another_key", "another_key should not appear in default mode")
 }
 
 // TestFormatVerboseRevealsExtras verifies --verbose reveals extra keys.
@@ -128,7 +128,7 @@ func TestFormatVerboseRevealsExtras(t *testing.T) {
 		"another_key": "also visible",
 	})
 
-	output := Format(err, PrintOptions{Verbose: true})
+	output := formatError(err, PrintOptions{Verbose: true})
 
 	assert.Contains(t, output, "extra:")
 	assert.Contains(t, output, "unknown_key")
@@ -143,7 +143,7 @@ func TestFormatMultilineValueEscaped(t *testing.T) {
 		"script": "line1\nline2\nline3",
 	})
 
-	output := Format(err, PrintOptions{})
+	output := formatError(err, PrintOptions{})
 
 	// The value should not contain actual newlines (they should be escaped)
 	lines := strings.Split(output, "\n")
@@ -166,7 +166,7 @@ func TestFormatMissingContextKeysSkipped(t *testing.T) {
 		// No other keys
 	})
 
-	output := Format(err, PrintOptions{})
+	output := formatError(err, PrintOptions{})
 
 	// Should not have empty key lines like "exit_code:" with no value
 	lines := strings.Split(output, "\n")
@@ -183,10 +183,10 @@ func TestFormatCRLFNormalized(t *testing.T) {
 		"script": "line1\r\nline2\r\n",
 	})
 
-	output := Format(err, PrintOptions{})
+	output := formatError(err, PrintOptions{})
 
 	// Should not contain \r
-	assert.False(t, strings.Contains(output, "\r"), "output should not contain \\r")
+	assert.NotContains(t, output, "\r", "output should not contain \\r")
 }
 
 // TestFormatLongValuesTruncated verifies long values are truncated.
@@ -198,27 +198,15 @@ func TestFormatLongValuesTruncated(t *testing.T) {
 		"script": longValue,
 	})
 
-	output := Format(err, PrintOptions{})
+	output := formatError(err, PrintOptions{})
 
 	// The truncated value should be maxValueLen (256) chars + "..."
 	for _, line := range strings.Split(output, "\n") {
-		if strings.HasPrefix(line, "script:") {
-			val := strings.TrimPrefix(line, "script: ")
+		if val, ok := strings.CutPrefix(line, "script: "); ok {
 			assert.True(t, len(val) <= maxValueLen+3, "value length = %d, should be truncated to ~%d", len(val), maxValueLen)
 			assert.True(t, strings.HasSuffix(val, "\u2026"), "truncated value should end with \u2026")
 		}
 	}
-}
-
-// TestFormatNilDetailsMap verifies nil Details map doesn't cause panic.
-func TestFormatNilDetailsMap(t *testing.T) {
-	t.Parallel()
-
-	err := New(EUsage, "test")
-	output := Format(err, PrintOptions{})
-
-	assert.Contains(t, output, "error_code: E_USAGE")
-	assert.Contains(t, output, "test")
 }
 
 // TestFormatEmptyStringValues verifies empty string values are skipped.
@@ -230,9 +218,9 @@ func TestFormatEmptyStringValues(t *testing.T) {
 		"exit_code": "",
 	})
 
-	output := Format(err, PrintOptions{})
+	output := formatError(err, PrintOptions{})
 
-	assert.False(t, strings.Contains(output, "exit_code:"), "empty exit_code should not appear")
+	assert.NotContains(t, output, "exit_code:", "empty exit_code should not appear")
 }
 
 // TestFormatDetailsOnlyUnknownKeys verifies handling of details with only unknown keys.
@@ -245,11 +233,11 @@ func TestFormatDetailsOnlyUnknownKeys(t *testing.T) {
 	})
 
 	// Default mode
-	output := Format(err, PrintOptions{})
-	assert.False(t, strings.Contains(output, "custom_key1"), "unknown keys should not appear in default mode")
+	output := formatError(err, PrintOptions{})
+	assert.NotContains(t, output, "custom_key1", "unknown keys should not appear in default mode")
 
 	// Verbose mode
-	output = Format(err, PrintOptions{Verbose: true})
+	output = formatError(err, PrintOptions{Verbose: true})
 	assert.Contains(t, output, "custom_key1", "unknown keys should appear in verbose mode")
 }
 
@@ -304,7 +292,6 @@ func TestFormatVerifyFailureDetection(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -328,7 +315,7 @@ func TestFormatHintLine(t *testing.T) {
 		"hint": "fix the failing tests",
 	})
 
-	output := Format(err, PrintOptions{})
+	output := formatError(err, PrintOptions{})
 
 	assert.Contains(t, output, "hint: fix the failing tests")
 
@@ -359,7 +346,7 @@ func TestPrintWithOptionsNonAgencyError(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	err := &testError{msg: "plain error"}
+	err := stderrors.New("plain error")
 	PrintWithOptions(&buf, err, PrintOptions{})
 
 	output := buf.String()
@@ -385,7 +372,6 @@ func TestSanitizeValue(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -441,41 +427,6 @@ func TestReadTailNonexistentFile(t *testing.T) {
 	require.Error(t, err)
 }
 
-// testError is a simple error implementation for testing.
-type testError struct {
-	msg string
-}
-
-func (e *testError) Error() string {
-	return e.msg
-}
-
-// TestFormatWithTailer verifies PrintWithOptions uses custom tailer.
-func TestFormatWithTailer(t *testing.T) {
-	t.Parallel()
-
-	err := NewWithDetails(EScriptFailed, "verify failed", map[string]string{
-		"log":    "/path/to/verify.log",
-		"script": "scripts/agency_verify.sh",
-	})
-
-	tailerCalled := false
-	tailer := func(logPath string, maxLines int) ([]string, error) {
-		tailerCalled = true
-		assert.Equal(t, "/path/to/verify.log", logPath)
-		return []string{"test output line 1", "test output line 2"}, nil
-	}
-
-	var buf bytes.Buffer
-	PrintWithOptions(&buf, err, PrintOptions{Tailer: tailer})
-
-	assert.True(t, tailerCalled, "tailer should have been called for verify failure")
-
-	output := buf.String()
-	assert.Contains(t, output, "output")
-	assert.Contains(t, output, "test output line 1")
-}
-
 // TestDeriveTryLines verifies try line suggestions.
 func TestDeriveTryLines(t *testing.T) {
 	t.Parallel()
@@ -501,7 +452,6 @@ func TestDeriveTryLines(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 

@@ -93,7 +93,7 @@ func NewIntegrationWorktreeMergeMeta(
 // WriteIntegrationWorktreeMerge writes merge.json atomically.
 func (s *Store) WriteIntegrationWorktreeMerge(repoID, worktreeID string, meta *IntegrationWorktreeMergeMeta) error {
 	mergePath := s.IntegrationWorktreeMergePath(repoID, worktreeID)
-	if err := fs.WriteJSONAtomic(mergePath, meta, 0o600); err != nil {
+	if err := fs.WriteJSONAtomic(s.fsys, mergePath, meta, 0o600); err != nil {
 		return errors.WrapWithDetails(
 			errors.EMetaWriteFailed,
 			"failed to write integration worktree merge.json atomically",
@@ -108,7 +108,7 @@ func (s *Store) WriteIntegrationWorktreeMerge(repoID, worktreeID string, meta *I
 // Returns (nil, nil) when merge.json does not exist.
 func (s *Store) ReadIntegrationWorktreeMerge(repoID, worktreeID string) (*IntegrationWorktreeMergeMeta, error) {
 	mergePath := s.IntegrationWorktreeMergePath(repoID, worktreeID)
-	data, err := s.FS.ReadFile(mergePath)
+	data, err := s.fsys.ReadFile(mergePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

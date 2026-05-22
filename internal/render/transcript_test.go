@@ -30,7 +30,7 @@ func TestWriteTranscript_PromptSeed(t *testing.T) {
 
 func TestWriteTranscript_AssistantWithContentBlocks(t *testing.T) {
 	t.Parallel()
-	payloadMarker := "S8_PR06_TOOL_INPUT_PAYLOAD_SHOULD_BE_HIDDEN"
+	payloadMarker := "TOOL_INPUT_PAYLOAD_SHOULD_BE_HIDDEN"
 	entries := []TranscriptEntry{
 		{
 			Kind: "message",
@@ -350,15 +350,18 @@ func TestWriteTranscript_NilData(t *testing.T) {
 	assert.Contains(t, buf.String(), "Done")
 }
 
-func TestWriteTranscript_UnknownKindSilentlySkipped(t *testing.T) {
+func TestWriteTranscript_UnrecognizedKindRendersDiagnostic(t *testing.T) {
 	t.Parallel()
 	entries := []TranscriptEntry{
-		{Kind: "some_future_kind", Data: map[string]interface{}{"foo": "bar"}},
+		{Kind: "some_future_kind", Data: map[string]interface{}{
+			"reason": "unsupported_event_type",
+			"text":   "future payload",
+		}},
 	}
 	var buf bytes.Buffer
 	err := WriteTranscript(&buf, entries, TranscriptOpts{NoColor: true})
 	require.NoError(t, err)
-	assert.Empty(t, buf.String())
+	assert.Equal(t, "unrecognized timeline event: some future kind (unsupported event type) - future payload\n", buf.String())
 }
 
 func TestWriteTranscript_ParseErrorAndUnknownDiagnostics(t *testing.T) {

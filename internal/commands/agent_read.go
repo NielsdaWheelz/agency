@@ -2,7 +2,6 @@ package commands
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
-	"github.com/NielsdaWheelz/agency/internal/daemonclient"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -63,7 +61,7 @@ func AgentLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string,
 		repoID = repoCtx.RepoID
 	}
 
-	result, fetchErr := ns.client.ListInvocations(ctx, daemonclient.ListInvocationsOpts{
+	invocations, fetchErr := ns.client.DrainInvocations(ctx, daemon.ListInvocationsParams{
 		RepoID:      repoID,
 		WorktreeRef: opts.WorktreeRef,
 		State:       state,
@@ -72,9 +70,9 @@ func AgentLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string,
 		return fetchErr
 	}
 	if opts.JSON {
-		return writeAgentLSJSONFromDTO(stdout, result.Data.Invocations)
+		return writeCommandJSON(stdout, invocations)
 	}
-	return writeAgentLSHumanFromDTO(stdout, result.Data.Invocations)
+	return writeAgentLSHumanFromDTO(stdout, invocations)
 }
 
 // AgentShowOpts holds options for the agent show command.
@@ -112,7 +110,7 @@ func AgentShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 
 	// Output
 	if opts.JSON {
-		return writeAgentShowJSONFromDTO(stdout, &result.Data)
+		return writeCommandJSON(stdout, &result.Data)
 	}
 
 	return writeAgentShowHumanFromDTO(stdout, &result.Data)
@@ -188,13 +186,6 @@ type AgentHistoryOpts struct {
 
 	// IsInteractive, when set, decides whether bare history opens the full-screen view.
 	IsInteractive func() bool
-
-	// WatchInput and WatchOutput override the shared watch runtime IO during tests.
-	WatchInput  io.Reader
-	WatchOutput io.Writer
-
-	// RunWatch overrides the shared watch runtime during tests.
-	RunWatch func(context.Context, *daemonclient.Client, watch.RunOptions) (watch.RunResult, error)
 }
 
 // AgentHistory reads the unified invocation timeline via daemon read API.
@@ -236,19 +227,12 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		}
 	}
 	if isInteractive() && !opts.JSON && !opts.Last && opts.Cursor == "" && opts.Limit == 50 {
-		runWatch := opts.RunWatch
-		if runWatch == nil {
-			runWatch = watch.Run
-		}
 		return launchWatchWorkspace(ctx, cr, fsys, cwd, stdout, stderr, watchLaunchOptions{
 			initialPage:     watch.InitialPageHistory,
 			invocationID:    opts.InvocationRef,
 			repoID:          repoCtx.RepoID,
-			input:           opts.WatchInput,
-			output:          opts.WatchOutput,
 			isInteractive:   isInteractive,
 			dataDirOverride: opts.DataDirOverride,
-			runWatch:        runWatch,
 		})
 	}
 
@@ -256,14 +240,14 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	// For default human history and --last resolution we project from shared turns
 	// so history aligns with restore --turn semantics.
 	if opts.JSON && !opts.Last {
-		result, err := ns.client.GetInvocationTimeline(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationTimelineOpts{
+		result, err := ns.client.GetInvocationTimeline(ctx, opts.InvocationRef, repoCtx.RepoID, daemon.GetTimelineParams{
 			Limit:  opts.Limit,
 			Cursor: opts.Cursor,
 		})
 		if err != nil {
 			return err
 		}
-		return writeAgentHistoryJSONFromDTO(stdout, result.Data.Entries, result.Data.NextCursor)
+		return writeCommandJSON(stdout, result.Data)
 	}
 
 	entries, err := fetchAllTimelineEntries(ctx, ns.client, opts.InvocationRef, repoCtx.RepoID)
@@ -279,9 +263,13 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	if opts.Last {
 		if opts.JSON {
 			if len(turns) == 0 {
-				return writeAgentHistoryJSONFromDTO(stdout, []daemon.TimelineEntryDTO{}, "")
+				return writeCommandJSON(stdout, daemon.InvocationTimelineData{
+					Entries: []daemon.TimelineEntryDTO{},
+				})
 			}
-			return writeAgentHistoryJSONFromDTO(stdout, daemon.TimelineEntriesForTurn(entries, turns, turns[len(turns)-1].EntryID), "")
+			return writeCommandJSON(stdout, daemon.InvocationTimelineData{
+				Entries: daemon.TimelineEntriesForTurn(entries, turns, turns[len(turns)-1].EntryID),
+			})
 		}
 		if len(turns) == 0 {
 			return writeAgentHistoryHumanFromTurns(stdout, nil, "")
@@ -289,15 +277,24 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return writeAgentHistoryHumanFromTurns(stdout, []daemon.Turn{turns[len(turns)-1]}, "")
 	}
 
-	if cursor := strings.TrimSpace(opts.Cursor); cursor != "" && !daemon.HistoryTurnExists(turns, cursor) {
-		return errors.NewWithDetails(
-			errors.EInvalidArgument,
-			"invalid value for parameter 'cursor': turn id not found",
-			map[string]string{
-				"param":  "cursor",
-				"cursor": cursor,
-			},
-		)
+	if cursor := strings.TrimSpace(opts.Cursor); cursor != "" {
+		found := false
+		for _, turn := range turns {
+			if turn.EntryID == cursor {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return errors.NewWithDetails(
+				errors.EInvalidArgument,
+				"invalid value for parameter 'cursor': turn id not found",
+				map[string]string{
+					"param":  "cursor",
+					"cursor": cursor,
+				},
+			)
+		}
 	}
 
 	page, nextCursor := daemon.PaginateHistoryTurns(turns, opts.Cursor, opts.Limit)
@@ -320,9 +317,6 @@ type AgentHistoryLogsOpts struct {
 
 	// Offset is the byte offset to start reading from (default 0).
 	Offset int64
-
-	// SleepFn overrides time.Sleep for testing. If nil, uses time.Sleep.
-	SleepFn func(time.Duration)
 
 	// DataDirOverride, if set, is used instead of resolving from environment.
 	DataDirOverride string
@@ -348,42 +342,21 @@ func AgentHistoryLogs(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cw
 
 	kind := strings.TrimSpace(opts.Kind)
 	if kind == "" {
-		kind = "raw"
+		kind = daemon.InvocationLogKindRaw
 	}
 
 	offset := opts.Offset
-	sleepFn := opts.SleepFn
-	if sleepFn == nil {
-		sleepFn = time.Sleep
-	}
-
 	pollInterval := 500 * time.Millisecond
 
-	// Page to EOF
-	for {
-		result, err := ns.client.GetInvocationLogsOffset(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationLogsOffsetOpts{
-			Kind:   kind,
-			Offset: offset,
-			Limit:  65536,
-		})
-		if err != nil {
-			return err
-		}
-
-		if result.Data.DataB64 != "" {
-			decoded, decErr := base64.StdEncoding.DecodeString(result.Data.DataB64)
-			if decErr != nil {
-				return errors.Wrap(errors.EInternal, "failed to decode log data", decErr)
-			}
-			_, _ = stdout.Write(decoded)
-		}
-
-		// No new data — we've reached EOF
-		if result.Data.NextOffset == offset {
-			break
-		}
-		offset = result.Data.NextOffset
+	nextOffset, err := ns.client.DrainInvocationLogs(ctx, opts.InvocationRef, repoCtx.RepoID, daemon.GetLogsParams{
+		Kind:   kind,
+		Offset: offset,
+		Limit:  65536,
+	}, stdout)
+	if err != nil {
+		return err
 	}
+	offset = nextOffset
 
 	// If not following, we're done
 	if !opts.Follow {
@@ -392,39 +365,20 @@ func AgentHistoryLogs(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cw
 
 	// Follow mode: poll for new data
 	for {
-		// Check context cancellation before sleeping
 		select {
 		case <-ctx.Done():
 			return nil
-		default:
+		case <-time.After(pollInterval):
 		}
 
-		sleepFn(pollInterval)
-
-		// Re-check after sleep — context may have been cancelled during sleep
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-		}
-
-		result, err := ns.client.GetInvocationLogsOffset(ctx, opts.InvocationRef, repoCtx.RepoID, daemonclient.GetInvocationLogsOffsetOpts{
+		nextOffset, err := ns.client.DrainInvocationLogs(ctx, opts.InvocationRef, repoCtx.RepoID, daemon.GetLogsParams{
 			Kind:   kind,
 			Offset: offset,
 			Limit:  65536,
-		})
+		}, stdout)
 		if err != nil {
 			return err
 		}
-
-		if result.Data.DataB64 != "" {
-			decoded, decErr := base64.StdEncoding.DecodeString(result.Data.DataB64)
-			if decErr != nil {
-				return errors.Wrap(errors.EInternal, "failed to decode log data", decErr)
-			}
-			_, _ = stdout.Write(decoded)
-		}
-
-		offset = result.Data.NextOffset
+		offset = nextOffset
 	}
 }

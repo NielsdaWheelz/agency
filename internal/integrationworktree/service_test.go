@@ -2,10 +2,8 @@ package integrationworktree
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -18,9 +16,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCreateAndRemove tests the full lifecycle of creating and removing a worktree.
+// TestCreate tests creating and resolving a worktree.
 // This is an integration test that requires git to be installed.
-func TestCreateAndRemove(t *testing.T) {
+func TestCreate(t *testing.T) {
 	// Hermetic git environment: blocks system/global config, provides test identity.
 	testutil.HermeticGitEnv(t)
 
@@ -89,18 +87,15 @@ func TestCreateAndRemove(t *testing.T) {
 		assert.NotEmpty(t, result.TreePath, "TreePath is empty")
 
 		// Verify tree directory exists
-		_, err = os.Stat(result.TreePath)
-		assert.False(t, os.IsNotExist(err), "tree directory not created")
+		assert.DirExists(t, result.TreePath, "tree directory not created")
 
 		// Verify INTEGRATION_MARKER exists
 		markerPath := filepath.Join(result.TreePath, ".agency", IntegrationMarkerFileName)
-		_, err = os.Stat(markerPath)
-		assert.False(t, os.IsNotExist(err), "INTEGRATION_MARKER not created")
+		assert.FileExists(t, markerPath, "INTEGRATION_MARKER not created")
 
 		// Verify meta.json exists
 		metaPath := st.IntegrationWorktreeMetaPath(repoID, result.WorktreeID)
-		_, err = os.Stat(metaPath)
-		assert.False(t, os.IsNotExist(err), "meta.json not created")
+		assert.FileExists(t, metaPath, "meta.json not created")
 
 		// Verify HasIntegrationMarker
 		assert.True(t, HasIntegrationMarker(result.TreePath), "HasIntegrationMarker returned false")
@@ -135,30 +130,6 @@ func TestCreateAndRemove(t *testing.T) {
 		require.Error(t, err, "expected error for duplicate name")
 	})
 
-	// Test Remove
-	t.Run("Remove", func(t *testing.T) {
-		if createdWorktreeID == "" {
-			t.Skip("Create test failed, skipping")
-		}
-		record, err := svc.Resolve(repoID, "test-feature", false)
-		require.NoError(t, err)
-		treePath := record.Meta.TreePath
-
-		err = svc.Remove(ctx, repoID, record.WorktreeID, RemoveOpts{
-			RepoRoot: repoDir,
-			Force:    true,
-		})
-		require.NoError(t, err)
-
-		// Verify tree directory is gone
-		_, err = os.Stat(treePath)
-		assert.True(t, os.IsNotExist(err), "tree directory still exists after remove")
-
-		// Verify meta.json still exists with archived state
-		meta, err := st.ReadIntegrationWorktreeMeta(repoID, record.WorktreeID)
-		require.NoError(t, err)
-		assert.Equal(t, store.WorktreeStateArchived, meta.State)
-	})
 }
 
 func TestCreateInvalidName(t *testing.T) {
@@ -215,141 +186,6 @@ func TestHasIntegrationMarker(t *testing.T) {
 	assert.True(t, HasIntegrationMarker(tmpDir), "should return true for dir with marker")
 }
 
-func TestRemove_GitRemoveFailures(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		response testutil.FakeResponse
-	}{
-		{
-			name: "non-zero exit",
-			response: testutil.FakeResponse{
-				Stderr:   "fatal: some git error",
-				ExitCode: 128,
-			},
-		},
-		{
-			name: "runner error",
-			response: testutil.FakeResponse{
-				Err: fmt.Errorf("exec: git not found"),
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			dataDir := t.TempDir()
-			fsys := fs.NewRealFS()
-			now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
-			st := store.NewStore(fsys, dataDir, func() time.Time { return now })
-
-			repoID := "abc123"
-			wtID := "20260201120000-f1a2"
-			_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
-			require.NoError(t, err)
-
-			checkoutRoot := filepath.Join(dataDir, "checkouts", repoID)
-			treePath := filepath.Join(checkoutRoot, "worktrees", "rm-fail-test-f1a2")
-			meta := store.NewIntegrationWorktreeMeta(
-				wtID, "rm-fail-test", repoID,
-				"agency/rm-fail-test-f1a2", "main",
-				treePath, checkoutRoot, "work", now,
-			)
-			require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, meta))
-
-			cr := testutil.NewFakeCommandRunner()
-			repoRoot := "/fake/repo"
-			gitKey := fmt.Sprintf("git -C %s worktree remove %s", repoRoot, treePath)
-			cr.Responses[gitKey] = tt.response
-
-			svc := NewService(st, cr, fsys, func() time.Time { return now })
-			err = svc.Remove(context.Background(), repoID, wtID, RemoveOpts{
-				RepoRoot: repoRoot,
-				Force:    false,
-			})
-			require.Error(t, err)
-			assert.Equal(t, errors.EWorktreeRemoveFailed, errors.GetCode(err))
-		})
-	}
-}
-
-func TestRemove_DirtyWorktree(t *testing.T) {
-	dataDir := t.TempDir()
-	fsys := fs.NewRealFS()
-	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
-	st := store.NewStore(fsys, dataDir, func() time.Time { return now })
-	cr := exec.NewRealRunner()
-	svc := NewService(st, cr, fsys, func() time.Time { return now })
-
-	repoRoot := testutil.SetupGitRepo(t)
-	repoID := "abc123"
-	result, err := svc.Create(context.Background(), CreateOpts{
-		Name:             "dirty-test",
-		RepoRoot:         repoRoot,
-		RepoID:           repoID,
-		BaseBranch:       "main",
-		CheckoutRoot:     filepath.Join(dataDir, "checkouts", repoID),
-		ExecutionProfile: "work",
-	})
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(result.TreePath, "README.md"), []byte("# Dirty\n"), 0o644))
-
-	err = svc.Remove(context.Background(), repoID, result.WorktreeID, RemoveOpts{
-		RepoRoot: repoRoot,
-		Force:    false,
-	})
-	require.Error(t, err)
-	assert.Equal(t, errors.EDirtyWorktree, errors.GetCode(err))
-
-	_, statErr := os.Stat(result.TreePath)
-	assert.NoError(t, statErr)
-	meta, readErr := st.ReadIntegrationWorktreeMeta(repoID, result.WorktreeID)
-	require.NoError(t, readErr)
-	assert.Equal(t, store.WorktreeStatePresent, meta.State)
-}
-
-// TestRemove_AlreadyArchived verifies that Remove returns E_WORKTREE_NOT_FOUND
-// when the worktree is already archived.
-func TestRemove_AlreadyArchived(t *testing.T) {
-	t.Parallel()
-	dataDir := t.TempDir()
-	fsys := fs.NewRealFS()
-	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
-	st := store.NewStore(fsys, dataDir, func() time.Time { return now })
-
-	repoID := "abc123"
-	wtID := "20260201120000-arch"
-
-	// Create worktree record directory and write meta.json with archived state
-	_, err := st.EnsureIntegrationWorktreeDir(repoID, wtID)
-	require.NoError(t, err)
-
-	checkoutRoot := filepath.Join(dataDir, "checkouts", repoID)
-	treePath := filepath.Join(checkoutRoot, "worktrees", "archived-test-arch")
-	meta := store.NewIntegrationWorktreeMeta(
-		wtID, "archived-test", repoID,
-		"agency/archived-test-arch", "main",
-		treePath, checkoutRoot, "work", now,
-	)
-	meta.State = store.WorktreeStateArchived
-	require.NoError(t, st.WriteIntegrationWorktreeMeta(repoID, wtID, meta))
-
-	cr := testutil.NewFakeCommandRunner()
-	svc := NewService(st, cr, fsys, func() time.Time { return now })
-	ctx := context.Background()
-
-	err = svc.Remove(ctx, repoID, wtID, RemoveOpts{
-		RepoRoot: "/fake/repo",
-	})
-	require.Error(t, err)
-	assert.Equal(t, errors.EWorktreeNotFound, errors.GetCode(err),
-		"expected E_WORKTREE_NOT_FOUND for already-archived worktree")
-}
-
 // TestResolve_WorktreeNotFound verifies that Resolve returns E_WORKTREE_NOT_FOUND
 // when no worktree matches the input.
 func TestResolve_WorktreeNotFound(t *testing.T) {
@@ -401,8 +237,7 @@ func TestResolve_AmbiguousWorktreeID(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, errors.EWorktreeIDAmbiguous, errors.GetCode(err),
 		"expected E_WORKTREE_ID_AMBIGUOUS when prefix matches multiple worktrees")
-	assert.True(t, strings.Contains(err.Error(), "ambiguous"),
-		"error message should contain 'ambiguous'")
+	assert.Contains(t, err.Error(), "ambiguous")
 }
 
 // TestLoad_MissingMarkerFile verifies that HasIntegrationMarker returns false

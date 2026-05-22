@@ -3,7 +3,6 @@ package commands
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -20,7 +19,7 @@ func TestResolveAgentRunner(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "empty input resolves using defaults runner", input: "", def: "claude-code", want: "claude-code"},
-		{name: "empty input falls back to claude-code when defaults missing", input: "", def: "", want: "claude-code"},
+		{name: "empty input errors when defaults runner is missing", input: "", def: "", wantErr: true},
 		{name: "canonical claude-code", input: "claude-code", def: "codex", want: "claude-code"},
 		{name: "codex", input: "codex", def: "claude-code", want: "codex"},
 		{name: "amp", input: "amp", def: "claude-code", want: "amp"},
@@ -31,17 +30,20 @@ func TestResolveAgentRunner(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := resolveAgentRunner(tt.input, tt.def)
 			if tt.wantErr {
 				require.Error(t, err)
-				assert.Equal(t, errors.EUsage, errors.GetCode(err))
+				if gotCode := errors.GetCode(err); gotCode != errors.EUsage {
+					t.Fatalf("error code = %s, want %s", gotCode, errors.EUsage)
+				}
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, tt.want, got)
+			if got != tt.want {
+				t.Fatalf("resolveAgentRunner(%q, %q) = %q, want %q", tt.input, tt.def, got, tt.want)
+			}
 		})
 	}
 }

@@ -9,7 +9,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 )
 
-func TestResolve(t *testing.T) {
+func TestCanonicalize(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name    string
@@ -28,17 +28,16 @@ func TestResolve(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			cap, err := Resolve(tt.input)
+			canonical, err := Canonicalize(tt.input)
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.Equal(t, errors.ERunnerNotFound, errors.GetCode(err))
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, tt.wantID, cap.ID)
+			assert.Equal(t, tt.wantID, canonical)
 		})
 	}
 }
@@ -99,6 +98,9 @@ func TestValidateHeadlessArgs(t *testing.T) {
 	require.Error(t, ValidateHeadlessArgs("cursor", []string{"-f"}))
 	require.Error(t, ValidateHeadlessArgs("cursor", []string{"--yolo"}))
 	require.Error(t, ValidateHeadlessArgs("cursor", []string{"--trust"}))
+	require.Error(t, ValidateHeadlessArgs("droid", []string{"--auto", "high"}))
+	require.Error(t, ValidateHeadlessArgs("droid", []string{"--auto=low"}))
+	require.Error(t, ValidateHeadlessArgs("droid", []string{"--skip-permissions-unsafe"}))
 	require.Error(t, ValidateHeadlessArgs("opencode", []string{"--mode", "safe"}))
 	require.Error(t, ValidateHeadlessArgs("opencode", []string{"--mode=auto"}))
 
@@ -134,7 +136,7 @@ func TestBuildHeadlessArgs(t *testing.T) {
 
 	droidArgs, err := BuildHeadlessArgs("droid", "fix bug", "/sandbox", []string{"--model", "droid-1"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"exec", "--output-format", "stream-json", "--input-format", "stream-json", "--model", "droid-1"}, droidArgs)
+	assert.Equal(t, []string{"exec", "--auto", "medium", "--output-format", "stream-json", "--input-format", "stream-json", "--model", "droid-1"}, droidArgs)
 }
 
 func TestBuildHeadlessArgs_RequiresPrompt(t *testing.T) {
@@ -180,6 +182,7 @@ func TestBuildResumeArgs(t *testing.T) {
 	assert.True(t, SupportsResumeTurns("codex"))
 	assert.True(t, SupportsResumeTurns("cursor"))
 	assert.False(t, SupportsResumeTurns("amp"))
+	assert.False(t, SupportsResumeTurns("opencode"))
 }
 
 func TestBuildHeadedArgs(t *testing.T) {
@@ -208,59 +211,4 @@ func TestBuildHeadedArgs(t *testing.T) {
 	droidArgs, err := BuildHeadedArgs("droid", []string{"--model", "droid-1"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"--model", "droid-1"}, droidArgs)
-}
-
-func TestFollowUpMode(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		runner string
-		want   FollowUpMode
-	}{
-		{"claude-code", FollowUpModeResume},
-		{"codex", FollowUpModeResume},
-		{"amp", FollowUpModeStdin},
-		{"opencode", FollowUpModeResume},
-		{"cursor", FollowUpModeResume},
-		{"droid", FollowUpModeStdin},
-	}
-	for _, tt := range tests {
-		t.Run(tt.runner, func(t *testing.T) {
-			t.Parallel()
-			mode, err := ResolveFollowUpMode(tt.runner)
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, mode)
-		})
-	}
-}
-
-func TestInitialPromptMode(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		runner string
-		want   InitialPromptMode
-	}{
-		{"claude-code", InitialPromptPositional},
-		{"codex", InitialPromptPositional},
-		{"amp", InitialPromptStdin},
-		{"opencode", InitialPromptPositional},
-		{"cursor", InitialPromptPositional},
-		{"droid", InitialPromptStdin},
-	}
-	for _, tt := range tests {
-		t.Run(tt.runner, func(t *testing.T) {
-			t.Parallel()
-			mode, err := ResolveInitialPromptMode(tt.runner)
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, mode)
-		})
-	}
-}
-
-func TestFollowUpMode_UnknownRunner(t *testing.T) {
-	t.Parallel()
-	_, err := ResolveFollowUpMode("unknown")
-	require.Error(t, err)
-	assert.Equal(t, errors.ERunnerNotFound, errors.GetCode(err))
 }

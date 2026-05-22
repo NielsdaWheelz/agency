@@ -2,7 +2,8 @@
 package ids
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -138,8 +139,8 @@ func ResolveWorktreeRef(input string, refs []WorktreeRef, opts ResolveWorktreeRe
 
 // sortWorktreeCandidates sorts candidates deterministically by WorktreeID.
 func sortWorktreeCandidates(refs []WorktreeRef) {
-	sort.Slice(refs, func(i, j int) bool {
-		return refs[i].WorktreeID < refs[j].WorktreeID
+	slices.SortFunc(refs, func(a, b WorktreeRef) int {
+		return cmp.Compare(a.WorktreeID, b.WorktreeID)
 	})
 }
 

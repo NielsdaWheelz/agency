@@ -43,11 +43,11 @@ func httpStatusForCode(code errors.Code) int {
 
 func (s *Server) invocationLogPaths(repoID, invocationID string) *LogPaths {
 	return &LogPaths{
-		Raw:      s.readableInvocationLogPath(repoID, invocationID, "raw"),
-		Stderr:   s.readableInvocationLogPath(repoID, invocationID, "stderr"),
-		Stream:   s.readableInvocationLogPath(repoID, invocationID, "stream"),
-		Hooks:    s.readableInvocationLogPath(repoID, invocationID, "hooks"),
-		Terminal: s.readableInvocationLogPath(repoID, invocationID, "terminal"),
+		Raw:      s.readableInvocationLogPath(repoID, invocationID, InvocationLogKindRaw),
+		Stderr:   s.readableInvocationLogPath(repoID, invocationID, InvocationLogKindStderr),
+		Stream:   s.readableInvocationLogPath(repoID, invocationID, InvocationLogKindStream),
+		Hooks:    s.readableInvocationLogPath(repoID, invocationID, InvocationLogKindHooks),
+		Terminal: s.readableInvocationLogPath(repoID, invocationID, InvocationLogKindTerminal),
 	}
 }
 
@@ -55,7 +55,7 @@ func (s *Server) worktreeNameForResponse(repoID, worktreeID string) string {
 	if worktreeID == "" {
 		return ""
 	}
-	worktreeMeta, err := s.Store.ReadIntegrationWorktreeMeta(repoID, worktreeID)
+	worktreeMeta, err := s.store.ReadIntegrationWorktreeMeta(repoID, worktreeID)
 	if err != nil {
 		return ""
 	}

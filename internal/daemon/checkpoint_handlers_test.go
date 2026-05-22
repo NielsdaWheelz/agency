@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	agencyerrors "github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -95,7 +98,6 @@ func TestHandleCheckpointApply_ValidationErrors(t *testing.T) {
 	}
 }
 
-// 2.2 TestHandleCheckpointApply_InvocationNotFound
 func TestHandleCheckpointApply_InvocationNotFound(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
@@ -181,7 +183,6 @@ func registerRepoForCheckpointTests(t *testing.T, st *store.Store, repoID string
 	}))
 }
 
-// 2.3 TestHandleCheckpointApply_WrongMode
 func TestHandleCheckpointApply_WrongMode(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
@@ -204,7 +205,6 @@ func TestHandleCheckpointApply_WrongMode(t *testing.T) {
 	assert.Equal(t, "E_INVOCATION_INVALID_MODE", resp.ErrorCode)
 }
 
-// 2.4 TestHandleCheckpointApply_StillRunning
 func TestHandleCheckpointApply_StillRunning(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
@@ -225,6 +225,30 @@ func TestHandleCheckpointApply_StillRunning(t *testing.T) {
 
 	assert.Equal(t, http.StatusConflict, w.Code)
 	assert.Equal(t, "E_INVOCATION_STILL_RUNNING", resp.ErrorCode)
+}
+
+func TestHandleCheckpointApply_CorruptCheckpointsReturnsStoreCorrupt(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, "config")
+	writeTestUserConfig(t, configDir)
+	st := store.NewStore(fs.NewRealFS(), tmpDir, time.Now)
+	s := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
+	registerRepoForCheckpointTests(t, st, "test-repo")
+	setupInvocationMeta(t, st, "test-repo", "test-inv", store.RunnerModeHeadless, store.InvocationStatusFinished)
+	require.NoError(t, os.WriteFile(st.InvocationCheckpointsPath("test-repo", "test-inv"), []byte("{malformed"), 0o644))
+
+	body, _ := json.Marshal(CheckpointApplyRequest{CheckpointID: 1})
+	req := httptest.NewRequest(http.MethodPost, "/invocations/test-inv/checkpoints/apply?repo_id=test-repo", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleCheckpointApply(w, req, "test-inv")
+
+	var resp CheckpointApplyResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, string(agencyerrors.EStoreCorrupt), resp.ErrorCode)
+	assert.Contains(t, resp.Message, "checkpoints.json")
 }
 
 func TestHandleCheckpointApply_RespectsRepoLock(t *testing.T) {
@@ -255,7 +279,6 @@ func TestHandleCheckpointApply_RespectsRepoLock(t *testing.T) {
 	assert.Equal(t, "E_REPO_LOCKED", resp.ErrorCode)
 }
 
-// 2.5 TestHandleCheckpointApply_Starting
 func TestHandleCheckpointApply_Starting(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()

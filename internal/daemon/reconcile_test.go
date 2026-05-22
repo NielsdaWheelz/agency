@@ -1,4 +1,4 @@
-package daemon_test
+package daemon
 
 import (
 	"context"
@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -27,34 +26,26 @@ import (
 
 // setupReconcileTestEnv creates a minimal daemon environment for reconciliation tests.
 // Returns the server and store. Use waitForStatus / waitForStableStatus to poll.
-func setupReconcileTestEnv(t *testing.T, fakeTmux *testutil.FakeTmuxClient) (*daemon.Server, *store.Store) {
+func setupReconcileTestEnv(t *testing.T, fakeTmux *testutil.FakeTmuxClient) (*Server, *store.Store) {
 	t.Helper()
 
 	dataDir := t.TempDir()
 	configDir := filepath.Join(dataDir, "config")
 
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
-	srv := daemon.NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), configDir)
-
-	// Inject fake tmux client
-	srv.TmuxClient = fakeTmux
-
-	// Use a reconcile interval longer than the wait time to ensure
-	// exactly one tick per waitForReconcile call (200ms interval, 150ms wait).
-	testInterval := 200 * time.Millisecond
-	srv.HeadedReconcileIntervalOverride = &testInterval
+	srv := NewServer(st, testutil.NewFakeTmuxCommandRunner(exec.NewRealRunner(), fakeTmux), fs.NewRealFS(), configDir)
 
 	// Fixed clock for predictable timestamps
 	fixedTime := time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC)
-	srv.Clock = func() time.Time { return fixedTime }
+	srv.clock = func() time.Time { return fixedTime }
 
 	return srv, st
 }
 
 // startTestServer starts the daemon server and returns a cleanup function.
-// The server is given enough time to start and run the recovery scan,
-// but not enough for the first reconcile tick (which happens at 200ms interval).
-func startTestServer(t *testing.T, srv *daemon.Server) func() {
+// The server is given enough time to start and run the recovery scan. Reconcile
+// ticks are driven by this test helper so production timing stays fixed.
+func startTestServer(t *testing.T, srv *Server) func() {
 	t.Helper()
 
 	// Create a listener
@@ -68,10 +59,28 @@ func startTestServer(t *testing.T, srv *daemon.Server) func() {
 	}()
 
 	// Wait for server startup and recovery scan to complete,
-	// but not long enough for the first reconcile tick (200ms interval).
+	// but not long enough for the first test-driven reconcile tick.
 	time.Sleep(30 * time.Millisecond)
 
+	reconcileStop := make(chan struct{})
+	reconcileDone := make(chan struct{})
+	go func() {
+		defer close(reconcileDone)
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-reconcileStop:
+				return
+			case <-ticker.C:
+				srv.reconcileHeadedInvocations()
+			}
+		}
+	}()
+
 	return func() {
+		close(reconcileStop)
+		<-reconcileDone
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(ctx)
@@ -583,9 +592,9 @@ func TestReconcile_HeadlessDeadPID(t *testing.T) {
 	fakeTmux := testutil.NewFakeTmuxClient()
 	srv, st := setupReconcileTestEnv(t, fakeTmux)
 
-	// PIDChecker: alive during recovery scan (call 1), dead on reconcile ticks
+	// pidChecker: alive during recovery scan (call 1), dead on reconcile ticks
 	var pidCheckCount int64
-	srv.PIDChecker = func(pid int) bool {
+	srv.pidChecker = func(pid int) bool {
 		c := atomic.AddInt64(&pidCheckCount, 1)
 		return c <= 1 // alive on first check (recovery), dead after
 	}
@@ -637,8 +646,8 @@ func TestReconcile_HeadlessAlivePID(t *testing.T) {
 	fakeTmux := testutil.NewFakeTmuxClient()
 	srv, st := setupReconcileTestEnv(t, fakeTmux)
 
-	// Override PIDChecker to report all PIDs as alive
-	srv.PIDChecker = func(pid int) bool { return true }
+	// Override pidChecker to report all PIDs as alive
+	srv.pidChecker = func(pid int) bool { return true }
 
 	repoID := "test-repo-hl-alive"
 	invocationID := "20260205120006-aliv"
@@ -1002,8 +1011,8 @@ func TestReconcile_MultipleInvocationsSameRepo(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Override PIDChecker: inv4's PID (55555) is alive
-	srv.PIDChecker = func(pid int) bool { return pid == inv4PID }
+	// Override pidChecker: inv4's PID (55555) is alive
+	srv.pidChecker = func(pid int) bool { return pid == inv4PID }
 
 	// Start server
 	cleanup := startTestServer(t, srv)
@@ -1030,38 +1039,26 @@ func TestReconcile_MultipleInvocationsSameRepo(t *testing.T) {
 	assert.Equal(t, store.InvocationStatusRunning, meta4.Status, "inv-4 headless with alive PID should still be running")
 }
 
-func TestReconcile_EmptyTmuxSessionFallback(t *testing.T) {
+func TestReconcile_MissingPersistedTmuxSessionFailsRunningInvocation(t *testing.T) {
 	t.Parallel()
-	// Test: Empty TmuxSession field falls back to tmux.SessionName(invocationID)
 	fakeTmux := testutil.NewFakeTmuxClient()
 	srv, st := setupReconcileTestEnv(t, fakeTmux)
 
-	repoID := "test-repo-fallback"
-	invocationID := "20260205120040-fall"
+	repoID := "test-repo-missing-tmux"
+	invocationID := "20260205120040-miss"
 
-	// Setup: Create running headed invocation with TmuxSession = "" (empty)
 	ensureRepoDir(t, st, repoID)
-	createTestHeadedInvocationMeta(t, st, repoID, invocationID, store.InvocationStatusRunning, "") // empty TmuxSession
+	createTestHeadedInvocationMeta(t, st, repoID, invocationID, store.InvocationStatusRunning, "")
 
-	// Add session under the fallback name
-	fallbackName := tmux.SessionName(invocationID)
-	fakeTmux.Sessions[fallbackName] = testutil.FakeTmuxSession{Name: fallbackName}
+	derivedName := tmux.SessionName(invocationID)
+	fakeTmux.Sessions[derivedName] = testutil.FakeTmuxSession{Name: derivedName}
 
-	// Start server
 	cleanup := startTestServer(t, srv)
 	defer cleanup()
 
-	// Verify still running (fallback name correctly used to find session)
-	waitForStableStatus(t, st, repoID, invocationID, store.InvocationStatusRunning, 500*time.Millisecond)
-
-	// Remove the fallback-named session
-	fakeTmux.Mu.Lock()
-	delete(fakeTmux.Sessions, fallbackName)
-	fakeTmux.Mu.Unlock()
-
-	// Should transition to finished
-	meta := waitForStatus(t, st, repoID, invocationID, store.InvocationStatusFinished)
-	assert.Equal(t, "exited", meta.ExitReason)
+	meta := waitForStatus(t, st, repoID, invocationID, store.InvocationStatusFailed)
+	assert.Equal(t, store.ExitReasonStartFailed, meta.ExitReason)
+	assert.Equal(t, "tmux_session_missing", meta.FailureReason)
 	assert.Equal(t, "2026-02-05T12:00:00Z", meta.FinishedAt)
 	assert.Empty(t, meta.LifecycleOwner)
 }

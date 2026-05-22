@@ -14,22 +14,16 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/fs"
 )
 
-func TestTaskPaths(t *testing.T) {
-	st := NewStore(fs.NewRealFS(), "/tmp/agency-data", time.Now)
-	assert.Equal(t, filepath.Join("/tmp/agency-data", "repos", "repo-1", "tasks"), st.TasksDir("repo-1"))
-	assert.Equal(t, filepath.Join("/tmp/agency-data", "repos", "repo-1", "tasks", "task-1", "meta.json"), st.TaskMetaPath("repo-1", "task-1"))
-	assert.Equal(t, filepath.Join("/tmp/agency-data", "repos", "repo-1", "tasks", "task-1", "events.jsonl"), st.TaskEventsPath("repo-1", "task-1"))
-}
-
 func TestTaskMetaReadWriteAndPermissions(t *testing.T) {
 	dataDir := t.TempDir()
+	fixedNow := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
 	st := NewStore(fs.NewRealFS(), dataDir, func() time.Time {
-		return time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+		return fixedNow
 	})
 	_, err := st.EnsureTaskDir("repo-1", "task-1")
 	require.NoError(t, err)
 
-	now := st.Now().UTC().Format(time.RFC3339)
+	now := fixedNow.UTC().Format(time.RFC3339)
 	meta := &TaskMeta{
 		SchemaVersion:      SchemaVersion,
 		TaskID:             "task-1",
@@ -49,10 +43,10 @@ func TestTaskMetaReadWriteAndPermissions(t *testing.T) {
 	}
 	require.NoError(t, st.WriteTaskMeta("repo-1", "task-1", meta))
 
-	info, err := os.Stat(st.TaskDir("repo-1", "task-1"))
+	info, err := os.Stat(st.taskDir("repo-1", "task-1"))
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
-	info, err = os.Stat(st.TaskMetaPath("repo-1", "task-1"))
+	info, err = os.Stat(st.taskMetaPath("repo-1", "task-1"))
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 
@@ -85,11 +79,73 @@ func TestReadTaskMetaRejectsPathMismatch(t *testing.T) {
 	}
 	data, err := json.MarshalIndent(meta, "", "  ")
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(st.TaskMetaPath("repo-1", "task-1"), data, 0o600))
+	require.NoError(t, os.WriteFile(st.taskMetaPath("repo-1", "task-1"), data, 0o600))
 
 	_, err = st.ReadTaskMeta("repo-1", "task-1")
 	require.Error(t, err)
 	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+}
+
+func TestReadTaskMeta_MissingSchemaVersionReturnsStoreCorrupt(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "absent",
+			body: `{
+				"task_id":"task-1",
+				"name":"feature",
+				"state":"starting",
+				"repo_id":"repo-1",
+				"repo_root":"/repo",
+				"base_branch":"main",
+				"checkout_root":"/checkouts/repo-1",
+				"execution_profile":"work",
+				"mode":"headless",
+				"runner":"claude-code",
+				"created_at":"2026-01-01T00:00:00Z",
+				"updated_at":"2026-01-01T00:00:00Z"
+			}`,
+		},
+		{
+			name: "empty",
+			body: `{
+				"schema_version":"",
+				"task_id":"task-1",
+				"name":"feature",
+				"state":"starting",
+				"repo_id":"repo-1",
+				"repo_root":"/repo",
+				"base_branch":"main",
+				"checkout_root":"/checkouts/repo-1",
+				"execution_profile":"work",
+				"mode":"headless",
+				"runner":"claude-code",
+				"created_at":"2026-01-01T00:00:00Z",
+				"updated_at":"2026-01-01T00:00:00Z"
+			}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dataDir := t.TempDir()
+			st := NewStore(fs.NewRealFS(), dataDir, time.Now)
+			_, err := st.EnsureTaskDir("repo-1", "task-1")
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(st.taskMetaPath("repo-1", "task-1"), []byte(tt.body), 0o600))
+
+			_, err = st.ReadTaskMeta("repo-1", "task-1")
+			require.Error(t, err)
+			assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
+			assert.Contains(t, err.Error(), "missing schema_version")
+		})
+	}
 }
 
 func TestReadAndScanTaskMetaRejectUnknownFields(t *testing.T) {
@@ -97,7 +153,7 @@ func TestReadAndScanTaskMetaRejectUnknownFields(t *testing.T) {
 	st := NewStore(fs.NewRealFS(), dataDir, time.Now)
 	_, err := st.EnsureTaskDir("repo-1", "task-1")
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(st.TaskMetaPath("repo-1", "task-1"), []byte(`{
+	require.NoError(t, os.WriteFile(st.taskMetaPath("repo-1", "task-1"), []byte(`{
 		"schema_version":"2.0",
 		"task_id":"task-1",
 		"name":"feature",
@@ -118,7 +174,7 @@ func TestReadAndScanTaskMetaRejectUnknownFields(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, errors.EStoreCorrupt, errors.GetCode(err))
 
-	records, err := ScanTasksForRepo(dataDir, "repo-1")
+	records, err := st.ScanTasksForRepo("repo-1")
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 	assert.True(t, records[0].Broken)
@@ -155,11 +211,11 @@ func TestScanTasksForRepoSortsNewestFirstAndMarksBroken(t *testing.T) {
 		}
 		require.NoError(t, st.WriteTaskMeta("repo-1", entry.id, meta))
 	}
-	brokenDir := filepath.Join(st.TasksDir("repo-1"), "broken")
+	brokenDir := filepath.Join(st.tasksDir("repo-1"), "broken")
 	require.NoError(t, os.MkdirAll(brokenDir, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(brokenDir, "meta.json"), []byte("{"), 0o600))
 
-	records, err := ScanTasksForRepo(dataDir, "repo-1")
+	records, err := st.ScanTasksForRepo("repo-1")
 	require.NoError(t, err)
 	require.Len(t, records, 3)
 	assert.Equal(t, "task-new", records[0].TaskID)
@@ -176,6 +232,12 @@ func TestScanTasksForRepoRejectsStrictMetaViolations(t *testing.T) {
 		id     string
 		mutate func(*TaskMeta)
 	}{
+		{
+			id: "missing-schema-version",
+			mutate: func(meta *TaskMeta) {
+				meta.SchemaVersion = ""
+			},
+		},
 		{
 			id: "unsupported-schema-version",
 			mutate: func(meta *TaskMeta) {
@@ -285,10 +347,10 @@ func TestScanTasksForRepoRejectsStrictMetaViolations(t *testing.T) {
 		tc.mutate(meta)
 		data, err := json.MarshalIndent(meta, "", "  ")
 		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(st.TaskMetaPath("repo-1", tc.id), data, 0o600))
+		require.NoError(t, os.WriteFile(st.taskMetaPath("repo-1", tc.id), data, 0o600))
 	}
 
-	records, err := ScanTasksForRepo(dataDir, "repo-1")
+	records, err := st.ScanTasksForRepo("repo-1")
 	require.NoError(t, err)
 	require.Len(t, records, len(cases))
 

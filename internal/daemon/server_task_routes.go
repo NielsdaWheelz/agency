@@ -8,7 +8,7 @@ import (
 
 func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 	if routePathEquals(r.URL.Path, "/tasks") {
-		if !s.requireMethod(w, r, http.MethodGet) {
+		if !s.requireAPIResponseMethod(w, r, http.MethodGet) {
 			return
 		}
 		s.handleListTasks(w, r)
@@ -17,7 +17,7 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 
 	remaining, ok := trimRoutePrefix(r.URL.Path, "/tasks/")
 	if !ok {
-		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "not found", "")
+		s.writeError(w, http.StatusNotFound, string(errors.ENotFound), "not found", "")
 		return
 	}
 	if remaining == "start" {
@@ -36,7 +36,7 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 
 	switch routeFirstAction(action) {
 	case "":
-		if !s.requireMethod(w, r, http.MethodGet) {
+		if !s.requireAPIResponseMethod(w, r, http.MethodGet) {
 			return
 		}
 		s.handleGetTask(w, r, taskRef)
@@ -51,6 +51,6 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 		}
 		s.handleTaskRetry(w, r, taskRef)
 	default:
-		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown action: "+action, "supported actions: archive, retry")
+		s.writeError(w, http.StatusNotFound, string(errors.ENotFound), "unknown action: "+action, "supported actions: archive, retry")
 	}
 }

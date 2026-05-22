@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/NielsdaWheelz/agency/internal/commands"
+	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 )
 
@@ -60,110 +61,38 @@ Target action flags:
   land uses --apply and --require-base.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			switch {
-			case len(args) == 0:
+			if len(args) == 0 {
 				_ = cmd.Help()
-				return errors.New(errors.EUsage, "specify 'start', 'ls', or an invocation ref")
-			default:
-				invocationRef := args[0]
-				switch {
-				case len(args) == 1:
-					if err := validateAgentTargetFlags(cmd, "<invocation-ref>", "json"); err != nil {
-						return err
-					}
-					return runAgentShow(cmd, invocationRef, repoRef, jsonOut)
-				case len(args) == 2:
-					switch args[1] {
-					case "check":
-						if err := validateAgentTargetFlags(cmd, "check"); err != nil {
-							return err
-						}
-						return runAgentCheck(cmd, invocationRef, repoRef)
-					case "diff":
-						if err := validateAgentTargetFlags(cmd, "diff", "json", "turn", "turn-range"); err != nil {
-							return err
-						}
-						return runAgentDiff(cmd, invocationRef, repoRef, jsonOut, turnID, turnRange)
-					case "history":
-						if err := validateAgentTargetFlags(cmd, "history", "json", "last", "limit", "cursor"); err != nil {
-							return err
-						}
-						return runAgentHistory(cmd, invocationRef, repoRef, jsonOut, last, limit, cursor)
-					case "open":
-						if err := validateAgentTargetFlags(cmd, "open"); err != nil {
-							return err
-						}
-						return runAgentOpen(cmd, invocationRef, repoRef)
-					case "path":
-						if err := validateAgentTargetFlags(cmd, "path"); err != nil {
-							return err
-						}
-						return runAgentPath(cmd, invocationRef, repoRef)
-					case "shell":
-						if err := validateAgentTargetFlags(cmd, "shell"); err != nil {
-							return err
-						}
-						return runAgentShell(cmd, invocationRef, repoRef)
-					case "attach":
-						if err := validateAgentTargetFlags(cmd, "attach"); err != nil {
-							return err
-						}
-						return runAgentAttach(cmd, invocationRef, repoRef)
-					case "clients":
-						if err := validateAgentTargetFlags(cmd, "clients"); err != nil {
-							return err
-						}
-						return runAgentClients(cmd, invocationRef, repoRef)
-					case "stop":
-						if err := validateAgentTargetFlags(cmd, "stop", "json"); err != nil {
-							return err
-						}
-						return runAgentStop(cmd, invocationRef, repoRef, jsonOut)
-					case "kill":
-						if err := validateAgentTargetFlags(cmd, "kill", "json"); err != nil {
-							return err
-						}
-						return runAgentKill(cmd, invocationRef, repoRef, jsonOut)
-					case "land":
-						if err := validateAgentTargetFlags(cmd, "land", "json", "apply", "require-base"); err != nil {
-							return err
-						}
-						return runAgentLand(cmd, invocationRef, repoRef, apply, requireBase, jsonOut)
-					case "discard":
-						if err := validateAgentTargetFlags(cmd, "discard", "json"); err != nil {
-							return err
-						}
-						return runAgentDiscard(cmd, invocationRef, repoRef, jsonOut)
-					case "followup":
-						if err := validateAgentTargetFlags(cmd, "followup", "json", "prompt", "prompt-file"); err != nil {
-							return err
-						}
-						return runAgentFollowup(cmd, invocationRef, repoRef, prompt, promptFile, jsonOut)
-					case "recreate":
-						if err := validateAgentTargetFlags(cmd, "recreate", "json", "detached"); err != nil {
-							return err
-						}
-						return runAgentRecreate(cmd, invocationRef, repoRef, detached, jsonOut)
-					case "restore":
-						if err := validateAgentTargetFlags(cmd, "restore", "json", "checkpoint", "turn"); err != nil {
-							return err
-						}
-						return runAgentRestore(cmd, invocationRef, repoRef, checkpointID, turnID, jsonOut)
-					default:
-						return errors.New(errors.EUsage, "unknown command \""+args[1]+"\" for \"agency agent\"")
-					}
-				case len(args) == 3 && args[1] == "history":
-					if args[2] != "logs" {
-						return errors.New(errors.EUsage, "unknown command \""+args[2]+"\" for \"agency agent "+invocationRef+" history\"")
-					}
-					if err := validateAgentTargetFlags(cmd, "history logs", "kind", "follow", "offset"); err != nil {
-						return err
-					}
-					return runAgentHistoryLogs(cmd, invocationRef, repoRef, kind, follow, offset)
-				default:
-					return errors.New(errors.EUsage, "unknown command \""+args[1]+"\" for \"agency agent\"")
-				}
 			}
+
+			if err := validateAgentTargetFlags(cmd, args); err != nil {
+				return err
+			}
+
+			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
+			if err != nil {
+				return err
+			}
+
+			return commands.AgentTarget(ctx, cr, fsys, cwd, commands.AgentTargetOpts{
+				Args:         args,
+				RepoRef:      repoRef,
+				JSON:         jsonOut,
+				Prompt:       prompt,
+				PromptFile:   promptFile,
+				Detached:     detached,
+				TurnID:       turnID,
+				TurnRange:    turnRange,
+				Last:         last,
+				Limit:        limit,
+				Cursor:       cursor,
+				Kind:         kind,
+				Follow:       follow,
+				Offset:       offset,
+				CheckpointID: checkpointID,
+				Apply:        apply,
+				RequireBase:  requireBase,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
@@ -187,7 +116,7 @@ Target action flags:
 	cmd.Flags().BoolVar(&last, "last", false, "Show only the last timeline entry")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum entries to show")
 	cmd.Flags().StringVar(&cursor, "cursor", "", "Cursor for pagination")
-	cmd.Flags().StringVar(&kind, "kind", "", "Log kind (raw, stderr, stream, hooks, terminal)")
+	cmd.Flags().StringVar(&kind, "kind", "", "Log kind ("+strings.Join(daemon.InvocationLogKinds(), ", ")+")")
 	cmd.Flags().BoolVar(&follow, "follow", false, "Follow log output")
 	cmd.Flags().Int64Var(&offset, "offset", 0, "Starting byte offset")
 	cmd.Flags().IntVar(&checkpointID, "checkpoint", 0, "Checkpoint ID to restore")
@@ -222,23 +151,16 @@ Target action flags:
 		case 0:
 			return completeInvocationRefsForState(cmd, toComplete, "all")
 		case 1:
-			values := []string{"check", "diff", "history", "open", "path", "shell", "attach", "clients", "stop", "kill", "land", "discard", "followup", "recreate", "restore"}
-			candidates := make([]string, 0, len(values))
-			for _, value := range values {
-				if toComplete != "" && !strings.HasPrefix(value, toComplete) {
-					continue
-				}
-				candidates = append(candidates, value)
+			return completeStaticValues(agentTargetActionCompletions(), toComplete), cobra.ShellCompDirectiveNoFileComp
+		case 2:
+			if args[1] != commands.AgentTargetActionHistory {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+			candidates := completeStaticValues(agentTargetHistoryActionCompletions(), toComplete)
+			if len(candidates) == 0 {
+				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
 			return candidates, cobra.ShellCompDirectiveNoFileComp
-		case 2:
-			if args[1] != "history" {
-				return nil, cobra.ShellCompDirectiveNoFileComp
-			}
-			if toComplete != "" && !strings.HasPrefix("logs", toComplete) {
-				return nil, cobra.ShellCompDirectiveNoFileComp
-			}
-			return []string{"logs"}, cobra.ShellCompDirectiveNoFileComp
 		default:
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
@@ -247,15 +169,36 @@ Target action flags:
 	return cmd
 }
 
-func validateAgentTargetFlags(cmd *cobra.Command, action string, allowed ...string) error {
-	allowedFlags := make(map[string]bool, len(allowed))
-	for _, flag := range allowed {
-		allowedFlags[flag] = true
+func agentTargetActionCompletions() []string {
+	return []string{
+		commands.AgentTargetActionCheck,
+		commands.AgentTargetActionDiff,
+		commands.AgentTargetActionHistory,
+		commands.AgentTargetActionOpen,
+		commands.AgentTargetActionPath,
+		commands.AgentTargetActionShell,
+		commands.AgentTargetActionAttach,
+		commands.AgentTargetActionClients,
+		commands.AgentTargetActionStop,
+		commands.AgentTargetActionKill,
+		commands.AgentTargetActionLand,
+		commands.AgentTargetActionDiscard,
+		commands.AgentTargetActionFollowup,
+		commands.AgentTargetActionRecreate,
+		commands.AgentTargetActionRestore,
 	}
-	for _, flag := range []string{"json", "detached", "prompt", "prompt-file", "turn", "turn-range", "last", "limit", "cursor", "kind", "follow", "offset", "checkpoint", "apply", "require-base"} {
-		if cmd.Flags().Changed(flag) && !allowedFlags[flag] {
-			return errors.New(errors.EUsage, "--"+flag+" is not valid for agency agent "+action)
-		}
+}
+
+func agentTargetHistoryActionCompletions() []string {
+	return []string{
+		commands.AgentTargetHistoryActionLogs,
+	}
+}
+
+func validateAgentTargetFlags(cmd *cobra.Command, args []string) error {
+	targetFlags := []string{"json", "detached", "prompt", "prompt-file", "turn", "turn-range", "last", "limit", "cursor", "kind", "follow", "offset", "checkpoint", "apply", "require-base"}
+	if policy, ok := commands.AgentTargetFlagPolicy(args); ok {
+		return validateChangedTargetFlags(cmd, "agent", policy.Action, targetFlags, policy.AllowedFlags...)
 	}
 	return nil
 }
@@ -389,233 +332,4 @@ func newAgentLSCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "Write JSON instead of human output")
 
 	return cmd
-}
-
-func runAgentShow(cmd *cobra.Command, invocationRef string, repoRef string, jsonOut bool) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-
-	return commands.AgentShow(ctx, cr, fsys, cwd, commands.AgentShowOpts{
-		InvocationRef: invocationRef,
-		RepoRef:       repoRef,
-		JSON:          jsonOut,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func runAgentCheck(cmd *cobra.Command, invocationRef string, repoRef string) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-
-	return commands.AgentCheck(ctx, cr, fsys, cwd, commands.AgentCheckOpts{
-		InvocationRef: invocationRef,
-		RepoRef:       repoRef,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func runAgentDiff(cmd *cobra.Command, invocationRef string, repoRef string, jsonOut bool, turnID string, turnRange string) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-
-	return commands.AgentDiff(ctx, cr, fsys, cwd, commands.AgentDiffOpts{
-		InvocationRef: invocationRef,
-		RepoRef:       repoRef,
-		JSON:          jsonOut,
-		TurnID:        turnID,
-		TurnRange:     turnRange,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func runAgentHistory(cmd *cobra.Command, invocationRef string, repoRef string, jsonOut bool, last bool, limit int, cursor string) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-
-	return commands.AgentHistory(ctx, cr, fsys, cwd, commands.AgentHistoryOpts{
-		InvocationRef: invocationRef,
-		RepoRef:       repoRef,
-		JSON:          jsonOut,
-		Last:          last,
-		Limit:         limit,
-		Cursor:        cursor,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func runAgentHistoryLogs(cmd *cobra.Command, invocationRef string, repoRef string, kind string, follow bool, offset int64) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-
-	return commands.AgentHistoryLogs(ctx, cr, fsys, cwd, commands.AgentHistoryLogsOpts{
-		InvocationRef: invocationRef,
-		RepoRef:       repoRef,
-		Kind:          kind,
-		Follow:        follow,
-		Offset:        offset,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func runAgentOpen(cmd *cobra.Command, invocationRef string, repoRef string) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-
-	return commands.AgentOpen(ctx, cr, fsys, cwd, commands.AgentOpenOpts{
-		InvocationRef: invocationRef,
-		RepoRef:       repoRef,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func runAgentPath(cmd *cobra.Command, invocationRef string, repoRef string) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-
-	return commands.AgentPath(ctx, cr, fsys, cwd, commands.AgentPathOpts{
-		InvocationRef: invocationRef,
-		RepoRef:       repoRef,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func runAgentShell(cmd *cobra.Command, invocationRef string, repoRef string) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-
-	return commands.AgentShell(ctx, cr, fsys, cwd, commands.AgentShellOpts{
-		InvocationRef: invocationRef,
-		RepoRef:       repoRef,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func runAgentAttach(cmd *cobra.Command, invocationRef string, repoRef string) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-
-	return commands.AgentAttach(ctx, cr, fsys, cwd, commands.AgentAttachOpts{
-		InvocationRef: invocationRef,
-		RepoRef:       repoRef,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func runAgentClients(cmd *cobra.Command, invocationRef string, repoRef string) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-
-	return commands.AgentClients(ctx, cr, fsys, cwd, commands.AgentClientsOpts{
-		InvocationRef: invocationRef,
-		RepoRef:       repoRef,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func runAgentStop(cmd *cobra.Command, invocationRef string, repoRef string, jsonOut bool) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-
-	return commands.AgentStop(ctx, cr, fsys, cwd, commands.AgentStopOpts{
-		InvocationRef: invocationRef,
-		RepoRef:       repoRef,
-		JSON:          jsonOut,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func runAgentKill(cmd *cobra.Command, invocationRef string, repoRef string, jsonOut bool) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-
-	return commands.AgentKill(ctx, cr, fsys, cwd, commands.AgentKillOpts{
-		InvocationRef: invocationRef,
-		RepoRef:       repoRef,
-		JSON:          jsonOut,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func runAgentLand(cmd *cobra.Command, invocationRef string, repoRef string, apply bool, requireBase bool, jsonOut bool) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-
-	return commands.AgentLand(ctx, cr, fsys, cwd, commands.AgentLandOpts{
-		InvocationRef: invocationRef,
-		RepoRef:       repoRef,
-		Apply:         apply,
-		RequireBase:   requireBase,
-		JSON:          jsonOut,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func runAgentDiscard(cmd *cobra.Command, invocationRef string, repoRef string, jsonOut bool) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-
-	return commands.AgentDiscard(ctx, cr, fsys, cwd, commands.AgentDiscardOpts{
-		InvocationRef: invocationRef,
-		RepoRef:       repoRef,
-		JSON:          jsonOut,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func runAgentFollowup(cmd *cobra.Command, invocationRef string, repoRef string, prompt string, promptFile string, jsonOut bool) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-
-	return commands.AgentFollowup(ctx, cr, fsys, cwd, commands.AgentFollowupOpts{
-		InvocationRef: invocationRef,
-		RepoRef:       repoRef,
-		Prompt:        prompt,
-		PromptFile:    promptFile,
-		JSON:          jsonOut,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func runAgentRecreate(cmd *cobra.Command, invocationRef string, repoRef string, detached bool, jsonOut bool) error {
-	ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-
-	return commands.AgentRecreate(ctx, cr, fsys, cwd, commands.AgentRecreateOpts{
-		InvocationRef: invocationRef,
-		RepoRef:       repoRef,
-		Detached:      detached,
-		JSON:          jsonOut,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func runAgentRestore(cmd *cobra.Command, invocationRef string, repoRef string, checkpointID int, turnID string, jsonOut bool) error {
-	ctx, cr, fsys, cwd, err := realCommandDeps(cmd.Context())
-	if err != nil {
-		return err
-	}
-
-	return commands.AgentRestore(ctx, cr, fsys, cwd, commands.AgentRestoreOpts{
-		InvocationRef: invocationRef,
-		RepoRef:       repoRef,
-		CheckpointID:  checkpointID,
-		TurnID:        turnID,
-		JSON:          jsonOut,
-	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }

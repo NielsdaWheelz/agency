@@ -65,7 +65,7 @@ func TestHandleWorktreeMerge_RequiresConfirmation(t *testing.T) {
 
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 
 	_, _, _ = setupWorktreeMergeReadyState(t, env, "")
 	setWorktreeMergeHappyRunnerResponses(fakeRunner, "agency/alpha", "", "")
@@ -90,7 +90,7 @@ func TestHandleWorktreeMerge_SuccessWritesWorktreeScopedLogs(t *testing.T) {
 
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 
 	workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, "")
 	canonicalRepoRoot := canonicalTestPath(t, repoRoot)
@@ -126,6 +126,24 @@ func TestHandleWorktreeMerge_SuccessWritesWorktreeScopedLogs(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o600), mergeInfo.Mode().Perm())
 	assert.Equal(t, os.FileMode(0o600), verifyInfo.Mode().Perm())
 	assert.Equal(t, os.FileMode(0o600), archiveInfo.Mode().Perm())
+
+	verifyRecordPath := filepath.Join(env.Store.IntegrationWorktreeDir(env.RepoID, worktreeID), "verify_record.json")
+	verifyRecordInfo, err := os.Stat(verifyRecordPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), verifyRecordInfo.Mode().Perm())
+
+	var verifyRecord store.VerifyRecord
+	verifyRecordData, err := os.ReadFile(verifyRecordPath)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(verifyRecordData, &verifyRecord))
+	assert.Equal(t, store.VerifyRecordSchemaVersion, verifyRecord.SchemaVersion)
+	assert.Equal(t, env.RepoID, verifyRecord.RepoID)
+	assert.Equal(t, worktreeID, verifyRecord.RunID)
+	assert.True(t, verifyRecord.OK)
+	require.NotNil(t, verifyRecord.ExitCode)
+	assert.Equal(t, 0, *verifyRecord.ExitCode)
+	assert.Equal(t, resp.Merge.VerifyLogPath, verifyRecord.LogPath)
+
 	assert.NotEmpty(t, workspaceRoot)
 	meta, err := env.Store.ReadIntegrationWorktreeMeta(env.RepoID, worktreeID)
 	require.NoError(t, err)
@@ -144,16 +162,61 @@ func TestHandleWorktreeMerge_SuccessWritesWorktreeScopedLogs(t *testing.T) {
 	assert.True(t, sawArchive, "expected archive script to run")
 }
 
+func TestHandleWorktreeMerge_VerifyFailureWritesVerifyRecord(t *testing.T) {
+	t.Parallel()
+
+	env := setupReadTestEnv(t)
+	fakeRunner := testutil.NewFakeCommandRunner()
+	env.Server.runner = fakeRunner
+
+	verifyScript := "#!/usr/bin/env bash\nset -euo pipefail\necho verify failed >&2\nexit 17\n"
+	workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, verifyScript)
+	canonicalRepoRoot := canonicalTestPath(t, repoRoot)
+	setWorktreeMergeHappyRunnerResponses(fakeRunner, "agency/alpha", canonicalRepoRoot, workspaceRoot)
+
+	w := doWorktreeRequestWithBody(
+		t,
+		env,
+		http.MethodPost,
+		"/worktrees/"+worktreeID+"/pr/merge?repo_id="+env.RepoID,
+		[]byte(`{"strategy":"squash","confirmation_mode":"yes","confirmed":true}`),
+	)
+	requireStartedWorktreeMergeResponse(t, w, env.RepoID, worktreeID)
+
+	mergeMeta := requireEventuallyWorktreeMergeMeta(t, env, worktreeID, func(meta *store.IntegrationWorktreeMergeMeta) bool {
+		return meta != nil && meta.Status == store.WorktreeMergeStatusFailed
+	})
+	assert.Equal(t, store.WorktreeMergeStageVerify, mergeMeta.Stage)
+	assert.Equal(t, string(errors.EScriptFailed), mergeMeta.ErrorCode)
+
+	verifyRecordPath := filepath.Join(env.Store.IntegrationWorktreeDir(env.RepoID, worktreeID), "verify_record.json")
+	verifyRecordInfo, err := os.Stat(verifyRecordPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), verifyRecordInfo.Mode().Perm())
+
+	var verifyRecord store.VerifyRecord
+	verifyRecordData, err := os.ReadFile(verifyRecordPath)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(verifyRecordData, &verifyRecord))
+	assert.Equal(t, store.VerifyRecordSchemaVersion, verifyRecord.SchemaVersion)
+	assert.Equal(t, env.RepoID, verifyRecord.RepoID)
+	assert.Equal(t, worktreeID, verifyRecord.RunID)
+	assert.False(t, verifyRecord.OK)
+	require.NotNil(t, verifyRecord.ExitCode)
+	assert.Equal(t, 17, *verifyRecord.ExitCode)
+	assert.Contains(t, verifyRecord.Summary, "failed")
+}
+
 func TestHandleWorktreeMerge_UsesLocalAgencyConfigWhenCanonicalRepoHasNone(t *testing.T) {
 	t.Parallel()
 
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 
 	workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, "")
 	require.NoError(t, os.Remove(filepath.Join(repoRoot, "agency.json")))
-	localConfigRoot := filepath.Dir(config.LocalAgencyConfigPath(env.Server.ConfigDir, env.RepoID))
+	localConfigRoot := filepath.Dir(config.LocalAgencyConfigPath(env.Server.configDir, env.RepoID))
 	writeWorktreeMergeScriptsAndConfig(t, localConfigRoot, "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
 	writeWorktreeMergeScriptsAndConfig(t, workspaceRoot, "#!/usr/bin/env bash\nset -euo pipefail\necho worktree verify should not run >&2\nexit 17\n")
 
@@ -183,7 +246,7 @@ func TestHandleWorktreeMerge_UsesCanonicalRepoConfigInsteadOfWorktreeConfig(t *t
 
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 
 	workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, "")
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "scripts", "verify.sh"), []byte("#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p \"$AGENCY_OUTPUT_DIR\"\nprintf 'canonical\\n' > \"$AGENCY_OUTPUT_DIR/verify-source.txt\"\nexit 0\n"), 0o755))
@@ -217,7 +280,7 @@ func TestHandleWorktreeMerge_UsesRepoRootLastSeenWhenPreferredRootEmpty(t *testi
 
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 
 	workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, "")
 	writeWorktreeMergeRepoRecord(t, env, "", repoRoot)
@@ -247,12 +310,12 @@ func TestHandleWorktreeMerge_UsesRepoRootLastSeenWhenPreferredRootEmpty(t *testi
 	assert.NotContains(t, fakeRunner.Calls, filepath.Join(workspaceRoot, "scripts", "archive.sh"))
 }
 
-func TestHandleWorktreeMerge_InvalidExplicitAgencyConfigFailsWithoutFallback(t *testing.T) {
+func TestHandleWorktreeMerge_InvalidExplicitAgencyConfigFailsClosed(t *testing.T) {
 	t.Parallel()
 
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 
 	workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, "")
 	canonicalRepoRoot := canonicalTestPath(t, repoRoot)
@@ -295,7 +358,7 @@ func TestHandleWorktreeMerge_BlocksOnUnresolvedInvocations(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env := setupReadTestEnv(t)
 			fakeRunner := testutil.NewFakeCommandRunner()
-			env.Server.Runner = fakeRunner
+			env.Server.runner = fakeRunner
 
 			workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, "")
 			canonicalRepoRoot := canonicalTestPath(t, repoRoot)
@@ -334,7 +397,7 @@ func TestHandleWorktreeMerge_AllowsLandedOrDiscardedInvocations(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env := setupReadTestEnv(t)
 			fakeRunner := testutil.NewFakeCommandRunner()
-			env.Server.Runner = fakeRunner
+			env.Server.runner = fakeRunner
 
 			workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, "")
 			canonicalRepoRoot := canonicalTestPath(t, repoRoot)
@@ -363,7 +426,7 @@ func TestHandleWorktreeMerge_AttachesToActiveMergeWithSameOptions(t *testing.T) 
 
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 
 	workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, "")
 	canonicalRepoRoot := canonicalTestPath(t, repoRoot)
@@ -372,7 +435,7 @@ func TestHandleWorktreeMerge_AttachesToActiveMergeWithSameOptions(t *testing.T) 
 	removeCmd := "git -C " + canonicalRepoRoot + " worktree remove --force " + workspaceRoot
 	runner := newBlockingFakeRunner(removeCmd)
 	runner.Responses = fakeRunner.Responses
-	env.Server.Runner = runner
+	env.Server.runner = runner
 	t.Cleanup(runner.Release)
 
 	started := doWorktreeRequestWithBody(
@@ -413,7 +476,7 @@ func TestHandleWorktreeMerge_AttachesToActiveMergeWithSameOptions(t *testing.T) 
 func TestHandleWorktreeMerge_BlocksOnBrokenInvocationRecord(t *testing.T) {
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 
 	workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, "")
 	canonicalRepoRoot := canonicalTestPath(t, repoRoot)
@@ -445,7 +508,7 @@ func TestHandleWorktreeMerge_ResumesArchiveWhenPRAlreadyMerged(t *testing.T) {
 
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 
 	workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, "")
 	canonicalRepoRoot := canonicalTestPath(t, repoRoot)
@@ -475,7 +538,7 @@ func TestHandleWorktreeMerge_ResumesArchiveWhenPRAlreadyMerged(t *testing.T) {
 	assert.Equal(t, store.WorktreeStateArchived, meta.State)
 	require.Contains(t, fakeRunner.Calls, filepath.Join(canonicalRepoRoot, "scripts", "archive.sh"))
 	require.Contains(t, fakeRunner.Calls, "git -C "+canonicalRepoRoot+" worktree remove --force "+workspaceRoot)
-	assert.False(t, strings.Contains(strings.Join(fakeRunner.Calls, "\n"), "gh pr merge 77 -R test/agent-repo --squash --delete-branch"))
+	assert.NotContains(t, strings.Join(fakeRunner.Calls, "\n"), "gh pr merge 77 -R test/agent-repo --squash --delete-branch")
 }
 
 func TestHandleWorktreeMerge_AllowsExactArchivedIDCleanupRetry(t *testing.T) {
@@ -483,7 +546,7 @@ func TestHandleWorktreeMerge_AllowsExactArchivedIDCleanupRetry(t *testing.T) {
 
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 
 	workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, "")
 	canonicalRepoRoot := canonicalTestPath(t, repoRoot)
@@ -531,7 +594,7 @@ func TestHandleWorktreeMerge_RejectsArchivedRetryBeforeArchiveStage(t *testing.T
 
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 
 	workspaceRoot, _, worktreeID := setupWorktreeMergeReadyState(t, env, "")
 	require.NoError(t, os.RemoveAll(workspaceRoot))
@@ -565,7 +628,7 @@ func TestHandleWorktreeMerge_FailsWhenArchiveCleanupRemoveFails(t *testing.T) {
 
 	env := setupReadTestEnv(t)
 	fakeRunner := testutil.NewFakeCommandRunner()
-	env.Server.Runner = fakeRunner
+	env.Server.runner = fakeRunner
 
 	workspaceRoot, repoRoot, worktreeID := setupWorktreeMergeReadyState(t, env, "")
 	canonicalRepoRoot := canonicalTestPath(t, repoRoot)
@@ -801,16 +864,7 @@ func setWorktreeMergeHappyRunnerResponses(fakeRunner *testutil.FakeCommandRunner
 		ExitCode: 0,
 	}
 	if repoRoot != "" && treePath != "" {
-		repoRoot = canonicalTestPathForHelper(repoRoot)
 		fakeRunner.Responses[filepath.Join(repoRoot, "scripts", "archive.sh")] = testutil.FakeResponse{Stdout: "archived\n", ExitCode: 0}
 		fakeRunner.Responses["git -C "+repoRoot+" worktree remove --force "+treePath] = testutil.FakeResponse{ExitCode: 0}
 	}
-}
-
-func canonicalTestPathForHelper(path string) string {
-	canonical := path
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		canonical = resolved
-	}
-	return canonical
 }

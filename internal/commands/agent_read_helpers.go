@@ -1,22 +1,13 @@
 package commands
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
-	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/render"
 )
-
-// writeAgentLSJSONFromDTO outputs invocation list as JSON from daemon DTOs.
-func writeAgentLSJSONFromDTO(w io.Writer, invocations []daemon.InvocationDTO) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(invocations)
-}
 
 // writeAgentLSHumanFromDTO outputs invocation list in human-readable format from daemon DTOs.
 func writeAgentLSHumanFromDTO(w io.Writer, invocations []daemon.InvocationDTO) error {
@@ -86,13 +77,6 @@ func writeAgentLSHumanFromDTO(w io.Writer, invocations []daemon.InvocationDTO) e
 	return nil
 }
 
-// writeAgentShowJSONFromDTO outputs invocation details as JSON from daemon DTO.
-func writeAgentShowJSONFromDTO(w io.Writer, inv *daemon.InvocationDTO) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(inv)
-}
-
 // writeAgentShowHumanFromDTO outputs invocation details in human-readable format from daemon DTO.
 func writeAgentShowHumanFromDTO(w io.Writer, inv *daemon.InvocationDTO) error {
 	_, _ = fmt.Fprintf(w, "invocation_id:          %s\n", inv.InvocationID)
@@ -147,7 +131,13 @@ func writeAgentShowHumanFromDTO(w io.Writer, inv *daemon.InvocationDTO) error {
 		if latestLabel := formatLatestActivityLabel(inv.LatestActivity); latestLabel != "" {
 			_, _ = fmt.Fprintf(w, "latest_activity:        %s\n", latestLabel)
 		}
-		for _, toolLine := range latestActivityToolSummaries(inv.LatestActivity) {
+		for _, tool := range inv.LatestActivity.ToolCalls {
+			toolLine := render.FormatToolCallSummary(
+				tool.Name,
+				tool.Command,
+				tool.HasExit,
+				tool.ExitCode,
+			)
 			_, _ = fmt.Fprintf(w, "latest_activity_tool:   %s\n", toolLine)
 		}
 		if inv.LatestActivity.CheckpointID > 0 {
@@ -159,7 +149,12 @@ func writeAgentShowHumanFromDTO(w io.Writer, inv *daemon.InvocationDTO) error {
 		if diffstat := strings.TrimSpace(inv.LatestActivity.CheckpointDiffstat); diffstat != "" {
 			_, _ = fmt.Fprintf(w, "latest_activity_checkpoint_diffstat: %s\n", diffstat)
 		}
-		if pathsSummary := latestActivityCheckpointPathSummary(inv.LatestActivity); pathsSummary != "" {
+		pathsSummary := render.FormatChangedPathSummary(
+			inv.LatestActivity.CheckpointChangedPaths,
+			inv.LatestActivity.CheckpointChangedCount,
+			inv.LatestActivity.CheckpointPathsTrimmed,
+		)
+		if pathsSummary != "" {
 			_, _ = fmt.Fprintf(w, "latest_activity_checkpoint_paths: %s\n", pathsSummary)
 		}
 	}
@@ -187,9 +182,6 @@ func writeAgentShowHumanFromDTO(w io.Writer, inv *daemon.InvocationDTO) error {
 			_, _ = fmt.Fprintf(w, "latest_turn_id:         %s\n", inv.Navigation.LatestTurnID)
 		}
 	}
-	if attachCommand == "" && strings.TrimSpace(inv.Mode) == "headed" && strings.TrimSpace(inv.InvocationID) != "" && strings.TrimSpace(inv.RepoID) != "" {
-		attachCommand = fmt.Sprintf("agency agent %s attach --repo %s", inv.InvocationID, inv.RepoID)
-	}
 	if attachCommand != "" {
 		_, _ = fmt.Fprintf(w, "attach_command:         %s\n", attachCommand)
 	}
@@ -197,10 +189,6 @@ func writeAgentShowHumanFromDTO(w io.Writer, inv *daemon.InvocationDTO) error {
 }
 
 func writeAgentCheckHumanFromDTO(w io.Writer, check *daemon.InvocationCheckData) error {
-	if check == nil {
-		return errors.New(errors.EInternal, "check payload is missing")
-	}
-
 	prSyncEligible := "no"
 	if check.PRSyncEligible {
 		prSyncEligible = "yes"
@@ -261,18 +249,6 @@ func writeAgentCheckHumanFromDTO(w io.Writer, check *daemon.InvocationCheckData)
 	return nil
 }
 
-func writeAgentHistoryJSONFromDTO(w io.Writer, entries []daemon.TimelineEntryDTO, nextCursor string) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(struct {
-		Entries    []daemon.TimelineEntryDTO `json:"entries"`
-		NextCursor string                    `json:"next_cursor,omitempty"`
-	}{
-		Entries:    entries,
-		NextCursor: nextCursor,
-	})
-}
-
 func writeAgentHistoryHumanFromTurns(w io.Writer, turns []daemon.Turn, nextCursor string) error {
 	if len(turns) == 0 {
 		_, _ = fmt.Fprintln(w, "No timeline entries found.")
@@ -300,9 +276,6 @@ func writeAgentHistoryHumanFromTurns(w io.Writer, turns []daemon.Turn, nextCurso
 }
 
 func formatLatestActivityLabel(activity *daemon.InvocationLatestActivity) string {
-	if activity == nil {
-		return ""
-	}
 	kind := strings.TrimSpace(activity.Kind)
 	summary := strings.TrimSpace(activity.Summary)
 	toolCount := activity.ToolCallCount
@@ -318,33 +291,6 @@ func formatLatestActivityLabel(activity *daemon.InvocationLatestActivity) string
 		toolCount,
 		activity.CheckpointID,
 		activity.Restorable,
-	)
-}
-
-func latestActivityToolSummaries(activity *daemon.InvocationLatestActivity) []string {
-	if activity == nil || len(activity.ToolCalls) == 0 {
-		return nil
-	}
-	summaries := make([]string, 0, len(activity.ToolCalls))
-	for _, tool := range activity.ToolCalls {
-		summaries = append(summaries, render.FormatToolCallSummary(
-			tool.Name,
-			tool.Command,
-			tool.HasExit,
-			tool.ExitCode,
-		))
-	}
-	return summaries
-}
-
-func latestActivityCheckpointPathSummary(activity *daemon.InvocationLatestActivity) string {
-	if activity == nil {
-		return ""
-	}
-	return render.FormatChangedPathSummary(
-		activity.CheckpointChangedPaths,
-		activity.CheckpointChangedCount,
-		activity.CheckpointPathsTrimmed,
 	)
 }
 

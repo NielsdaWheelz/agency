@@ -79,7 +79,7 @@ func TestHistoryPage_ViewContainsTurnDataAndHelp(t *testing.T) {
 
 	m := newModel(context.Background(), nil, RunOptions{InitialPage: InitialPageHistory, InvocationID: "inv-1", RepoID: "repo-1"})
 	m.page = pageHistory
-	m.snapshot = Snapshot{
+	m.snapshot = snapshot{
 		Repos: []daemon.RepoDTO{
 			{RepoID: "repo-1", RepoKey: "github.com/acme/one"},
 		},

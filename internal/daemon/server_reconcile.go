@@ -11,12 +11,7 @@ import (
 func (s *Server) runHeadedReconcileLoop() {
 	defer close(s.reconcileLoopDone)
 
-	interval := HeadedReconcileInterval
-	if s.HeadedReconcileIntervalOverride != nil {
-		interval = *s.HeadedReconcileIntervalOverride
-	}
-
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(headedReconcileInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -42,12 +37,12 @@ func (s *Server) reconcileHeadedInvocations() {
 }
 
 func (s *Server) reconcileHeadedInvocationsForRepo(ctx context.Context, repoID string) {
-	records, err := store.ScanInvocationsForRepo(s.Store.DataDir, repoID)
+	records, err := s.store.ScanInvocationsForRepo(repoID)
 	if err != nil {
 		return
 	}
 
-	now := s.Clock().UTC().Format(time.RFC3339)
+	now := s.clock().UTC().Format(time.RFC3339)
 	for _, r := range records {
 		if r.Broken || r.Meta == nil {
 			continue
@@ -68,12 +63,15 @@ func (s *Server) reconcileHeadedInvocationsForRepo(ctx context.Context, repoID s
 }
 
 func (s *Server) reconcileHeadedInvocation(ctx context.Context, repoID string, r store.InvocationRecord, now string) {
-	sessionName := r.Meta.TmuxSession
-	if sessionName == "" {
-		sessionName = tmux.SessionName(r.InvocationID)
+	sessionName, ok := headedInvocationSessionName(r.Meta)
+	if !ok {
+		s.failInvocationStart(repoID, r.InvocationID, "tmux_session_missing", false)
+		s.cleanupHeadedStartingTracking(r.InvocationID)
+		s.clearInvocationProcess(r.InvocationID)
+		return
 	}
 
-	exists, err := s.TmuxClient.HasSession(ctx, sessionName)
+	exists, err := s.tmuxClient.HasSession(ctx, sessionName)
 	if err != nil && !tmux.IsNoSessionErr(err) {
 		s.recordInvocationWarning(repoID, r.InvocationID, "reconcile_tmux_has_session_failed", err.Error(), map[string]any{
 			"session_name": sessionName,
@@ -87,7 +85,7 @@ func (s *Server) reconcileHeadedInvocation(ctx context.Context, repoID string, r
 		restoreSupervision := !supervised && (r.Meta.Status == store.InvocationStatusRunning || r.Meta.Status == store.InvocationStatusStopping)
 		if !restoreSupervision && !supervised && r.Meta.Status == store.InvocationStatusStarting {
 			startedAt, parseErr := time.Parse(time.RFC3339, r.Meta.StartedAt)
-			restoreSupervision = parseErr == nil && s.Clock().Sub(startedAt) > 30*time.Second
+			restoreSupervision = parseErr == nil && s.clock().Sub(startedAt) > 30*time.Second
 		}
 		if restoreSupervision {
 			if err := s.restoreExistingHeadedSupervision(ctx, repoID, r.InvocationID, r.Meta, sessionName, "agency.headed_supervision_reconciled"); err != nil {
@@ -97,8 +95,8 @@ func (s *Server) reconcileHeadedInvocation(ctx context.Context, repoID string, r
 			}
 		}
 		if r.Meta.Status == store.InvocationStatusStopping && !supervised {
-			if err := s.TmuxClient.SendKeys(ctx, sessionName, []tmux.Key{tmux.KeyCtrlC}); err != nil {
-				s.recordInvocationWarning(repoID, r.InvocationID, "reconcile_headed_stop_send_keys_failed", err.Error(), map[string]any{
+			if err := s.tmuxClient.InterruptSession(ctx, sessionName); err != nil {
+				s.recordInvocationWarning(repoID, r.InvocationID, "reconcile_headed_stop_interrupt_failed", err.Error(), map[string]any{
 					"session_name": sessionName,
 				})
 			}
@@ -137,7 +135,7 @@ func (s *Server) reconcileHeadlessInvocation(repoID string, r store.InvocationRe
 	s.mu.RLock()
 	_, supervised := s.processes[r.InvocationID]
 	s.mu.RUnlock()
-	if supervised || s.PIDChecker(pid) {
+	if supervised || s.pidChecker(pid) {
 		return
 	}
 
@@ -155,7 +153,7 @@ func (s *Server) reconcileHeadedStarting(repoID, invocationID string, meta *stor
 
 	count := s.headedStartingTickCount[invocationID] + 1
 	s.headedStartingTickCount[invocationID] = count
-	if count < HeadedStartingGraceCount {
+	if count < headedStartingGraceCount {
 		return
 	}
 

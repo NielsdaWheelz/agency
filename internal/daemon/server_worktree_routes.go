@@ -9,7 +9,7 @@ import (
 
 func (s *Server) handleWorktrees(w http.ResponseWriter, r *http.Request) {
 	if routePathEquals(r.URL.Path, "/worktrees") {
-		if !s.requireMethod(w, r, http.MethodGet) {
+		if !s.requireAPIResponseMethod(w, r, http.MethodGet) {
 			return
 		}
 		s.handleListWorktrees(w, r)
@@ -18,7 +18,7 @@ func (s *Server) handleWorktrees(w http.ResponseWriter, r *http.Request) {
 
 	remaining, ok := trimRoutePrefix(r.URL.Path, "/worktrees/")
 	if !ok {
-		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "not found", "")
+		s.writeError(w, http.StatusNotFound, string(errors.ENotFound), "not found", "")
 		return
 	}
 	if remaining == "create" {
@@ -37,7 +37,7 @@ func (s *Server) handleWorktrees(w http.ResponseWriter, r *http.Request) {
 
 	switch routeFirstAction(action) {
 	case "":
-		if !s.requireMethod(w, r, http.MethodGet) {
+		if !s.requireAPIResponseMethod(w, r, http.MethodGet) {
 			return
 		}
 		s.handleGetWorktree(w, r, worktreeRef)
@@ -54,7 +54,7 @@ func (s *Server) handleWorktrees(w http.ResponseWriter, r *http.Request) {
 		}
 		s.handleWorktreeRebase(w, r, worktreeRef)
 	default:
-		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown action: "+action, "supported actions: rm, pr, rebase")
+		s.writeError(w, http.StatusNotFound, string(errors.ENotFound), "unknown action: "+action, "supported actions: rm, pr, rebase")
 	}
 }
 
@@ -74,9 +74,9 @@ func (s *Server) handleWorktreePRRoute(w http.ResponseWriter, r *http.Request, w
 		case http.MethodPost:
 			s.handleWorktreePRMerge(w, r, worktreeRef)
 		default:
-			s.writeError(w, http.StatusMethodNotAllowed, "E_METHOD_NOT_ALLOWED", "method not allowed", "")
+			s.writeAPIError(w, http.StatusMethodNotAllowed, getOrCreateRequestID(r), string(errors.EMethodNotAllowed), "method not allowed", "", nil)
 		}
 	default:
-		s.writeError(w, http.StatusNotFound, "E_NOT_FOUND", "unknown pr action: "+subAction, "")
+		s.writeError(w, http.StatusNotFound, string(errors.ENotFound), "unknown pr action: "+subAction, "")
 	}
 }

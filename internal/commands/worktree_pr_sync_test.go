@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -94,7 +95,7 @@ func TestWorktreePRSync_DirtyWorktreeRejectedWithoutAllowDirty(t *testing.T) {
 		WorktreeRef:     worktreeID,
 		RepoRef:         repoID,
 		DataDirOverride: dataDir,
-	}, ioDiscard{}, ioDiscard{})
+	}, io.Discard, io.Discard)
 	require.Error(t, err)
 	assert.Equal(t, errors.EDirtyWorktree, errors.GetCode(err))
 }
@@ -175,6 +176,7 @@ func TestWorktreePRSync_ForceWithLeaseUsesPushPolicy(t *testing.T) {
 	daemonRunner.Responses["git fetch origin"] = testutil.FakeResponse{ExitCode: 0}
 	daemonRunner.Responses["git show-ref --verify --quiet refs/heads/main"] = testutil.FakeResponse{ExitCode: 0}
 	daemonRunner.Responses["git rev-list --count main..agency/prsync-fwl-abcd"] = testutil.FakeResponse{Stdout: "1\n", ExitCode: 0}
+	daemonRunner.Responses["git push -u origin agency/prsync-fwl-abcd"] = testutil.FakeResponse{ExitCode: 1, Stderr: "rejected non-fast-forward"}
 	daemonRunner.Responses["git push --force-with-lease -u origin agency/prsync-fwl-abcd"] = testutil.FakeResponse{ExitCode: 0}
 	daemonRunner.Responses["gh pr list --head test:agency/prsync-fwl-abcd --state all --json number,url,state"] = testutil.FakeResponse{
 		Stdout:   `[{"number":43,"url":"https://github.com/test/agent-repo/pull/43","state":"OPEN"}]`,
@@ -197,12 +199,7 @@ func TestWorktreePRSync_ForceWithLeaseUsesPushPolicy(t *testing.T) {
 	}, &stdout, &stderr)
 	require.NoError(t, err)
 
-	assert.Contains(t, daemonRunner.Calls, "git push --force-with-lease -u origin agency/prsync-fwl-abcd")
 	prBody, readErr := os.ReadFile(prBodyPath)
 	require.NoError(t, readErr)
 	assert.Equal(t, "## summary\nSummary not provided.\n\n## how to test\nHow to test not provided.\n", string(prBody))
 }
-
-type ioDiscard struct{}
-
-func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }

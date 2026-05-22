@@ -1,8 +1,6 @@
 // Package daemon implements the agency daemon supervisor.
 package daemon
 
-import "encoding/json"
-
 // ----- Response Envelope -----
 
 // Result is the canonical decoded daemon response surface used by callers once
@@ -12,9 +10,9 @@ type Result[T any] struct {
 	RequestID string
 }
 
-// APIResponse is the standard response envelope for all read endpoints.
+// apiResponse is the standard response envelope for all read endpoints.
 // All responses include the envelope fields; data is type-specific.
-type APIResponse struct {
+type apiResponse struct {
 	OK           bool        `json:"ok"`
 	APIVersion   int         `json:"api_version"`
 	BuildVersion string      `json:"build_version"`
@@ -29,30 +27,14 @@ type APIResponse struct {
 	Details   interface{} `json:"details,omitempty"`
 }
 
-// RawAPIResponse is the canonical transport envelope for read-client decoding.
-// Clients should decode this envelope once, then unmarshal Data into the
-// daemon DTO for the requested capability instead of redefining the envelope.
-type RawAPIResponse struct {
-	OK           bool            `json:"ok"`
-	APIVersion   int             `json:"api_version"`
-	BuildVersion string          `json:"build_version,omitempty"`
-	GitSHA       string          `json:"git_sha,omitempty"`
-	RequestID    string          `json:"request_id,omitempty"`
-	Data         json.RawMessage `json:"data,omitempty"`
-	ErrorCode    string          `json:"error_code,omitempty"`
-	Message      string          `json:"message,omitempty"`
-	Hint         string          `json:"hint,omitempty"`
-	Details      json.RawMessage `json:"details,omitempty"`
-}
-
 // AmbiguousDetails is the details shape for E_AMBIGUOUS errors.
 type AmbiguousDetails struct {
 	Candidates []string `json:"candidates"`
 }
 
-// InvalidQueryArgumentDetails is the structured error details for invalid
-// list-filter enum inputs (L2 InvalidQueryArgumentDetails).
-type InvalidQueryArgumentDetails struct {
+// invalidQueryArgumentDetails is the structured error details for invalid
+// list-filter enum inputs.
+type invalidQueryArgumentDetails struct {
 	Param         string   `json:"param"`
 	Value         string   `json:"value"`
 	AllowedValues []string `json:"allowed_values"`
@@ -108,16 +90,16 @@ type WorktreeMergeDTO struct {
 
 // ----- InvocationDTO -----
 
-// InvocationState is the canonical invocation state exposed by daemon reads.
-type InvocationState string
+// invocationState is the canonical invocation state exposed by daemon reads.
+type invocationState string
 
 const (
-	InvocationStateStarting  InvocationState = "starting"
-	InvocationStateRunning   InvocationState = "running"
-	InvocationStateWaiting   InvocationState = "waiting"
-	InvocationStateStopping  InvocationState = "stopping"
-	InvocationStateSucceeded InvocationState = "succeeded"
-	InvocationStateFailed    InvocationState = "failed"
+	invocationStateStarting  invocationState = "starting"
+	invocationStateRunning   invocationState = "running"
+	invocationStateWaiting   invocationState = "waiting"
+	invocationStateStopping  invocationState = "stopping"
+	invocationStateSucceeded invocationState = "succeeded"
+	invocationStateFailed    invocationState = "failed"
 )
 
 // InvocationDTO is the canonical DTO for invocation responses.
@@ -359,42 +341,42 @@ type InvocationLogsOffsetData struct {
 
 // ----- Pagination Cursor Types -----
 
-// InvocationCursor is the internal cursor structure for invocation pagination.
-type InvocationCursor struct {
+// invocationCursor is the internal cursor structure for invocation pagination.
+type invocationCursor struct {
 	StartedAt    string `json:"started_at"`
 	InvocationID string `json:"invocation_id"`
 }
 
-// WorktreeCursor is the internal cursor structure for worktree pagination.
-type WorktreeCursor struct {
+// worktreeCursor is the internal cursor structure for worktree pagination.
+type worktreeCursor struct {
 	LastUsedAt string `json:"last_used_at"`
 	WorktreeID string `json:"worktree_id"`
 }
 
-// CheckpointCursor is the internal cursor structure for checkpoint pagination.
-type CheckpointCursor struct {
+// checkpointCursor is the internal cursor structure for checkpoint pagination.
+type checkpointCursor struct {
 	ID int `json:"id"`
 }
 
 // Attention flag values.
 const (
-	AttentionFlagNeedsAttention = "needs_attention"
-	AttentionFlagStalled        = "stalled"
-	AttentionFlagOrphaned       = "orphaned"
-	AttentionFlagLandable       = "landable"
+	attentionFlagNeedsAttention = "needs_attention"
+	attentionFlagStalled        = "stalled"
+	attentionFlagOrphaned       = "orphaned"
+	attentionFlagLandable       = "landable"
 )
 
 // Sort key constants (lower = higher priority).
 const (
-	SortKeyFailed         = 10
-	SortKeyStopping       = 20
-	SortKeyNeedsAttention = 30
-	SortKeyWaiting        = 40
-	SortKeyRunning        = 50
-	SortKeyStarting       = 60
-	SortKeySucceeded      = 70
-	SortKeyLanded         = 100
-	SortKeyDiscarded      = 110
+	sortKeyFailed         = 10
+	sortKeyStopping       = 20
+	sortKeyNeedsAttention = 30
+	sortKeyWaiting        = 40
+	sortKeyRunning        = 50
+	sortKeyStarting       = 60
+	sortKeySucceeded      = 70
+	sortKeyLanded         = 100
+	sortKeyDiscarded      = 110
 )
 
 // ----- Query Parameters -----
@@ -445,8 +427,8 @@ type InvocationTimelineData struct {
 	NextCursor string             `json:"next_cursor,omitempty"`
 }
 
-// TimelineCursor is the internal cursor structure for timeline keyset pagination.
-type TimelineCursor struct {
+// timelineCursor is the internal cursor structure for timeline keyset pagination.
+type timelineCursor struct {
 	Timestamp  string `json:"timestamp"`
 	SourceRank int    `json:"source_rank"`
 	Seq        uint64 `json:"seq"`
@@ -460,12 +442,38 @@ type GetTimelineParams struct {
 	Order  string // "asc" (default) or "desc"
 }
 
+// ListCheckpointsParams holds query parameters for GET /invocations/{id}/checkpoints.
+type ListCheckpointsParams struct {
+	Limit  int    // default 100, max 500
+	Cursor string // opaque pagination cursor
+}
+
 // GetDiffParams holds query parameters for GET /invocations/{id}/diff.
 type GetDiffParams struct {
-	IncludePatch       bool   // default true
+	ExcludePatch       bool   // false includes patches
 	MaxPatchBytes      int    // default 2097152 (2MB), max 5242880 (5MB)
-	IncludeUncommitted bool   // default true
+	ExcludeUncommitted bool   // false includes uncommitted changes
 	TurnID             string // optional timeline entry id (turn selector)
 	TurnStartID        string // optional inclusive range start timeline entry id
 	TurnEndID          string // optional inclusive range end timeline entry id
+}
+
+const (
+	defaultDiffMaxPatchBytes = 2097152
+	maxDiffPatchBytes        = 5242880
+)
+
+func (p GetDiffParams) includePatch() bool {
+	return !p.ExcludePatch
+}
+
+func (p GetDiffParams) includeUncommitted() bool {
+	return !p.ExcludeUncommitted
+}
+
+func (p GetDiffParams) maxPatchBytes() int {
+	if p.MaxPatchBytes > 0 {
+		return p.MaxPatchBytes
+	}
+	return defaultDiffMaxPatchBytes
 }

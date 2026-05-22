@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
@@ -11,8 +12,8 @@ import (
 )
 
 func (s *Server) collectCanonicalTurnsBestEffort(record *resolvedInvocation, entries []timelineSortableEntry) []Turn {
-	checkpointsDir := s.Store.InvocationDir(record.RepoID, record.InvocationID)
-	cpFile, err := checkpoint.LoadCheckpointsFile(s.FS, checkpointsDir)
+	checkpointsPath := s.store.InvocationCheckpointsPath(record.RepoID, record.InvocationID)
+	cpFile, err := checkpoint.LoadCheckpointsFile(s.fsys, checkpointsPath)
 	if err != nil && !os.IsNotExist(err) {
 		// Best-effort only: check/read surfaces should still work when
 		// checkpoint metadata is unavailable or malformed.
@@ -56,7 +57,7 @@ func checkpointToDTO(cp checkpoint.Checkpoint) CheckpointDTO {
 		ToolName:             cp.ToolName,
 		StreamSeq:            cp.StreamSeq,
 		Description:          cp.Description,
-		ChangedPaths:         append([]string(nil), cp.ChangedPaths...),
+		ChangedPaths:         slices.Clone(cp.ChangedPaths),
 		ChangedPathCount:     cp.ChangedPathCount,
 		ChangedPathTruncated: cp.ChangedPathTruncated,
 	}
@@ -74,14 +75,14 @@ func checkpointDTOsFromCheckpoints(checkpoints []checkpoint.Checkpoint) []Checkp
 	return dtos
 }
 
-func turnCheckpointRefsFromDTOs(checkpoints []CheckpointDTO) []TurnCheckpointRef {
+func turnCheckpointRefsFromDTOs(checkpoints []CheckpointDTO) []turnCheckpointRef {
 	if len(checkpoints) == 0 {
 		return nil
 	}
 
-	refs := make([]TurnCheckpointRef, len(checkpoints))
+	refs := make([]turnCheckpointRef, len(checkpoints))
 	for i, cp := range checkpoints {
-		refs[i] = TurnCheckpointRef{
+		refs[i] = turnCheckpointRef{
 			ID:                   cp.ID,
 			Description:          cp.Description,
 			Diffstat:             cp.Diffstat,
@@ -100,9 +101,9 @@ func ProjectTimelineTurns(entries []TimelineEntryDTO, checkpoints []CheckpointDT
 		return nil
 	}
 
-	pickerEntries := make([]TimelineTurnEntry, len(entries))
+	pickerEntries := make([]timelineTurnEntry, len(entries))
 	for i, entry := range entries {
-		pickerEntries[i] = TimelineTurnEntry{
+		pickerEntries[i] = timelineTurnEntry{
 			EntryID:   entry.EntryID,
 			Kind:      entry.Kind,
 			Timestamp: entry.Timestamp,
@@ -110,7 +111,7 @@ func ProjectTimelineTurns(entries []TimelineEntryDTO, checkpoints []CheckpointDT
 		}
 	}
 
-	return GroupTimelineIntoTurns(pickerEntries, turnCheckpointRefsFromDTOs(checkpoints))
+	return groupTimelineIntoTurns(pickerEntries, turnCheckpointRefsFromDTOs(checkpoints))
 }
 
 // PaginateHistoryTurns returns a stable cursor page over projected turns.
@@ -189,8 +190,7 @@ func TimelineEntriesForTurn(entries []TimelineEntryDTO, turns []Turn, turnEntryI
 		return nil
 	}
 
-	segment := make([]TimelineEntryDTO, endIdx-startIdx)
-	copy(segment, entries[startIdx:endIdx])
+	segment := slices.Clone(entries[startIdx:endIdx])
 	filtered := make([]TimelineEntryDTO, 0, len(segment))
 	for _, entry := range segment {
 		if includeInLastTurnJSON(entry.Kind) {
@@ -209,28 +209,22 @@ func includeInLastTurnJSON(kind string) bool {
 	}
 }
 
-// HistoryTurnExists reports whether a projected turn ID is present.
-func HistoryTurnExists(turns []Turn, entryID string) bool {
-	for _, turn := range turns {
-		if turn.EntryID == entryID {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *Server) buildInvocationActivityProjection(
 	record *resolvedInvocation,
 	state string,
 	runnerSummary string,
 	entries []timelineSortableEntry,
-) invocationActivityProjection {
+) (invocationActivityProjection, error) {
 	if record == nil || record.Meta == nil {
-		return invocationActivityProjection{}
+		return invocationActivityProjection{}, nil
 	}
 
 	if entries == nil {
-		entries = s.collectTimelineEntries(record)
+		var err error
+		entries, err = s.collectTimelineEntries(record)
+		if err != nil {
+			return invocationActivityProjection{}, err
+		}
 	}
 	turns := s.collectCanonicalTurnsBestEffort(record, entries)
 
@@ -265,7 +259,7 @@ func (s *Server) buildInvocationActivityProjection(
 			Restorable:             latest.Restorable,
 			CheckpointDescription:  latest.CheckpointDescription,
 			CheckpointDiffstat:     latest.CheckpointDiffstat,
-			CheckpointChangedPaths: append([]string(nil), latest.CheckpointChangedPaths...),
+			CheckpointChangedPaths: slices.Clone(latest.CheckpointChangedPaths),
 			CheckpointChangedCount: latest.CheckpointChangedCount,
 			CheckpointPathsTrimmed: latest.CheckpointPathsTrimmed,
 		}
@@ -299,7 +293,7 @@ func (s *Server) buildInvocationActivityProjection(
 		statusSummary = strings.TrimSpace(state)
 	}
 	projection.StatusSummary = truncateActivitySummary(statusSummary)
-	return projection
+	return projection, nil
 }
 
 func latestRestorableTurnID(turns []Turn) string {
@@ -347,15 +341,6 @@ func isMeaningfulTimelineKind(kind string) bool {
 
 func summarizeTimelineEntryDTO(entry TimelineEntryDTO) string {
 	return truncateActivitySummary(render.TimelineEntrySummary(entry.Kind, render.DecodeTimelinePayload(entry.Data)))
-}
-
-func applyInvocationActivityProjection(dto *InvocationDTO, projection invocationActivityProjection) {
-	if dto == nil {
-		return
-	}
-	dto.StatusSummary = projection.StatusSummary
-	dto.LatestActivity = projection.LatestActivity
-	dto.Navigation = projection.Navigation
 }
 
 func truncateActivitySummary(summary string) string {

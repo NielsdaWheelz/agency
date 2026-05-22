@@ -73,7 +73,7 @@ func setupTurnDiffFixture(t *testing.T) turnDiffFixture {
 	st := store.NewStore(fs.NewRealFS(), dataDir, time.Now)
 	srv := NewServer(st, cr, fs.NewRealFS(), configDir)
 	now := time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC)
-	srv.Clock = func() time.Time { return now }
+	srv.clock = func() time.Time { return now }
 
 	require.NoError(t, st.SaveRepoIndex(store.RepoIndex{
 		SchemaVersion: store.SchemaVersion,
@@ -362,6 +362,36 @@ func TestHandleGetInvocationDiff_TurnSelectorUnknownTurnReturnsInvalidArgument(t
 	assert.Equal(t, string(errors.EInvalidArgument), resp.ErrorCode)
 }
 
+func TestHandleGetInvocationDiff_TurnSelectorCorruptCheckpointsReturnsStoreCorrupt(t *testing.T) {
+	fixture := setupTurnDiffFixture(t)
+	require.NoError(t, os.WriteFile(fixture.env.Store.InvocationCheckpointsPath(fixture.repoID, fixture.invocationID), []byte("{malformed"), 0o644))
+
+	path := "/invocations/" + fixture.invocationID + "/diff?repo_id=" + fixture.repoID + "&turn=" + url.QueryEscape(fixture.selectedTurnID)
+	w := fixture.env.doInvocationRequest(t, http.MethodGet, path)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	resp := decodeAPIResponse(t, w)
+	require.False(t, resp.OK)
+	assert.Equal(t, string(errors.EStoreCorrupt), resp.ErrorCode)
+	assert.Contains(t, resp.Message, "checkpoints.json")
+}
+
+func TestHandleGetInvocationDiff_TurnSelectorEmptyCheckpointsReturnsCheckpointNotFound(t *testing.T) {
+	fixture := setupTurnDiffFixture(t)
+	cpFile := checkpoint.NewCheckpointsFile()
+	cpBytes, err := json.Marshal(cpFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(fixture.env.Store.InvocationCheckpointsPath(fixture.repoID, fixture.invocationID), cpBytes, 0o644))
+
+	path := "/invocations/" + fixture.invocationID + "/diff?repo_id=" + fixture.repoID + "&turn=" + url.QueryEscape(fixture.selectedTurnID)
+	w := fixture.env.doInvocationRequest(t, http.MethodGet, path)
+
+	require.Equal(t, http.StatusNotFound, w.Code)
+	resp := decodeAPIResponse(t, w)
+	require.False(t, resp.OK)
+	assert.Equal(t, string(errors.ECheckpointNotFound), resp.ErrorCode)
+}
+
 func TestHandleGetInvocationCheck_BlockedIncludesReasonsAndNavigation(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
@@ -454,6 +484,37 @@ func TestHandleGetInvocationCheck_NavigationLatestTurnIDUsesCanonicalTurnProject
 
 	assert.Equal(t, "stream:1", nav["latest_turn_id"])
 	assert.Contains(t, nav["diff_command"], "--turn stream:1")
+}
+
+func TestHandleGetInvocationCheck_CorruptCheckpointsOmitsTurnScopedDiff(t *testing.T) {
+	t.Parallel()
+	env := setupReadTestEnv(t)
+
+	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
+	require.NoError(t, os.MkdirAll(logsDir, 0o700))
+	require.NoError(t, os.WriteFile(env.Store.InvocationStreamLogPath(env.RepoID, "inv-1"), []byte(
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:00Z","invocation_id":"inv-1","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"latest turn"}}`+"\n",
+	), 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationEventsPath(env.RepoID, "inv-1"), []byte(
+		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:01Z","invocation_id":"inv-1","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`+"\n",
+	), 0o644))
+	require.NoError(t, os.WriteFile(env.Store.InvocationCheckpointsPath(env.RepoID, "inv-1"), []byte("{malformed"), 0o644))
+
+	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID)
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeAPIResponse(t, w)
+	require.True(t, resp.OK)
+
+	var data map[string]any
+	decodeData(t, resp, &data)
+	nav, ok := data["navigation"].(map[string]any)
+	require.True(t, ok, "expected navigation context")
+
+	assert.Equal(t, "stream:1", nav["latest_turn_id"])
+	diffCommand, ok := nav["diff_command"].(string)
+	require.True(t, ok)
+	assert.Equal(t, "agency agent inv-1 diff --repo "+env.RepoID, diffCommand)
+	assert.NotContains(t, diffCommand, "--turn")
 }
 
 func TestHandleGetInvocationCheck_NavigationDiffCommandOmitsTurnWhenLatestTurnNotRestorable(t *testing.T) {
