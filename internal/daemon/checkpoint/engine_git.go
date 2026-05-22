@@ -11,17 +11,10 @@ import (
 )
 
 func (e *Engine) getGitDir(ctx context.Context) (string, error) {
-	result, err := e.runner.Run(ctx, "git", []string{
-		"-C", e.sandboxPath,
-		"rev-parse", "--git-dir",
-	}, exec.RunOpts{Env: e.config.Env})
+	result, err := e.runGit(ctx, e.sandboxPath, e.config.Env, "git rev-parse --git-dir", "rev-parse", "--git-dir")
 	if err != nil {
 		return "", err
 	}
-	if result.ExitCode != 0 {
-		return "", fmt.Errorf("git rev-parse --git-dir failed: %s", result.Stderr)
-	}
-
 	gitDir := strings.TrimSpace(result.Stdout)
 	if !filepath.IsAbs(gitDir) {
 		gitDir = filepath.Join(e.sandboxPath, gitDir)
@@ -46,17 +39,10 @@ func DiscoverGitIgnoredDirs(ctx context.Context, runner exec.CommandRunner, sand
 }
 
 func (e *Engine) checkDenylist(ctx context.Context) ([]string, error) {
-	result, err := e.runner.Run(ctx, "git", []string{
-		"-C", e.sandboxPath,
-		"ls-files", "-o", "--exclude-standard",
-	}, exec.RunOpts{Env: e.config.Env})
+	result, err := e.runGit(ctx, e.sandboxPath, e.config.Env, "git ls-files", "ls-files", "-o", "--exclude-standard")
 	if err != nil {
 		return nil, err
 	}
-	if result.ExitCode != 0 {
-		return nil, fmt.Errorf("git ls-files failed: %s", result.Stderr)
-	}
-
 	output := strings.TrimSpace(result.Stdout)
 	if output == "" {
 		return nil, nil

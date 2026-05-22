@@ -245,18 +245,25 @@ func (e *Engine) resolveCheckpointIncludeUntracked(ctx context.Context) (bool, e
 	return false, nil
 }
 
-func (e *Engine) getCurrentSandboxHead(ctx context.Context) (string, error) {
-	headResult, err := e.runner.Run(ctx, "git", []string{
-		"-C", e.sandboxPath,
-		"rev-parse", "HEAD",
-	}, exec.RunOpts{Env: e.config.Env})
+// runGit runs `git -C <dir> <args...>` and maps non-zero exit / process error to a single labelled failure.
+func (e *Engine) runGit(ctx context.Context, dir string, env map[string]string, label string, args ...string) (exec.CmdResult, error) {
+	fullArgs := append([]string{"-C", dir}, args...)
+	result, err := e.runner.Run(ctx, "git", fullArgs, exec.RunOpts{Env: env})
 	if err != nil {
-		return "", fmt.Errorf("failed to get HEAD: %w", err)
+		return result, err
 	}
-	if headResult.ExitCode != 0 {
-		return "", fmt.Errorf("git rev-parse HEAD failed: %s", headResult.Stderr)
+	if result.ExitCode != 0 {
+		return result, fmt.Errorf("%s failed: %s", label, result.Stderr)
 	}
-	return strings.TrimSpace(headResult.Stdout), nil
+	return result, nil
+}
+
+func (e *Engine) getCurrentSandboxHead(ctx context.Context) (string, error) {
+	result, err := e.runGit(ctx, e.sandboxPath, e.config.Env, "git rev-parse HEAD", "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(result.Stdout), nil
 }
 
 func (e *Engine) createTempCheckpointIndex() (string, func(), error) {
@@ -290,48 +297,29 @@ func (e *Engine) writeCheckpointTree(ctx context.Context, tempIndexPath string, 
 		return "", err
 	}
 
-	writeTreeResult, err := e.runner.Run(ctx, "git", []string{
-		"-C", e.sandboxPath,
-		"write-tree",
-	}, exec.RunOpts{Env: env})
+	result, err := e.runGit(ctx, e.sandboxPath, env, "git write-tree", "write-tree")
 	if err != nil {
-		return "", fmt.Errorf("failed to run git write-tree: %w", err)
+		return "", err
 	}
-	if writeTreeResult.ExitCode != 0 {
-		return "", fmt.Errorf("git write-tree failed: %s", writeTreeResult.Stderr)
-	}
-	return strings.TrimSpace(writeTreeResult.Stdout), nil
+	return strings.TrimSpace(result.Stdout), nil
 }
 
 func (e *Engine) stageCheckpointIndex(ctx context.Context, includeUntracked bool, env map[string]string) error {
-	var addArgs []string
+	addFlag := "-u"
 	if includeUntracked {
-		addArgs = []string{"-C", e.sandboxPath, "add", "-A"}
-	} else {
-		addArgs = []string{"-C", e.sandboxPath, "add", "-u"}
+		addFlag = "-A"
 	}
-
-	addResult, err := e.runner.Run(ctx, "git", addArgs, exec.RunOpts{Env: env})
+	addResult, err := e.runGit(ctx, e.sandboxPath, env, "git add", "add", addFlag)
 	if err != nil {
-		return fmt.Errorf("failed to run git add: %w", err)
-	}
-	if addResult.ExitCode != 0 {
 		if strings.Contains(addResult.Stderr, "index.lock") {
 			return fmt.Errorf("index lock detected: %s", addResult.Stderr)
 		}
-		return fmt.Errorf("git add failed: %s", addResult.Stderr)
+		return err
 	}
 
 	for _, exclude := range []string{".agency", ".git"} {
-		rmResult, rmErr := e.runner.Run(ctx, "git", []string{
-			"-C", e.sandboxPath,
-			"rm", "-r", "--cached", "--ignore-unmatch", exclude,
-		}, exec.RunOpts{Env: env})
-		if rmErr != nil {
-			return fmt.Errorf("failed to run git rm --cached %s: %w", exclude, rmErr)
-		}
-		if rmResult.ExitCode != 0 {
-			return fmt.Errorf("git rm --cached %s failed: %s", exclude, rmResult.Stderr)
+		if _, err := e.runGit(ctx, e.sandboxPath, env, "git rm --cached "+exclude, "rm", "-r", "--cached", "--ignore-unmatch", exclude); err != nil {
+			return err
 		}
 	}
 
@@ -340,31 +328,14 @@ func (e *Engine) stageCheckpointIndex(ctx context.Context, includeUntracked bool
 
 func (e *Engine) createCheckpointCommit(ctx context.Context, treeHash string, checkpointID int) (string, error) {
 	commitMessage := fmt.Sprintf("agency snapshot %s %d", e.invocationID, checkpointID)
-	commitTreeResult, err := e.runner.Run(ctx, "git", []string{
-		"-C", e.sandboxPath,
-		"commit-tree", treeHash,
-		"-p", "HEAD",
-		"-m", commitMessage,
-	}, exec.RunOpts{Env: e.config.Env})
+	result, err := e.runGit(ctx, e.sandboxPath, e.config.Env, "git commit-tree", "commit-tree", treeHash, "-p", "HEAD", "-m", commitMessage)
 	if err != nil {
-		return "", fmt.Errorf("failed to run git commit-tree: %w", err)
+		return "", err
 	}
-	if commitTreeResult.ExitCode != 0 {
-		return "", fmt.Errorf("git commit-tree failed: %s", commitTreeResult.Stderr)
-	}
-	return strings.TrimSpace(commitTreeResult.Stdout), nil
+	return strings.TrimSpace(result.Stdout), nil
 }
 
 func (e *Engine) createCheckpointRef(ctx context.Context, snapshotRef, snapshotCommit string) error {
-	updateRefResult, err := e.runner.Run(ctx, "git", []string{
-		"-C", e.repoRoot,
-		"update-ref", snapshotRef, snapshotCommit,
-	}, exec.RunOpts{Env: e.config.Env})
-	if err != nil {
-		return fmt.Errorf("failed to run git update-ref: %w", err)
-	}
-	if updateRefResult.ExitCode != 0 {
-		return fmt.Errorf("git update-ref failed: %s", updateRefResult.Stderr)
-	}
-	return nil
+	_, err := e.runGit(ctx, e.repoRoot, e.config.Env, "git update-ref", "update-ref", snapshotRef, snapshotCommit)
+	return err
 }
