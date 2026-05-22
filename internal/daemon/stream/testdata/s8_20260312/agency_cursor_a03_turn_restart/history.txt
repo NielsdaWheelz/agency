@@ -1,5 +1,0 @@
-16:11:11  prompt_seed  [prompt] Run the shell command sleep 20, then reply with done.
-16:11:15  inv_event:1:agency.followup_prompt  [follow-up] After that, append the line agency-followup: two to docs/notes.md and summarize.
-16:11:40  stream:5  [assistant] done. - After Bash (checkpoint=1)
-16:11:41  stream:8  [follow-up] After that, append the line agency-followup: two to docs/notes.md and summarize. (checkpoint=1)
-16:11:49  stream:13  [assistant] `docs/notes.md` had 3 lines (`fixture-notes`, `alpha`, `beta`). appended `agency-followup: two` as a 4th line. (checkpoint=2)

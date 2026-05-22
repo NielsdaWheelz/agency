@@ -49,7 +49,7 @@ func ConfigInit(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts Con
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
 
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+	dirs := paths.ResolveDirs(os.Getenv, homeDir)
 	if opts.ConfigDirOverride != "" {
 		dirs.ConfigDir = opts.ConfigDirOverride
 	}

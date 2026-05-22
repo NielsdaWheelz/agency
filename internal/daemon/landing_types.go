@@ -27,37 +27,19 @@ type LandRequest struct {
 
 // LandResponse is the response body for POST /invocations/{id}/land.
 type LandResponse struct {
-	OK           bool   `json:"ok"`
-	APIVersion   int    `json:"api_version"`
-	BuildVersion string `json:"build_version,omitempty"`
-	RequestID    string `json:"request_id,omitempty"`
-
-	// Success fields
+	responseEnvelope
 	InvocationID          string      `json:"invocation_id,omitempty"`
 	AppliedMode           LandingMode `json:"applied_mode,omitempty"`
 	IntegrationHeadBefore string      `json:"integration_head_before,omitempty"`
 	IntegrationHeadAfter  string      `json:"integration_head_after,omitempty"`
 	CommitsLanded         int         `json:"commits_landed,omitempty"`
 
-	// Error fields (only set when OK is false)
-	ErrorCode     string   `json:"error_code,omitempty"`
-	Message       string   `json:"message,omitempty"`
-	Hint          string   `json:"hint,omitempty"`
+	// ConflictFiles is the only error-side field outside the envelope (cherry-pick conflicts).
 	ConflictFiles []string `json:"conflict_files,omitempty"`
 }
 
 // DiscardResponse is the response body for POST /invocations/{id}/discard.
 type DiscardResponse struct {
-	OK           bool   `json:"ok"`
-	APIVersion   int    `json:"api_version"`
-	BuildVersion string `json:"build_version,omitempty"`
-	RequestID    string `json:"request_id,omitempty"`
-
-	// Success fields
+	responseEnvelope
 	InvocationID string `json:"invocation_id,omitempty"`
-
-	// Error fields (only set when OK is false)
-	ErrorCode string `json:"error_code,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Hint      string `json:"hint,omitempty"`
 }

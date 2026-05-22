@@ -17,20 +17,13 @@ type WorktreeCreateRequest struct {
 
 // WorktreeCreateResponse is the response body for POST /worktrees/create.
 type WorktreeCreateResponse struct {
-	OK               bool   `json:"ok"`
+	responseEnvelope
 	WorktreeID       string `json:"worktree_id,omitempty"`
 	TreePath         string `json:"tree_path,omitempty"`
 	Branch           string `json:"branch,omitempty"`
 	RepoID           string `json:"repo_id,omitempty"`
 	ExecutionProfile string `json:"execution_profile,omitempty"`
 	CheckoutRoot     string `json:"checkout_root,omitempty"`
-	APIVersion       int    `json:"api_version"`
-	BuildVersion     string `json:"build_version,omitempty"`
-
-	// Error fields (only set when OK is false)
-	ErrorCode string `json:"error_code,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Hint      string `json:"hint,omitempty"`
 }
 
 // WorktreeRmRequest is the request body for POST /worktrees/{id}/rm.
@@ -41,14 +34,7 @@ type WorktreeRmRequest struct {
 
 // WorktreeRmResponse is the response body for POST /worktrees/{id}/rm.
 type WorktreeRmResponse struct {
-	OK           bool   `json:"ok"`
-	APIVersion   int    `json:"api_version"`
-	BuildVersion string `json:"build_version,omitempty"`
-
-	// Error fields (only set when OK is false)
-	ErrorCode string `json:"error_code,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Hint      string `json:"hint,omitempty"`
+	responseEnvelope
 }
 
 // WorktreePRSyncRequest is the request body for POST /worktrees/{ref}/pr/sync.
@@ -62,23 +48,13 @@ type WorktreePRSyncRequest struct {
 
 // WorktreePRSyncResponse is the response body for POST /worktrees/{ref}/pr/sync.
 type WorktreePRSyncResponse struct {
-	OK           bool   `json:"ok"`
-	APIVersion   int    `json:"api_version"`
-	BuildVersion string `json:"build_version,omitempty"`
-	RequestID    string `json:"request_id,omitempty"`
-
-	// Success fields
+	responseEnvelope
 	RepoID                string `json:"repo_id,omitempty"`
 	IntegrationWorktreeID string `json:"integration_worktree_id,omitempty"`
 	Branch                string `json:"branch,omitempty"`
 	PRNumber              int    `json:"pr_number,omitempty"`
 	PRURL                 string `json:"pr_url,omitempty"`
 	PRAction              string `json:"pr_action,omitempty"` // created|updated
-
-	// Error fields (only set when OK is false)
-	ErrorCode string `json:"error_code,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Hint      string `json:"hint,omitempty"`
 }
 
 // WorktreePRMergeRequest is the request body for POST /worktrees/{ref}/pr/merge.
@@ -101,38 +77,18 @@ type WorktreePRMergeRequest struct {
 
 // WorktreePRMergeResponse is the response body for POST /worktrees/{ref}/pr/merge.
 type WorktreePRMergeResponse struct {
-	OK           bool   `json:"ok"`
-	APIVersion   int    `json:"api_version"`
-	BuildVersion string `json:"build_version,omitempty"`
-	RequestID    string `json:"request_id,omitempty"`
-
-	// Success fields
+	responseEnvelope
 	Action                string            `json:"action,omitempty"` // started|attached
 	RepoID                string            `json:"repo_id,omitempty"`
 	IntegrationWorktreeID string            `json:"integration_worktree_id,omitempty"`
 	Merge                 *WorktreeMergeDTO `json:"merge,omitempty"`
-
-	// Error fields (only set when OK is false)
-	ErrorCode string `json:"error_code,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Hint      string `json:"hint,omitempty"`
 }
 
 // WorktreeRebaseResponse is the response body for POST /worktrees/{ref}/rebase.
 type WorktreeRebaseResponse struct {
-	OK           bool   `json:"ok"`
-	APIVersion   int    `json:"api_version"`
-	BuildVersion string `json:"build_version,omitempty"`
-	RequestID    string `json:"request_id,omitempty"`
-
-	// Success fields
+	responseEnvelope
 	RepoID                string `json:"repo_id,omitempty"`
 	IntegrationWorktreeID string `json:"integration_worktree_id,omitempty"`
 	Branch                string `json:"branch,omitempty"`
 	BaseBranch            string `json:"base_branch,omitempty"`
-
-	// Error fields (only set when OK is false)
-	ErrorCode string `json:"error_code,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Hint      string `json:"hint,omitempty"`
 }

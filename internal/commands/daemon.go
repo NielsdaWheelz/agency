@@ -64,7 +64,7 @@ func resolveDaemonDirs(dataDirOverride string) (dataDir, configDir string, err e
 	if err != nil {
 		return "", "", errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+	dirs := paths.ResolveDirs(os.Getenv, homeDir)
 
 	dataDir = dirs.DataDir
 	if dataDirOverride != "" {
@@ -209,7 +209,7 @@ func DaemonStatus(ctx context.Context, fsys fs.FS, opts DaemonStatusOpts, stdout
 	if err != nil {
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+	dirs := paths.ResolveDirs(os.Getenv, homeDir)
 
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
 	socketPath := st.DaemonSocketPath()
@@ -250,7 +250,7 @@ func DaemonStop(ctx context.Context, fsys fs.FS, opts DaemonStopOpts, stdout, st
 	if err != nil {
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+	dirs := paths.ResolveDirs(os.Getenv, homeDir)
 
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
 	socketPath := st.DaemonSocketPath()
@@ -348,7 +348,7 @@ func DaemonInstall(ctx context.Context, cr exec.CommandRunner, opts DaemonInstal
 		return errors.Wrap(errors.EInternal, "failed to resolve executable path", err)
 	}
 
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+	dirs := paths.ResolveDirs(os.Getenv, homeDir)
 	cfg := servicemanager.ServiceConfig{
 		ExePath: exePath,
 		DataDir: dirs.DataDir,
@@ -381,7 +381,7 @@ func DaemonUninstall(ctx context.Context, cr exec.CommandRunner, opts DaemonUnin
 		return errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
 
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+	dirs := paths.ResolveDirs(os.Getenv, homeDir)
 	cfg := servicemanager.ServiceConfig{
 		DataDir: dirs.DataDir,
 		HomeDir: homeDir,

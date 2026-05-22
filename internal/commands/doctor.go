@@ -66,13 +66,6 @@ type DoctorReport struct {
 	ScriptArchive               string
 }
 
-// osEnv provides directory resolution environment lookups.
-type osEnv struct{}
-
-func (osEnv) Get(key string) string {
-	return os.Getenv(key)
-}
-
 // DoctorOpts holds options for the doctor command.
 type DoctorOpts struct {
 	// Path is the optional --path flag to target a specific repo checkout.

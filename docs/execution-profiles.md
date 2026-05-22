@@ -2,22 +2,23 @@
 
 ## Scope
 
-This document owns execution-profile selection, runner environment materialization, managed checkout placement, and the hard cutover rules.
+This document owns execution-profile selection, runner environment materialization, managed checkout placement, and current state-layout rules.
 
-## Cutover
+## Current State
 
 - `config.json` and `agency.json` are version `4`.
 - Repo index, repo records, integration worktree metadata, invocation metadata, task metadata, and worktree merge state use schema version `2.0`.
 - Older config and metadata versions are rejected.
-- Agency does not support mixed old/new worktree layouts.
-- Agency does not provide legacy path derivation, legacy managed-tree detection, or schema compatibility branches.
-- The reset path for incompatible local state is to remove old state and reinitialize with current commands.
+- Agency supports one worktree layout: managed checkout roots selected by `execution.checkout_root`.
+- Managed-tree detection uses marker files plus store metadata.
+- Config and metadata readers reject unsupported versions instead of translating them.
+- The reset path for unsupported local state is to remove that state and reinitialize with current commands.
 
 ## Model
 
 - An execution profile is a symbolic label such as `personal`, `work`, or `client-a`.
 - User `config.json` defines profile env values in `execution_profiles`.
-- User `config.json` selects the fallback profile with `defaults.execution_profile`.
+- User `config.json` selects the default execution profile with `defaults.execution_profile`.
 - Repo `agency.json` may select a repo profile with `execution.profile`.
 - Repo `agency.json` may select checkout placement with `execution.checkout_root`.
 - Repo config stays symbolic and secret-free. It must not define profile env vars.
@@ -89,8 +90,8 @@ This document owns execution-profile selection, runner environment materializati
 - Other daemon-owned worktree flows use the profile persisted on the selected integration worktree.
 - Effective checkout-root precedence is selected `agency.json` `execution.checkout_root`, then `repo-sibling`.
 - `--agency-config` remains the explicit repo-config file override on `agency task start`, `agency task <task-ref> retry`, `agency agent start`, `agency doctor`, and `agency worktree <worktree-ref> pr merge`.
-- There is no cwd-based identity fallback.
-- There is no environment-derived identity fallback inside Agency.
+- Agency does not derive identity from cwd.
+- Agency does not derive identity from process environment.
 
 ## Checkout Placement
 

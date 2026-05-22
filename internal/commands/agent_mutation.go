@@ -32,15 +32,9 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return writeCommandJSONError(stdout, err)
 	}
 
-	ns, err := setupDaemonNav(ctx, fsys, "")
-	if err != nil {
-		return fail(err)
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "agent stop",
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, "", ResolveRepoContextOpts{
+		RepoRef: opts.RepoRef,
+		CmdName: "agent stop",
 	})
 	if err != nil {
 		return fail(err)
@@ -87,15 +81,9 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return writeCommandJSONError(stdout, err)
 	}
 
-	ns, err := setupDaemonNav(ctx, fsys, "")
-	if err != nil {
-		return fail(err)
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "agent kill",
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, "", ResolveRepoContextOpts{
+		RepoRef: opts.RepoRef,
+		CmdName: "agent kill",
 	})
 	if err != nil {
 		return fail(err)
@@ -143,15 +131,9 @@ func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return writeCommandJSONError(stdout, err)
 	}
 
-	ns, err := setupDaemonNav(ctx, fsys, "")
-	if err != nil {
-		return fail(err)
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "agent land",
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, "", ResolveRepoContextOpts{
+		RepoRef: opts.RepoRef,
+		CmdName: "agent land",
 	})
 	if err != nil {
 		return fail(err)
@@ -235,15 +217,9 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return writeCommandJSONError(stdout, err)
 	}
 
-	ns, err := setupDaemonNav(ctx, fsys, "")
-	if err != nil {
-		return fail(err)
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "agent discard",
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, "", ResolveRepoContextOpts{
+		RepoRef: opts.RepoRef,
+		CmdName: "agent discard",
 	})
 	if err != nil {
 		return fail(err)
@@ -304,15 +280,9 @@ func AgentFollowup(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 		return fail(err)
 	}
 
-	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
-	if err != nil {
-		return fail(err)
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "agent followup",
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, opts.DataDirOverride, ResolveRepoContextOpts{
+		RepoRef: opts.RepoRef,
+		CmdName: "agent followup",
 	})
 	if err != nil {
 		return fail(err)
@@ -387,15 +357,9 @@ func AgentRecreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 		}
 	}
 
-	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
-	if err != nil {
-		return fail(err)
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "agent recreate",
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, opts.DataDirOverride, ResolveRepoContextOpts{
+		RepoRef: opts.RepoRef,
+		CmdName: "agent recreate",
 	})
 	if err != nil {
 		return fail(err)
@@ -508,15 +472,9 @@ func AgentRestore(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return fail(errors.New(errors.EUsage, "pass either --checkpoint <id> or --turn <entry_id>"))
 	}
 
-	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
-	if err != nil {
-		return fail(err)
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "agent restore",
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, opts.DataDirOverride, ResolveRepoContextOpts{
+		RepoRef: opts.RepoRef,
+		CmdName: "agent restore",
 	})
 	if err != nil {
 		return fail(err)

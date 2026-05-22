@@ -2,31 +2,29 @@ package daemonclient
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 )
 
 // ListWorktrees lists integration worktrees via the daemon.
 func (c *Client) ListWorktrees(ctx context.Context, opts daemon.ListWorktreesParams) (*daemon.Result[daemon.ListWorktreesData], error) {
-	u := daemonBaseURL + "/worktrees?"
+	q := url.Values{}
 	if opts.RepoID != "" {
-		u += "repo_id=" + url.QueryEscape(opts.RepoID) + "&"
+		q.Set("repo_id", opts.RepoID)
 	}
 	if opts.State != "" {
-		u += "state=" + url.QueryEscape(opts.State) + "&"
+		q.Set("state", opts.State)
 	}
 	if opts.Limit > 0 {
-		u += fmt.Sprintf("limit=%d&", opts.Limit)
+		q.Set("limit", strconv.Itoa(opts.Limit))
 	}
 	if opts.Cursor != "" {
-		u += "cursor=" + url.QueryEscape(opts.Cursor) + "&"
+		q.Set("cursor", opts.Cursor)
 	}
-	u = u[:len(u)-1]
-
-	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, queryURL("/worktrees", q), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -35,56 +33,36 @@ func (c *Client) ListWorktrees(ctx context.Context, opts daemon.ListWorktreesPar
 
 // GetWorktree gets a single worktree by reference within an optional canonical repo_id scope.
 func (c *Client) GetWorktree(ctx context.Context, ref string, repoID string) (*daemon.Result[daemon.WorktreeDTO], error) {
-	u := fmt.Sprintf("%s/worktrees/%s", daemonBaseURL, url.PathEscape(ref))
-	if repoID != "" {
-		u += "?repo_id=" + url.QueryEscape(repoID)
-	}
-
-	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, err
-	}
-	return decodeResult[daemon.WorktreeDTO](apiResp)
+	return getResult[daemon.WorktreeDTO](ctx, c, "/worktrees/"+url.PathEscape(ref), repoID)
 }
 
 // GetWorktreeMerge gets durable merge state for one worktree.
 func (c *Client) GetWorktreeMerge(ctx context.Context, ref string, repoID string) (*daemon.Result[daemon.WorktreeMergeDTO], error) {
-	u := fmt.Sprintf("%s/worktrees/%s/pr/merge", daemonBaseURL, url.PathEscape(ref))
-	if repoID != "" {
-		u += "?repo_id=" + url.QueryEscape(repoID)
-	}
-
-	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, err
-	}
-	return decodeResult[daemon.WorktreeMergeDTO](apiResp)
+	return getResult[daemon.WorktreeMergeDTO](ctx, c, "/worktrees/"+url.PathEscape(ref)+"/pr/merge", repoID)
 }
 
 // ListInvocations lists invocations via the daemon.
 func (c *Client) ListInvocations(ctx context.Context, opts daemon.ListInvocationsParams) (*daemon.Result[daemon.ListInvocationsData], error) {
-	u := daemonBaseURL + "/invocations?"
+	q := url.Values{}
 	if opts.RepoID != "" {
-		u += "repo_id=" + url.QueryEscape(opts.RepoID) + "&"
+		q.Set("repo_id", opts.RepoID)
 	}
 	if opts.WorktreeRef != "" {
-		u += "worktree_ref=" + url.QueryEscape(opts.WorktreeRef) + "&"
+		q.Set("worktree_ref", opts.WorktreeRef)
 	}
 	if opts.State != "" {
-		u += "state=" + url.QueryEscape(opts.State) + "&"
+		q.Set("state", opts.State)
 	}
 	if opts.Mode != "" {
-		u += "mode=" + url.QueryEscape(opts.Mode) + "&"
+		q.Set("mode", opts.Mode)
 	}
 	if opts.Limit > 0 {
-		u += fmt.Sprintf("limit=%d&", opts.Limit)
+		q.Set("limit", strconv.Itoa(opts.Limit))
 	}
 	if opts.Cursor != "" {
-		u += "cursor=" + url.QueryEscape(opts.Cursor) + "&"
+		q.Set("cursor", opts.Cursor)
 	}
-	u = u[:len(u)-1]
-
-	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, queryURL("/invocations", q), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -93,59 +71,39 @@ func (c *Client) ListInvocations(ctx context.Context, opts daemon.ListInvocation
 
 // GetInvocation gets a single invocation by reference within an optional canonical repo_id scope.
 func (c *Client) GetInvocation(ctx context.Context, ref string, repoID string) (*daemon.Result[daemon.InvocationDTO], error) {
-	u := fmt.Sprintf("%s/invocations/%s", daemonBaseURL, url.PathEscape(ref))
-	if repoID != "" {
-		u += "?repo_id=" + url.QueryEscape(repoID)
-	}
-
-	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, err
-	}
-	return decodeResult[daemon.InvocationDTO](apiResp)
+	return getResult[daemon.InvocationDTO](ctx, c, "/invocations/"+url.PathEscape(ref), repoID)
 }
 
 // GetInvocationSession gets headed tmux session facts for an invocation via the daemon.
 func (c *Client) GetInvocationSession(ctx context.Context, ref string, repoID string) (*daemon.Result[daemon.InvocationSessionData], error) {
-	u := fmt.Sprintf("%s/invocations/%s/session", daemonBaseURL, url.PathEscape(ref))
-	if repoID != "" {
-		u += "?repo_id=" + url.QueryEscape(repoID)
-	}
-
-	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, err
-	}
-	return decodeResult[daemon.InvocationSessionData](apiResp)
+	return getResult[daemon.InvocationSessionData](ctx, c, "/invocations/"+url.PathEscape(ref)+"/session", repoID)
 }
 
 // GetInvocationDiff gets the diff for an invocation via the daemon.
 func (c *Client) GetInvocationDiff(ctx context.Context, ref string, repoID string, opts daemon.GetDiffParams) (*daemon.Result[daemon.InvocationDiffData], error) {
-	u := fmt.Sprintf("%s/invocations/%s/diff?", daemonBaseURL, url.PathEscape(ref))
+	q := url.Values{}
 	if repoID != "" {
-		u += "repo_id=" + url.QueryEscape(repoID) + "&"
+		q.Set("repo_id", repoID)
 	}
 	if opts.ExcludePatch {
-		u += "include_patch=false&"
+		q.Set("include_patch", "false")
 	}
 	if opts.MaxPatchBytes > 0 {
-		u += fmt.Sprintf("max_patch_bytes=%d&", opts.MaxPatchBytes)
+		q.Set("max_patch_bytes", strconv.Itoa(opts.MaxPatchBytes))
 	}
 	if opts.ExcludeUncommitted {
-		u += "include_uncommitted=false&"
+		q.Set("include_uncommitted", "false")
 	}
 	if opts.TurnID != "" {
-		u += "turn=" + url.QueryEscape(opts.TurnID) + "&"
+		q.Set("turn", opts.TurnID)
 	}
 	if opts.TurnStartID != "" {
-		u += "turn_start=" + url.QueryEscape(opts.TurnStartID) + "&"
+		q.Set("turn_start", opts.TurnStartID)
 	}
 	if opts.TurnEndID != "" {
-		u += "turn_end=" + url.QueryEscape(opts.TurnEndID) + "&"
+		q.Set("turn_end", opts.TurnEndID)
 	}
-	u = u[:len(u)-1]
-
-	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, queryURL("/invocations/"+url.PathEscape(ref)+"/diff", q), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -154,36 +112,25 @@ func (c *Client) GetInvocationDiff(ctx context.Context, ref string, repoID strin
 
 // GetInvocationCheck gets check/readiness data for an invocation via the daemon.
 func (c *Client) GetInvocationCheck(ctx context.Context, ref string, repoID string) (*daemon.Result[daemon.InvocationCheckData], error) {
-	u := fmt.Sprintf("%s/invocations/%s/check", daemonBaseURL, url.PathEscape(ref))
-	if repoID != "" {
-		u += "?repo_id=" + url.QueryEscape(repoID)
-	}
-
-	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, err
-	}
-	return decodeResult[daemon.InvocationCheckData](apiResp)
+	return getResult[daemon.InvocationCheckData](ctx, c, "/invocations/"+url.PathEscape(ref)+"/check", repoID)
 }
 
 // GetInvocationTimeline gets the unified timeline for an invocation via daemon.
 func (c *Client) GetInvocationTimeline(ctx context.Context, ref string, repoID string, opts daemon.GetTimelineParams) (*daemon.Result[daemon.InvocationTimelineData], error) {
-	u := fmt.Sprintf("%s/invocations/%s/timeline?", daemonBaseURL, url.PathEscape(ref))
+	q := url.Values{}
 	if repoID != "" {
-		u += "repo_id=" + url.QueryEscape(repoID) + "&"
+		q.Set("repo_id", repoID)
 	}
 	if opts.Limit > 0 {
-		u += fmt.Sprintf("limit=%d&", opts.Limit)
+		q.Set("limit", strconv.Itoa(opts.Limit))
 	}
 	if opts.Cursor != "" {
-		u += "cursor=" + url.QueryEscape(opts.Cursor) + "&"
+		q.Set("cursor", opts.Cursor)
 	}
 	if opts.Order != "" {
-		u += "order=" + url.QueryEscape(opts.Order) + "&"
+		q.Set("order", opts.Order)
 	}
-	u = u[:len(u)-1]
-
-	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, queryURL("/invocations/"+url.PathEscape(ref)+"/timeline", q), nil)
 	if err != nil {
 		return nil, err
 	}

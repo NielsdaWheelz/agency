@@ -56,11 +56,7 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		default:
 			m.invocationStateFilter = "unresolved"
 		}
-		m.snapshot.Invocations = nil
-		m.selectedIndex = 0
-		m.selectedInvocationID = ""
-		m.selectedRepoID = ""
-		m.workspaceLoading = true
+		m.resetInvocationSelection()
 		return m, m.loadWorkspaceSnapshotCmd()
 	case msg.Text == "a":
 		switch m.worktreeStateFilter {
@@ -72,13 +68,7 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.worktreeStateFilter = "present"
 			m.activeWorktreeID = ""
 		}
-		m.snapshot.Worktrees = nil
-		m.snapshot.Invocations = nil
-		m.selectedWorktreeIndex = 0
-		m.selectedIndex = 0
-		m.selectedInvocationID = ""
-		m.selectedRepoID = ""
-		m.workspaceLoading = true
+		m.resetWorktreeSelection()
 		return m, m.loadWorkspaceSnapshotCmd()
 	case msg.Text == "z":
 		switch m.workspaceLayoutMode {
@@ -119,31 +109,20 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if strings.TrimSpace(m.activeWorktreeID) != "" {
 			m.activeWorktreeID = ""
 			m.workspaceFocus = workspacePaneWorktrees
-			m.snapshot.Invocations = nil
-			m.selectedIndex = 0
-			m.selectedInvocationID = ""
-			m.selectedRepoID = ""
-			m.workspaceLoading = true
+			m.resetInvocationSelection()
 			return m, m.loadWorkspaceSnapshotCmd()
 		}
 		if strings.TrimSpace(m.activeRepoID) != "" {
 			m.activeRepoID = ""
 			m.activeWorktreeID = ""
 			m.workspaceFocus = workspacePaneRepos
-			m.snapshot.Worktrees = nil
-			m.snapshot.Invocations = nil
-			m.selectedWorktreeIndex = 0
-			m.selectedIndex = 0
-			m.selectedInvocationID = ""
-			m.selectedRepoID = ""
-			m.workspaceLoading = true
+			m.resetWorktreeSelection()
 			return m, m.loadWorkspaceSnapshotCmd()
 		}
 		return m, nil
 	case msg.Text == "h":
 		if strings.TrimSpace(m.selectedInvocationID) == "" {
-			m.lastActionError = true
-			m.lastActionMessage = "history unavailable: no invocation selected"
+			m.setActionError("history unavailable: no invocation selected")
 			return m, nil
 		}
 		m.page = pageHistory
@@ -153,8 +132,7 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.loadHistoryCmd()
 	case msg.Text == "l":
 		if strings.TrimSpace(m.selectedInvocationID) == "" {
-			m.lastActionError = true
-			m.lastActionMessage = "logs unavailable: no invocation selected"
+			m.setActionError("logs unavailable: no invocation selected")
 			return m, nil
 		}
 		m.page = pageLogs
@@ -184,13 +162,7 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.activeWorktreeID = ""
 			}
 			m.workspaceFocus = workspacePaneWorktrees
-			m.selectedWorktreeIndex = 0
-			m.snapshot.Worktrees = nil
-			m.snapshot.Invocations = nil
-			m.selectedIndex = 0
-			m.selectedInvocationID = ""
-			m.selectedRepoID = ""
-			m.workspaceLoading = true
+			m.resetWorktreeSelection()
 			return m, m.loadWorkspaceSnapshotCmd()
 		case workspacePaneWorktrees:
 			if m.selectedWorktreeIndex == 0 {
@@ -210,11 +182,7 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.workspaceFocus = workspacePaneAgents
-			m.snapshot.Invocations = nil
-			m.selectedIndex = 0
-			m.selectedInvocationID = ""
-			m.selectedRepoID = ""
-			m.workspaceLoading = true
+			m.resetInvocationSelection()
 			return m, m.loadWorkspaceSnapshotCmd()
 		case workspacePaneAgents:
 		case "":
@@ -347,8 +315,7 @@ func (m model) updateHistoryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case msg.Text == "d":
 		turn, ok := m.selectedTurn()
 		if !ok {
-			m.lastActionError = true
-			m.lastActionMessage = "review unavailable: no turn selected"
+			m.setActionError("review unavailable: no turn selected")
 			return m, nil
 		}
 		return m.openReviewPage(turn.EntryID, pageHistory)

@@ -107,14 +107,6 @@ func TestStdinRelay_Close_Idempotent(t *testing.T) {
 	require.NoError(t, r.Close()) // second close is safe
 }
 
-func TestStdinRelay_Mode(t *testing.T) {
-	t.Parallel()
-
-	var buf bytes.Buffer
-	r := NewStdinRelay(&nopWriteCloser{Writer: &buf}, runners.RunnerAmp)
-	assert.Equal(t, ModeStdin, r.Mode())
-}
-
 func TestStdinRelay_ConcurrentSendSafe(t *testing.T) {
 	t.Parallel()
 
@@ -144,19 +136,20 @@ func TestStdinRelay_ConcurrentSendSafe(t *testing.T) {
 func TestResumeRelay_Send_QueuesMessage(t *testing.T) {
 	t.Parallel()
 
-	r := NewResumeRelay(runners.RunnerCodex)
+	r := NewResumeRelay()
 	defer func() { _ = r.Close() }()
 
 	require.NoError(t, r.Send(context.Background(), "task 1"))
 	require.NoError(t, r.Send(context.Background(), "task 2"))
 
-	assert.Equal(t, 2, r.Pending())
+	msgs := r.Drain()
+	assert.Equal(t, []string{"task 1", "task 2"}, msgs)
 }
 
 func TestResumeRelay_Drain_ReturnsAndClearsQueue(t *testing.T) {
 	t.Parallel()
 
-	r := NewResumeRelay(runners.RunnerOpenCode)
+	r := NewResumeRelay()
 
 	require.NoError(t, r.Send(context.Background(), "alpha"))
 	require.NoError(t, r.Send(context.Background(), "beta"))
@@ -168,20 +161,19 @@ func TestResumeRelay_Drain_ReturnsAndClearsQueue(t *testing.T) {
 
 	// Queue is now empty.
 	assert.Nil(t, r.Drain())
-	assert.Equal(t, 0, r.Pending())
 }
 
 func TestResumeRelay_Drain_EmptyQueue(t *testing.T) {
 	t.Parallel()
 
-	r := NewResumeRelay(runners.RunnerCodex)
+	r := NewResumeRelay()
 	assert.Nil(t, r.Drain())
 }
 
 func TestResumeRelay_Send_AfterClose_ReturnsError(t *testing.T) {
 	t.Parallel()
 
-	r := NewResumeRelay(runners.RunnerCursor)
+	r := NewResumeRelay()
 	require.NoError(t, r.Close())
 
 	err := r.Send(context.Background(), "too late")
@@ -192,36 +184,15 @@ func TestResumeRelay_Send_AfterClose_ReturnsError(t *testing.T) {
 func TestResumeRelay_Close_Idempotent(t *testing.T) {
 	t.Parallel()
 
-	r := NewResumeRelay(runners.RunnerCodex)
+	r := NewResumeRelay()
 	require.NoError(t, r.Close())
 	require.NoError(t, r.Close())
-}
-
-func TestResumeRelay_Mode(t *testing.T) {
-	t.Parallel()
-
-	r := NewResumeRelay(runners.RunnerCodex)
-	assert.Equal(t, ModeResume, r.Mode())
-}
-
-func TestResumeRelay_SessionID(t *testing.T) {
-	t.Parallel()
-
-	r := NewResumeRelay(runners.RunnerCodex)
-
-	assert.Empty(t, r.SessionID())
-
-	r.SetSessionID("abc-123")
-	assert.Equal(t, "abc-123", r.SessionID())
-
-	r.SetSessionID("def-456")
-	assert.Equal(t, "def-456", r.SessionID())
 }
 
 func TestResumeRelay_ConcurrentSendAndDrain(t *testing.T) {
 	t.Parallel()
 
-	r := NewResumeRelay(runners.RunnerCodex)
+	r := NewResumeRelay()
 	defer func() { _ = r.Close() }()
 
 	var wg sync.WaitGroup
@@ -236,18 +207,6 @@ func TestResumeRelay_ConcurrentSendAndDrain(t *testing.T) {
 
 	msgs := r.Drain()
 	assert.Len(t, msgs, 20)
-}
-
-// --- Interface compliance ---
-
-func TestStdinRelay_ImplementsFollowUpRelay(t *testing.T) {
-	t.Parallel()
-	var _ FollowUpRelay = (*StdinRelay)(nil)
-}
-
-func TestResumeRelay_ImplementsFollowUpRelay(t *testing.T) {
-	t.Parallel()
-	var _ FollowUpRelay = (*ResumeRelay)(nil)
 }
 
 // --- Test helpers ---

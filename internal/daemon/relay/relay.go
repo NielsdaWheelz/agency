@@ -90,20 +90,16 @@ func (r *StdinRelay) Mode() Mode { return ModeStdin }
 
 // NewResumeRelay creates a relay that queues messages for delivery via session resume.
 // Messages are stored in memory and can be drained by the daemon's process exit handler.
-func NewResumeRelay(runner string) *ResumeRelay {
-	return &ResumeRelay{
-		runner: runner,
-	}
+func NewResumeRelay() *ResumeRelay {
+	return &ResumeRelay{}
 }
 
 // ResumeRelay queues follow-up messages for delivery when the current process exits.
 // Runners with configured resume templates are restarted by the daemon with the queued prompt.
 type ResumeRelay struct {
-	mu        sync.Mutex
-	runner    string
-	queue     []string
-	closed    bool
-	sessionID string // captured from stream events
+	mu     sync.Mutex
+	queue  []string
+	closed bool
 }
 
 func (r *ResumeRelay) Send(_ context.Context, prompt string) error {
@@ -128,21 +124,6 @@ func (r *ResumeRelay) Close() error {
 
 func (r *ResumeRelay) Mode() Mode { return ModeResume }
 
-// SetSessionID records the runner's session ID, captured from stream output.
-// Thread-safe; may be called from the stream parser goroutine.
-func (r *ResumeRelay) SetSessionID(id string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.sessionID = id
-}
-
-// SessionID returns the captured session ID, or empty if not yet captured.
-func (r *ResumeRelay) SessionID() string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.sessionID
-}
-
 // Drain returns and removes all queued messages. Returns nil if queue is empty.
 // Called by the daemon's process exit handler to get pending follow-ups.
 func (r *ResumeRelay) Drain() []string {
@@ -155,11 +136,4 @@ func (r *ResumeRelay) Drain() []string {
 	out := r.queue
 	r.queue = nil
 	return out
-}
-
-// Pending returns the number of queued messages without draining.
-func (r *ResumeRelay) Pending() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return len(r.queue)
 }

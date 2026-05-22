@@ -49,7 +49,7 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 	result, err := s.executeWorktreePRSync(r.Context(), record, req)
 	if err != nil {
 		code := errors.CodeOr(err, errors.EInternal)
-		s.writeWorktreePRSyncError(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), prSyncHintFromError(err))
+		s.writeWorktreePRSyncError(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), errors.Hint(err))
 		return
 	}
 	s.writeWorktreePRSyncSuccess(w, requestID, record, result)
@@ -83,25 +83,12 @@ func (s *Server) executeWorktreePRSync(
 		"force_with_lease": req.ForceWithLease,
 		"branch":           record.Meta.Branch,
 	}); err != nil {
-		if errors.GetCode(err) == "" {
-			return nil, errors.New(errors.EPersistFailed, err.Error())
-		}
 		return nil, err
 	}
 
 	result, err := s.performWorktreePRSync(ctx, record, req)
 	if err != nil {
-		code := errors.CodeOr(err, errors.EInternal)
-		if appendErr := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, prSyncEventFailed, map[string]any{
-			"error_code": string(code),
-			"message":    apiErrorMessage(err),
-		}); appendErr != nil {
-			if errors.GetCode(appendErr) == "" {
-				return nil, errors.New(errors.EPersistFailed, appendErr.Error())
-			}
-			return nil, appendErr
-		}
-		return nil, err
+		return nil, s.recordWorktreeOpFailure(record.RepoID, record.WorktreeID, prSyncEventFailed, err)
 	}
 
 	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, prSyncEventSucceeded, map[string]any{
@@ -110,9 +97,6 @@ func (s *Server) executeWorktreePRSync(
 		"pr_url":    result.PRURL,
 		"pr_action": result.PRAction,
 	}); err != nil {
-		if errors.GetCode(err) == "" {
-			return nil, errors.New(errors.EPersistFailed, err.Error())
-		}
 		return nil, err
 	}
 

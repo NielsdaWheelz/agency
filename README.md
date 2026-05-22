@@ -94,6 +94,7 @@ Worktree name and id-prefix lookup only consider present worktrees; archived wor
 `task start`, `task <task-ref> retry`, and `agent start` use agency config precedence for repo-scoped runner defaults: explicit `--agency-config`, repo-shared `<canonical-repo-root>/agency.json`, then per-repo config under `$AGENCY_CONFIG_DIR`.
 `task start`, `task <task-ref> retry`, and `agent start` resolve an execution profile from explicit `--execution-profile`, then `agency.json` `execution.profile`, then `config.json` `defaults.execution_profile`.
 `agency.json` `execution.checkout_root` controls managed checkout placement. Omit it for the default `repo-sibling` policy, which places worktrees and sandboxes under `<canonical-repo-parent>/.agency/checkouts/<repo-id>/`, outside the repo and outside `AGENCY_DATA_DIR`.
+Use `agency worktree <worktree-ref> path` to print the resolved worktree path, or `agency worktree <worktree-ref> shell` to open a login shell there.
 `agency agent start` defaults to `--mode headed`. Use `--mode headless` for daemon-backed runs that require `--prompt` or `--prompt-file`.
 For `claude-code`, Agency owns Claude `model`, `effort`, and `permission_mode`. Set default `permission_mode` in user `config.json` or override it explicitly with `--permission-mode`; repo `agency.json` cannot set it.
 
@@ -119,6 +120,8 @@ agency agent <invocation-ref> check                   # canonical invocation sta
 agency agent <invocation-ref> diff --turn <entry>    # changes for a turn or range
 agency agent <invocation-ref> diff --turn-range <start>..<end>
 agency agent <invocation-ref> land --apply           # land sandbox into integration worktree
+agency worktree <worktree-ref> path                  # print integration worktree path
+agency worktree <worktree-ref> shell                 # open a shell in the integration worktree
 agency worktree <worktree-ref> pr sync               # push branch + create/update PR
 agency worktree <worktree-ref> pr merge --yes        # verify, merge, and archive worktree PR
 agency worktree <worktree-ref> rebase                # rebase worktree branch onto origin/<base_branch>

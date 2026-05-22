@@ -27,15 +27,9 @@ type AgentPathOpts struct {
 
 // AgentPath outputs the daemon-resolved sandbox path for an invocation.
 func AgentPath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentPathOpts, stdout, stderr io.Writer) error {
-	ns, err := setupDaemonNav(ctx, fsys, "")
-	if err != nil {
-		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "agent path",
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, "", ResolveRepoContextOpts{
+		RepoRef: opts.RepoRef,
+		CmdName: "agent path",
 	})
 	if err != nil {
 		return err
@@ -116,15 +110,9 @@ func AgentShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 }
 
 func resolvePresentAgentSandbox(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd, dataDirOverride, cmdName, invocationRef, repoRef string) (*daemonNavSetup, string, error) {
-	ns, err := setupDaemonNav(ctx, fsys, dataDirOverride)
-	if err != nil {
-		return nil, "", err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       repoRef,
-		AllowAllRepos: false,
-		CmdName:       cmdName,
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, dataDirOverride, ResolveRepoContextOpts{
+		RepoRef: repoRef,
+		CmdName: cmdName,
 	})
 	if err != nil {
 		return nil, "", err
@@ -184,15 +172,9 @@ func AgentAttach(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 		)
 	}
 
-	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
-	if err != nil {
-		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "agent attach",
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, opts.DataDirOverride, ResolveRepoContextOpts{
+		RepoRef: opts.RepoRef,
+		CmdName: "agent attach",
 	})
 	if err != nil {
 		return err
@@ -230,15 +212,9 @@ func AgentAttach(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 
 // AgentClients prints the currently connected tmux clients for a headed invocation session.
 func AgentClients(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentClientsOpts, stdout, stderr io.Writer) error {
-	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
-	if err != nil {
-		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "agent clients",
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, opts.DataDirOverride, ResolveRepoContextOpts{
+		RepoRef: opts.RepoRef,
+		CmdName: "agent clients",
 	})
 	if err != nil {
 		return err

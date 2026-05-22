@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
+	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
@@ -27,6 +28,31 @@ func resolveEditorCmdWithOptionalOverride(cr exec.CommandRunner, fsys fs.FS, con
 	return config.ResolveEditorCmd(cr, fsys, configDir, userCfg, userCfg.Defaults.Editor)
 }
 
+// resolvePresentWorktree resolves the daemon nav, repo context, and integration
+// worktree for cmdName, and rejects archived worktrees with EWorktreeNotFound.
+func resolvePresentWorktree(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd, worktreeRef, repoRef, cmdName string) (*daemonNavSetup, *daemon.Result[daemon.WorktreeDTO], error) {
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, "", ResolveRepoContextOpts{
+		RepoRef: repoRef,
+		CmdName: cmdName,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	worktree, err := ns.client.GetWorktree(ctx, worktreeRef, repoCtx.RepoID)
+	if err != nil {
+		return nil, nil, translateNavigationError(err, "worktree")
+	}
+	if worktree.Data.State != "present" {
+		return nil, nil, errors.NewWithDetails(
+			errors.EWorktreeNotFound,
+			"integration worktree is archived",
+			map[string]string{"hint": cmdName + " requires a present integration worktree"},
+		)
+	}
+	return ns, worktree, nil
+}
+
 // WorktreePathOpts holds options for the worktree path command.
 type WorktreePathOpts struct {
 	WorktreeRef string
@@ -35,32 +61,10 @@ type WorktreePathOpts struct {
 
 // WorktreePath outputs the path to an integration worktree.
 func WorktreePath(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreePathOpts, stdout, stderr io.Writer) error {
-	ns, err := setupDaemonNav(ctx, fsys, "")
+	_, worktree, err := resolvePresentWorktree(ctx, cr, fsys, cwd, opts.WorktreeRef, opts.RepoRef, "worktree path")
 	if err != nil {
 		return err
 	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "worktree path",
-	})
-	if err != nil {
-		return err
-	}
-
-	worktree, err := ns.client.GetWorktree(ctx, opts.WorktreeRef, repoCtx.RepoID)
-	if err != nil {
-		return translateNavigationError(err, "worktree")
-	}
-	if worktree.Data.State != "present" {
-		return errors.NewWithDetails(
-			errors.EWorktreeNotFound,
-			"integration worktree is archived",
-			map[string]string{"hint": "worktree path requires a present integration worktree"},
-		)
-	}
-
 	_, _ = fmt.Fprintln(stdout, worktree.Data.TreePath)
 	return nil
 }
@@ -74,30 +78,9 @@ type WorktreeOpenOpts struct {
 
 // WorktreeOpen opens an integration worktree in the configured editor.
 func WorktreeOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeOpenOpts, stdout, stderr io.Writer) error {
-	ns, err := setupDaemonNav(ctx, fsys, "")
+	ns, worktree, err := resolvePresentWorktree(ctx, cr, fsys, cwd, opts.WorktreeRef, opts.RepoRef, "worktree open")
 	if err != nil {
 		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "worktree open",
-	})
-	if err != nil {
-		return err
-	}
-
-	worktree, err := ns.client.GetWorktree(ctx, opts.WorktreeRef, repoCtx.RepoID)
-	if err != nil {
-		return translateNavigationError(err, "worktree")
-	}
-	if worktree.Data.State != "present" {
-		return errors.NewWithDetails(
-			errors.EWorktreeNotFound,
-			"integration worktree is archived",
-			map[string]string{"hint": "worktree open requires a present integration worktree"},
-		)
 	}
 	treePath := worktree.Data.TreePath
 
@@ -128,30 +111,9 @@ type WorktreeShellOpts struct {
 
 // WorktreeShell opens a shell in an integration worktree.
 func WorktreeShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeShellOpts, stdout, stderr io.Writer) error {
-	ns, err := setupDaemonNav(ctx, fsys, "")
+	_, worktree, err := resolvePresentWorktree(ctx, cr, fsys, cwd, opts.WorktreeRef, opts.RepoRef, "worktree shell")
 	if err != nil {
 		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "worktree shell",
-	})
-	if err != nil {
-		return err
-	}
-
-	worktree, err := ns.client.GetWorktree(ctx, opts.WorktreeRef, repoCtx.RepoID)
-	if err != nil {
-		return translateNavigationError(err, "worktree")
-	}
-	if worktree.Data.State != "present" {
-		return errors.NewWithDetails(
-			errors.EWorktreeNotFound,
-			"integration worktree is archived",
-			map[string]string{"hint": "worktree shell requires a present integration worktree"},
-		)
 	}
 	treePath := worktree.Data.TreePath
 

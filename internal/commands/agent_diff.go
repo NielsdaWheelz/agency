@@ -34,15 +34,9 @@ func AgentDiff(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		return err
 	}
 
-	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
-	if err != nil {
-		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "agent diff",
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, opts.DataDirOverride, ResolveRepoContextOpts{
+		RepoRef: opts.RepoRef,
+		CmdName: "agent diff",
 	})
 	if err != nil {
 		return err

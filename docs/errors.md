@@ -16,9 +16,9 @@ This document covers stable error-code and defect modeling.
 
 - Missing files that represent optional state are normal absence, not corruption.
 - Invalid JSON, missing `schema_version`, and unsupported schema versions in required state files are corruption.
-- Invalid or contradictory required worktree merge lifecycle state is corruption, not a cue to synthesize transport-local fallback state.
+- Invalid or contradictory required worktree merge lifecycle state is corruption, not a cue to synthesize transport-local state.
 - Unexpected internal invariants should fail loudly and surface as `E_INTERNAL` or an explicit corruption code.
-- Do not silently coerce corrupted state into a fallback shape.
+- Do not silently coerce corrupted state into a synthetic shape.
 - Transport disconnect after merge acceptance is not a user-facing cancellation result for `worktree pr merge`.
 
 ## Placement

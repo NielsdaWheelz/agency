@@ -36,7 +36,7 @@ func TestWorktreePRMerge_NonInteractiveRequiresYes(t *testing.T) {
 		WorktreeRef:     worktreeID,
 		RepoRef:         repoID,
 		DataDirOverride: dataDir,
-		IsInteractive:   func() bool { return false },
+		Interactive:     false,
 	}, io.Discard, io.Discard)
 	require.Error(t, err)
 	assert.Equal(t, errors.EConfirmationRequired, errors.GetCode(err))
@@ -56,7 +56,7 @@ func TestWorktreePRMerge_InteractiveConfirmationRejected(t *testing.T) {
 			WorktreeRef:     worktreeID,
 			RepoRef:         repoID,
 			DataDirOverride: dataDir,
-			IsInteractive:   func() bool { return true },
+			Interactive:     true,
 			ConfirmationIn:  confirmIn,
 		}, io.Discard, io.Discard)
 	})
@@ -75,25 +75,11 @@ func TestWorktreePRMerge_InteractiveConfirmationTooLarge(t *testing.T) {
 		WorktreeRef:     worktreeID,
 		RepoRef:         repoID,
 		DataDirOverride: dataDir,
-		IsInteractive:   func() bool { return true },
+		Interactive:     true,
 		ConfirmationIn:  strings.NewReader(longToken),
 	}, io.Discard, io.Discard)
 	require.Error(t, err)
 	assert.Equal(t, errors.EInvalidArgument, errors.GetCode(err))
-}
-
-func TestWorktreePRMerge_RejectsConflictingStrategies(t *testing.T) {
-	t.Parallel()
-
-	err := WorktreePRMerge(context.Background(), nil, nil, "", WorktreePRMergeOpts{
-		WorktreeRef: "wt-1",
-		RepoRef:     "repo-1",
-		Squash:      true,
-		Merge:       true,
-	}, io.Discard, io.Discard)
-	require.Error(t, err)
-	assert.Equal(t, errors.EUsage, errors.GetCode(err))
-	assert.Contains(t, err.Error(), "at most one of --squash, --merge, --rebase may be specified")
 }
 
 func TestWorktreePRMerge_JSONSuccessIncludesDurableMergeFields(t *testing.T) {

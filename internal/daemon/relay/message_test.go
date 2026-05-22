@@ -9,27 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestFormatStdinMessage_AmpEnvelope(t *testing.T) {
-	t.Parallel()
-
-	line, err := FormatStdinMessage(runners.RunnerAmp, "fix the bug")
-	require.NoError(t, err)
-
-	var parsed map[string]any
-	require.NoError(t, json.Unmarshal(line, &parsed))
-
-	assert.Equal(t, "user", parsed["type"])
-
-	msg := parsed["message"].(map[string]any)
-	assert.Equal(t, "user", msg["role"])
-
-	content := msg["content"].([]any)
-	require.Len(t, content, 1)
-	block := content[0].(map[string]any)
-	assert.Equal(t, "text", block["type"])
-	assert.Equal(t, "fix the bug", block["text"])
-}
-
 func TestFormatStdinMessage_Amp(t *testing.T) {
 	t.Parallel()
 
@@ -94,31 +73,4 @@ func TestFormatStdinMessage_NoNewline(t *testing.T) {
 	line, err := FormatStdinMessage(runners.RunnerAmp, "hello")
 	require.NoError(t, err)
 	assert.NotEqual(t, byte('\n'), line[len(line)-1], "FormatStdinMessage must not include trailing newline")
-}
-
-func TestFormatStdinMessage_AllStdinRunners(t *testing.T) {
-	t.Parallel()
-
-	stdinRunners := []string{runners.RunnerAmp, runners.RunnerDroid}
-	for _, runner := range stdinRunners {
-		t.Run(runner, func(t *testing.T) {
-			t.Parallel()
-			line, err := FormatStdinMessage(runner, "test prompt")
-			require.NoError(t, err)
-			assert.True(t, json.Valid(line))
-		})
-	}
-}
-
-func TestFormatStdinMessage_AllResumeRunners(t *testing.T) {
-	t.Parallel()
-
-	resumeRunners := []string{runners.RunnerClaudeCode, runners.RunnerCodex, runners.RunnerOpenCode, runners.RunnerCursor}
-	for _, runner := range resumeRunners {
-		t.Run(runner, func(t *testing.T) {
-			t.Parallel()
-			_, err := FormatStdinMessage(runner, "test prompt")
-			require.Error(t, err, "resume-based runners must not support stdin format")
-		})
-	}
 }

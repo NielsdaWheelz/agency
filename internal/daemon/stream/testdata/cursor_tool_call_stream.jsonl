@@ -1,6 +1,0 @@
-{"type":"system","subtype":"init","cwd":"/sandbox","model":"cursor-agent","session_id":"sess_cursor_001"}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Applying file update"}]}}
-{"type":"tool_call","subtype":"started","tool_call":{"bashToolCall":{"command":"printf 'hello cursor' > test-cursor.txt"}}}
-{"type":"tool_call","subtype":"completed","tool_call":{"bashToolCall":{"command":"printf 'hello cursor' > test-cursor.txt","exitCode":0}}}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]}}
-{"type":"result","subtype":"success","duration_ms":1000}

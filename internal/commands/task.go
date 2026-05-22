@@ -90,7 +90,6 @@ type TaskRetryOpts struct {
 type TaskWatchOpts struct {
 	TaskRef       string
 	RepoRef       string
-	Interval      string
 	IsInteractive func() bool
 	Input         io.Reader
 	Output        io.Writer

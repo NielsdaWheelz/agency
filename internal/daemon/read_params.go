@@ -19,7 +19,7 @@ func parseListWorktreesParams(r *http.Request) (ListWorktreesParams, *invalidQue
 		params.RepoID = repoID
 	}
 	if state := r.URL.Query().Get("state"); state != "" {
-		if !isValidWorktreeState(state) {
+		if !slices.Contains(validWorktreeStates, state) {
 			return params, &invalidQueryArgumentDetails{
 				Param:         "state",
 				Value:         state,
@@ -57,7 +57,7 @@ func parseListInvocationsParams(r *http.Request) (ListInvocationsParams, *invali
 		params.WorktreeRef = worktreeRef
 	}
 	if state := r.URL.Query().Get("state"); state != "" {
-		if !isValidInvocationState(state) {
+		if !slices.Contains(validInvocationStates, state) {
 			return params, &invalidQueryArgumentDetails{
 				Param:         "state",
 				Value:         state,
@@ -67,7 +67,7 @@ func parseListInvocationsParams(r *http.Request) (ListInvocationsParams, *invali
 		params.State = state
 	}
 	if mode := r.URL.Query().Get("mode"); mode != "" {
-		if !isValidInvocationMode(mode) {
+		if !slices.Contains(validInvocationModes, mode) {
 			return params, &invalidQueryArgumentDetails{
 				Param:         "mode",
 				Value:         mode,
@@ -197,33 +197,6 @@ const (
 	invocationStateFilterUnresolved = "unresolved"
 	invocationStateFilterFinished   = "finished"
 )
-
-func isValidWorktreeState(state string) bool {
-	for _, valid := range validWorktreeStates {
-		if state == valid {
-			return true
-		}
-	}
-	return false
-}
-
-func isValidInvocationState(state string) bool {
-	for _, valid := range validInvocationStates {
-		if state == valid {
-			return true
-		}
-	}
-	return false
-}
-
-func isValidInvocationMode(mode string) bool {
-	for _, valid := range validInvocationModes {
-		if mode == valid {
-			return true
-		}
-	}
-	return false
-}
 
 func matchesWorktreeState(state store.WorktreeState, filter string) bool {
 	switch filter {

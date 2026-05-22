@@ -129,14 +129,8 @@ type ControlPlaneFollowUpResponse struct {
 
 // InvocationActionResponse is the shared response body for POST /invocations/{id}/stop and /kill.
 type InvocationActionResponse struct {
-	OK           bool   `json:"ok"`
+	responseEnvelope
 	InvocationID string `json:"invocation_id,omitempty"`
-	RequestID    string `json:"request_id,omitempty"`
-	APIVersion   int    `json:"api_version"`
-	BuildVersion string `json:"build_version,omitempty"`
-	ErrorCode    string `json:"error_code,omitempty"`
-	Message      string `json:"message,omitempty"`
-	Hint         string `json:"hint,omitempty"`
 }
 
 // ShutdownResponse is the response body for POST /shutdown.

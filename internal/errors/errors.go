@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strings"
 )
 
 // Code is a stable error code string.
@@ -285,6 +286,15 @@ func AsAgencyError(err error) (*AgencyError, bool) {
 		return ae, true
 	}
 	return nil, false
+}
+
+// Hint returns the trimmed "hint" detail attached to err, or empty if none.
+func Hint(err error) string {
+	ae, ok := AsAgencyError(err)
+	if !ok || ae.Details == nil {
+		return ""
+	}
+	return strings.TrimSpace(ae.Details["hint"])
 }
 
 // copyDetails returns a defensive copy of the details map, or nil if empty/nil.

@@ -294,7 +294,7 @@ func (s *Server) prepareControlPlaneStart(ctx context.Context, repoRoot, worktre
 	if err := s.ensureWorktreeMergeInactive(repoIdentity.RepoID, wtRecord.WorktreeID, "start an invocation"); err != nil {
 		_ = unlockRepo()
 		code := errors.CodeOr(err, errors.EWorktreeMergeActive)
-		writeErr(http.StatusConflict, string(code), err.Error(), mergeHintFromError(err))
+		writeErr(http.StatusConflict, string(code), err.Error(), errors.Hint(err))
 		return nil, false
 	}
 

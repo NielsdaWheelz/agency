@@ -647,9 +647,9 @@ func TestWorktreeRm_NonInteractiveWithoutYes_ReturnsEConfirmationRequired(t *tes
 
 	var stdout, stderr bytes.Buffer
 	err := WorktreeRm(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", WorktreeRmOpts{
-		WorktreeRef:   env.WorktreeID,
-		RepoRef:       env.RepoID,
-		IsInteractive: func() bool { return false },
+		WorktreeRef: env.WorktreeID,
+		RepoRef:     env.RepoID,
+		Interactive: false,
 	}, &stdout, &stderr)
 	require.Error(t, err)
 	assert.Equal(t, errors.EConfirmationRequired, errors.GetCode(err))
@@ -663,7 +663,7 @@ func TestWorktreeRm_InteractiveConfirmationRejected_ReturnsEAborted(t *testing.T
 		return WorktreeRm(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "", WorktreeRmOpts{
 			WorktreeRef:    env.WorktreeID,
 			RepoRef:        env.RepoID,
-			IsInteractive:  func() bool { return true },
+			Interactive:    true,
 			ConfirmationIn: confirmIn,
 		}, &stdout, &stderr)
 	})

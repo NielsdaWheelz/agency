@@ -1,4 +1,4 @@
-.PHONY: actionlint build check clean completions e2e e2e-gh e2e-local e2e-s5-failure-matrix e2e-s5-happy fmt fmt-check go-mod-verify goreleaser-check govulncheck help install lint mod-tidy-check run shellcheck shfmt shfmt-check test test-race test-v verify vet
+.PHONY: actionlint build check clean completions e2e e2e-gh e2e-local e2e-pr-failure-matrix e2e-gh-happy fmt fmt-check go-mod-verify goreleaser-check govulncheck help install lint mod-tidy-check run shellcheck shfmt shfmt-check test test-race test-v verify vet
 
 -include .env
 export
@@ -81,40 +81,40 @@ mod-tidy-check:
 go-mod-verify:
 	go mod verify
 
-# Run e2e checks. Always runs S5 failure matrix.
+# Run e2e checks. Always runs worktree PR failure matrix.
 # GH happy path is opt-in via AGENCY_GH_E2E=1 and requires token.
 e2e:
-	@echo "running s5 failure-matrix e2e"; \
-	$(MAKE) e2e-s5-failure-matrix && \
+	@echo "running worktree PR failure-matrix e2e"; \
+	$(MAKE) e2e-pr-failure-matrix && \
 	if [ "$${AGENCY_GH_E2E:-}" = "1" ]; then \
 		token="$${GH_TOKEN:-$${GITHUB_TOKEN:-}}"; \
 		if [ -z "$$token" ]; then \
 			echo "error: AGENCY_GH_E2E=1 requires GH_TOKEN or GITHUB_TOKEN"; \
 			exit 1; \
 		fi; \
-		echo "running github-backed s5 happy-path e2e"; \
-		$(MAKE) e2e-s5-happy; \
+		echo "running github-backed worktree PR happy-path e2e"; \
+		$(MAKE) e2e-gh-happy; \
 	else \
 		echo "AGENCY_GH_E2E not set; running local e2e smoke tests (set AGENCY_GH_E2E=1 for github-backed happy path)"; \
 		$(MAKE) e2e-local; \
 	fi
 
-# Run both S5 e2e suites; happy path requires token.
+# Run both worktree PR e2e suites; happy path requires token.
 e2e-gh:
 	@token="$${GH_TOKEN:-$${GITHUB_TOKEN:-}}"; \
 	if [ -z "$$token" ]; then \
 		echo "error: set GH_TOKEN or GITHUB_TOKEN for github-backed e2e"; \
 		exit 1; \
 	fi; \
-	$(MAKE) e2e-s5-failure-matrix; \
-	$(MAKE) e2e-s5-happy
+	$(MAKE) e2e-pr-failure-matrix; \
+	$(MAKE) e2e-gh-happy
 
-# Run S5 failure-matrix e2e suite (no GH token required)
-e2e-s5-failure-matrix:
-	go test -tags=e2e -count=1 -p 1 -parallel 1 ./internal/commands -run TestS5E2EWorktreePRSyncMergeFailureMatrix
+# Run worktree PR failure-matrix e2e suite (no GH token required)
+e2e-pr-failure-matrix:
+	go test -tags=e2e -count=1 -p 1 -parallel 1 ./internal/commands -run TestWorktreePRSyncMergeFailureMatrixE2E
 
-# Run GH-backed S5 happy-path e2e suite (requires token)
-e2e-s5-happy:
+# Run GH-backed worktree PR happy-path e2e suite (requires token)
+e2e-gh-happy:
 	@token="$${GH_TOKEN:-$${GITHUB_TOKEN:-}}"; \
 	if [ -z "$$token" ]; then \
 		echo "error: set GH_TOKEN or GITHUB_TOKEN for github-backed e2e happy path"; \
@@ -176,9 +176,9 @@ help:
 	@echo "  verify         - run the full resource-budgeted gate (fmt-check, shfmt-check, lint, vet, actionlint, shellcheck, govulncheck, mod tidy, mod verify, race, goreleaser, e2e, completions, build)"
 	@echo "  vet            - run go vet"
 	@echo "  e2e            - run e2e (failure-matrix + local smoke by default; set AGENCY_GH_E2E=1 for GH happy path)"
-	@echo "  e2e-gh         - run both S5 e2e suites (requires GH_TOKEN/GITHUB_TOKEN)"
-	@echo "  e2e-s5-happy   - run GH-backed S5 happy-path e2e (requires GH_TOKEN/GITHUB_TOKEN)"
-	@echo "  e2e-s5-failure-matrix - run S5 failure-matrix e2e (no GH token)"
+	@echo "  e2e-gh         - run both worktree PR e2e suites (requires GH_TOKEN/GITHUB_TOKEN)"
+	@echo "  e2e-gh-happy   - run GH-backed worktree PR happy-path e2e (requires GH_TOKEN/GITHUB_TOKEN)"
+	@echo "  e2e-pr-failure-matrix - run worktree PR failure-matrix e2e (no GH token)"
 	@echo "  e2e-local      - run local black-box CLI e2e smoke tests"
 	@echo "  clean          - clean build artifacts"
 	@echo "  install        - install to GOBIN"

@@ -115,10 +115,7 @@ func (s *Server) writeFollowUpError(w http.ResponseWriter, status int, requestID
 
 func (s *Server) writeInvocationActionSuccess(w http.ResponseWriter, requestID, invocationID string) {
 	s.writeJSON(w, http.StatusOK, InvocationActionResponse{
-		OK:           true,
-		InvocationID: invocationID,
-		RequestID:    requestID,
-		APIVersion:   APIVersion,
-		BuildVersion: daemonBuildVersion(),
+		responseEnvelope: newSuccessEnvelope(requestID),
+		InvocationID:     invocationID,
 	})
 }

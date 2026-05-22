@@ -49,11 +49,7 @@ func (s *Server) handleWorktreeRebase(w http.ResponseWriter, r *http.Request, wo
 
 	if err := s.executeWorktreeRebase(r.Context(), record); err != nil {
 		code := errors.CodeOr(err, errors.EInternal)
-		hint := ""
-		if ae, ok := errors.AsAgencyError(err); ok && ae.Details != nil {
-			hint = strings.TrimSpace(ae.Details["hint"])
-		}
-		s.writeWorktreeRebaseError(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), hint)
+		s.writeWorktreeRebaseError(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), errors.Hint(err))
 		return
 	}
 	s.writeWorktreeRebaseSuccess(w, requestID, record)
@@ -85,33 +81,17 @@ func (s *Server) executeWorktreeRebase(
 		"branch":      record.Meta.Branch,
 		"base_branch": record.Meta.BaseBranch,
 	}); err != nil {
-		if errors.GetCode(err) == "" {
-			return errors.New(errors.EPersistFailed, err.Error())
-		}
 		return err
 	}
 
 	if err := s.performWorktreeRebase(ctx, record); err != nil {
-		code := errors.CodeOr(err, errors.EInternal)
-		if appendErr := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, worktreeRebaseEventFailed, map[string]any{
-			"error_code": string(code),
-			"message":    apiErrorMessage(err),
-		}); appendErr != nil {
-			if errors.GetCode(appendErr) == "" {
-				return errors.New(errors.EPersistFailed, appendErr.Error())
-			}
-			return appendErr
-		}
-		return err
+		return s.recordWorktreeOpFailure(record.RepoID, record.WorktreeID, worktreeRebaseEventFailed, err)
 	}
 
 	if err := s.appendWorktreeEvent(record.RepoID, record.WorktreeID, worktreeRebaseEventSucceeded, map[string]any{
 		"branch":      record.Meta.Branch,
 		"base_branch": record.Meta.BaseBranch,
 	}); err != nil {
-		if errors.GetCode(err) == "" {
-			return errors.New(errors.EPersistFailed, err.Error())
-		}
 		return err
 	}
 

@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"io"
+	"os"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -20,9 +21,7 @@ type WorktreeTargetOpts struct {
 	Yes              bool
 	AllowDirty       bool
 	ForceWithLease   bool
-	Squash           bool
-	Merge            bool
-	Rebase           bool
+	Strategy         string
 	NoDeleteBranch   bool
 	AgencyConfigPath string
 }
@@ -123,6 +122,7 @@ func WorktreeTarget(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 				RepoRef:     opts.RepoRef,
 				Force:       opts.Force,
 				Yes:         opts.Yes,
+				Interactive: isTerminal(os.Stdin.Fd()) && isTerminal(os.Stderr.Fd()),
 			}, stdout, stderr)
 		case WorktreeTargetActionRebase:
 			return WorktreeRebase(ctx, cr, fsys, cwd, WorktreeRebaseOpts{
@@ -149,13 +149,12 @@ func WorktreeTarget(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 			return WorktreePRMerge(ctx, cr, fsys, cwd, WorktreePRMergeOpts{
 				WorktreeRef:      worktreeRef,
 				RepoRef:          opts.RepoRef,
-				Squash:           opts.Squash,
-				Merge:            opts.Merge,
-				Rebase:           opts.Rebase,
+				Strategy:         opts.Strategy,
 				NoDeleteBranch:   opts.NoDeleteBranch,
 				Yes:              opts.Yes,
 				JSON:             opts.JSON,
 				AgencyConfigPath: opts.AgencyConfigPath,
+				Interactive:      isTerminal(os.Stdin.Fd()) && isTerminal(os.Stderr.Fd()),
 			}, stdout, stderr)
 		default:
 			return errors.New(errors.EUsage, "unknown command \""+args[2]+"\" for \"agency worktree "+worktreeRef+" pr\"")

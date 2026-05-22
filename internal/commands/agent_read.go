@@ -36,12 +36,7 @@ type AgentLSOpts struct {
 
 // AgentLS lists agent invocations.
 func AgentLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentLSOpts, stdout, stderr io.Writer) error {
-	ns, err := setupDaemonNav(ctx, fsys, "")
-	if err != nil {
-		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, "", ResolveRepoContextOpts{
 		RepoRef:       opts.RepoRef,
 		AllRepos:      opts.AllRepos,
 		AllowAllRepos: true,
@@ -89,15 +84,9 @@ type AgentShowOpts struct {
 
 // AgentShow shows details of an agent invocation.
 func AgentShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentShowOpts, stdout, stderr io.Writer) error {
-	ns, err := setupDaemonNav(ctx, fsys, "")
-	if err != nil {
-		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "agent show",
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, "", ResolveRepoContextOpts{
+		RepoRef: opts.RepoRef,
+		CmdName: "agent show",
 	})
 	if err != nil {
 		return err
@@ -133,15 +122,9 @@ type AgentCheckOpts struct {
 
 // AgentCheck reports canonical readiness state for invocation progression.
 func AgentCheck(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentCheckOpts, stdout, stderr io.Writer) error {
-	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
-	if err != nil {
-		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "agent check",
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, opts.DataDirOverride, ResolveRepoContextOpts{
+		RepoRef: opts.RepoRef,
+		CmdName: "agent check",
 	})
 	if err != nil {
 		return err
@@ -206,15 +189,9 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		)
 	}
 
-	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
-	if err != nil {
-		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "agent history",
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, opts.DataDirOverride, ResolveRepoContextOpts{
+		RepoRef: opts.RepoRef,
+		CmdName: "agent history",
 	})
 	if err != nil {
 		return err
@@ -326,15 +303,9 @@ type AgentHistoryLogsOpts struct {
 // Without --follow: pages to EOF and exits.
 // With --follow: pages to EOF, then polls for new data until interrupted.
 func AgentHistoryLogs(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentHistoryLogsOpts, stdout, stderr io.Writer) error {
-	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
-	if err != nil {
-		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "agent history logs",
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, opts.DataDirOverride, ResolveRepoContextOpts{
+		RepoRef: opts.RepoRef,
+		CmdName: "agent history logs",
 	})
 	if err != nil {
 		return err

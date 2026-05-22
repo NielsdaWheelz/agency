@@ -17,7 +17,7 @@ This document covers `internal/watch`.
 - Archived worktrees appear only through an explicit archived or all-worktrees toggle.
 - The workspace starts at all repos, present worktrees, with focus on `Agents`.
 - The workspace uses one responsive compact surface across terminal sizes.
-- Narrow layouts may reflow, collapse, or shorten panes, but must not fall back to the legacy stacked workspace.
+- Narrow layouts may reflow, collapse, or shorten panes, but must keep the same responsive workspace model.
 - `tab` and `shift+tab` move focus across interactive panes; read-only detail panes are not focus targets.
 - `enter` applies repo/worktree scope in scope panes and runs the selected agent default action in `Agents`.
 - `b` and `esc` broaden scope by clearing worktree scope, then repo scope; `r` reloads the workspace snapshot.

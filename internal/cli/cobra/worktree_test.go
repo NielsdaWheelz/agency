@@ -34,6 +34,12 @@ func TestWorktreeTarget_CreateFlagsAreRejected(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown flag: --base")
 }
 
+func TestWorktreePRMerge_StrategyFlagsAreMutuallyExclusive(t *testing.T) {
+	_, _, err := executeCmd("worktree", "wt-1", "pr", "merge", "--squash", "--merge")
+	require.Error(t, err, "expected --squash and --merge to be rejected together")
+	assert.Contains(t, err.Error(), "[squash merge rebase]")
+}
+
 func TestWorktreeTarget_ActionFlagsAreRejectedOutsideAction(t *testing.T) {
 	tests := []struct {
 		name        string

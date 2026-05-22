@@ -12,8 +12,7 @@ import (
 
 func (m model) openActionMenu() (tea.Model, tea.Cmd) {
 	if _, ok := m.selectedInvocation(); !ok {
-		m.lastActionError = true
-		m.lastActionMessage = "actions unavailable: no invocation selected"
+		m.setActionError("actions unavailable: no invocation selected")
 		return m, nil
 	}
 	m.actionMenuOpen = true
@@ -80,8 +79,7 @@ func (m model) updateFollowupKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case isEnterKey(msg):
 		prompt := strings.TrimSpace(m.followupText)
 		if prompt == "" {
-			m.lastActionError = true
-			m.lastActionMessage = "followup unavailable: prompt is empty"
+			m.setActionError("followup unavailable: prompt is empty")
 			return m, nil
 		}
 		return m.executeInvocationAction(actionFollowup, prompt)
@@ -102,8 +100,7 @@ func (m model) updateFollowupKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m model) startInvocationAction(kind actionKind) (tea.Model, tea.Cmd) {
 	if kind == actionFollowup {
 		if !m.canStartAction(kind) {
-			m.lastActionError = true
-			m.lastActionMessage = "followup unavailable for the selected invocation"
+			m.setActionError("followup unavailable for the selected invocation")
 			m.actionMenuOpen = false
 			return m, nil
 		}
@@ -128,8 +125,7 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 
 	selected, ok := m.selectedInvocation()
 	if !ok && kind != actionAttach {
-		m.lastActionError = true
-		m.lastActionMessage = fmt.Sprintf("%s unavailable: no invocation selected", kind)
+		m.setActionError(fmt.Sprintf("%s unavailable: no invocation selected", kind))
 		return m, nil
 	}
 
@@ -145,13 +141,11 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 			mode = strings.TrimSpace(selected.Mode)
 		}
 		if invocationID == "" || repoID == "" {
-			m.lastActionError = true
-			m.lastActionMessage = "attach unavailable: no invocation selected"
+			m.setActionError("attach unavailable: no invocation selected")
 			return m, nil
 		}
 		if ok && mode != "headed" {
-			m.lastActionError = true
-			m.lastActionMessage = formatActionError(
+			m.setActionError(formatActionError(
 				kind,
 				agencyerrors.NewWithDetails(
 					agencyerrors.EInvocationInvalidMode,
@@ -165,22 +159,19 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 				invocationID,
 				"",
 				"",
-			)
+			))
 			return m, nil
 		}
 		if m.selectedSessionLoading {
-			m.lastActionError = true
-			m.lastActionMessage = "attach unavailable: session facts are still loading"
+			m.setActionError("attach unavailable: session facts are still loading")
 			return m, nil
 		}
 		if strings.TrimSpace(m.selectedSessionError) != "" {
-			m.lastActionError = true
-			m.lastActionMessage = "attach unavailable: " + m.selectedSessionError
+			m.setActionError("attach unavailable: " + m.selectedSessionError)
 			return m, nil
 		}
 		if !sessionIsLive(m.selectedSession) {
-			m.lastActionError = true
-			m.lastActionMessage = formatActionError(
+			m.setActionError(formatActionError(
 				kind,
 				agencyerrors.NewWithDetails(
 					agencyerrors.ESessionEnded,
@@ -194,7 +185,7 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 				invocationID,
 				"",
 				"",
-			)
+			))
 			return m, nil
 		}
 		m.attachInvocationID = invocationID
@@ -206,8 +197,7 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 		return m, tea.Quit
 	case actionOpen:
 		if m.open == nil {
-			m.lastActionError = true
-			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
 			return m, nil
 		}
 		run = func() (string, error) {
@@ -215,8 +205,7 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 		}
 	case actionStop:
 		if m.stop == nil {
-			m.lastActionError = true
-			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
 			return m, nil
 		}
 		run = func() (string, error) {
@@ -224,8 +213,7 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 		}
 	case actionKill:
 		if m.kill == nil {
-			m.lastActionError = true
-			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
 			return m, nil
 		}
 		run = func() (string, error) {
@@ -233,8 +221,7 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 		}
 	case actionLand:
 		if m.land == nil {
-			m.lastActionError = true
-			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
 			return m, nil
 		}
 		run = func() (string, error) {
@@ -242,8 +229,7 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 		}
 	case actionDiscard:
 		if m.discard == nil {
-			m.lastActionError = true
-			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
 			return m, nil
 		}
 		run = func() (string, error) {
@@ -251,13 +237,11 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 		}
 	case actionFollowup:
 		if m.followup == nil {
-			m.lastActionError = true
-			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
 			return m, nil
 		}
 		if strings.TrimSpace(prompt) == "" {
-			m.lastActionError = true
-			m.lastActionMessage = "followup unavailable: prompt is empty"
+			m.setActionError("followup unavailable: prompt is empty")
 			return m, nil
 		}
 		run = func() (string, error) {
@@ -265,8 +249,7 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 		}
 	case actionRecreate:
 		if m.recreate == nil {
-			m.lastActionError = true
-			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
 			return m, nil
 		}
 		run = func() (string, error) {
@@ -274,8 +257,7 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 		}
 	case actionPRSync:
 		if m.prSync == nil {
-			m.lastActionError = true
-			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
 			return m, nil
 		}
 		run = func() (string, error) {
@@ -283,8 +265,7 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 		}
 	case actionPRMerge:
 		if m.prMerge == nil {
-			m.lastActionError = true
-			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
 			return m, nil
 		}
 		run = func() (string, error) {
@@ -292,21 +273,18 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 		}
 	case actionRebase:
 		if m.rebase == nil {
-			m.lastActionError = true
-			m.lastActionMessage = fmt.Sprintf("%s unavailable: action is not configured", kind)
+			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
 			return m, nil
 		}
 		run = func() (string, error) {
 			return m.rebase(m.ctx, selected.WorktreeID, selected.RepoID)
 		}
 	default:
-		m.lastActionError = true
-		m.lastActionMessage = fmt.Sprintf("%s unavailable: unsupported action", kind)
+		m.setActionError(fmt.Sprintf("%s unavailable: unsupported action", kind))
 		return m, nil
 	}
 	if (kind == actionPRSync || kind == actionPRMerge || kind == actionRebase) && strings.TrimSpace(selected.WorktreeID) == "" {
-		m.lastActionError = true
-		m.lastActionMessage = formatActionError(
+		m.setActionError(formatActionError(
 			kind,
 			agencyerrors.NewWithDetails(
 				agencyerrors.EInvalidArgument,
@@ -319,7 +297,7 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 			selected.InvocationID,
 			selected.WorktreeID,
 			"",
-		)
+		))
 		return m, nil
 	}
 
@@ -328,8 +306,7 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 	m.confirmAction = ""
 	m.followupInput = false
 	m.followupText = ""
-	m.lastActionError = false
-	m.lastActionMessage = fmt.Sprintf("%s in progress for %s", kind, actionTarget(kind, selected.InvocationID, selected.WorktreeID, ""))
+	m.setActionMessage(fmt.Sprintf("%s in progress for %s", kind, actionTarget(kind, selected.InvocationID, selected.WorktreeID, "")))
 
 	invocationID := selected.InvocationID
 	worktreeID := selected.WorktreeID
@@ -360,25 +337,21 @@ func (m model) startRestoreAction() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.restore == nil {
-		m.lastActionError = true
-		m.lastActionMessage = "restore unavailable: action is not configured"
+		m.setActionError("restore unavailable: action is not configured")
 		return m, nil
 	}
 	turn, ok := m.selectedTurn()
 	if !ok {
-		m.lastActionError = true
-		m.lastActionMessage = "restore unavailable: no turn selected"
+		m.setActionError("restore unavailable: no turn selected")
 		return m, nil
 	}
 	if !turn.Restorable || turn.CheckpointID <= 0 {
-		m.lastActionError = true
-		m.lastActionMessage = "restore unavailable: selected turn does not have a restorable checkpoint"
+		m.setActionError("restore unavailable: selected turn does not have a restorable checkpoint")
 		return m, nil
 	}
 
 	m.actionRunning = true
-	m.lastActionError = false
-	m.lastActionMessage = fmt.Sprintf("%s in progress for %s", actionRestore, actionTarget(actionRestore, m.selectedInvocationID, "", turn.EntryID))
+	m.setActionMessage(fmt.Sprintf("%s in progress for %s", actionRestore, actionTarget(actionRestore, m.selectedInvocationID, "", turn.EntryID)))
 
 	ctx := m.ctx
 	invocationID := m.selectedInvocationID
@@ -398,8 +371,7 @@ func (m model) startRestoreAction() (tea.Model, tea.Cmd) {
 
 func (m model) openReviewPage(turnID string, backPage watchPage) (tea.Model, tea.Cmd) {
 	if strings.TrimSpace(m.selectedInvocationID) == "" || strings.TrimSpace(m.selectedRepoID) == "" {
-		m.lastActionError = true
-		m.lastActionMessage = "review unavailable: no invocation selected"
+		m.setActionError("review unavailable: no invocation selected")
 		return m, nil
 	}
 	m.page = pageReview

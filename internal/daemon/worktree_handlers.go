@@ -94,44 +94,9 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fingerprint := worktreeCreateFingerprint(repoRoot, req, execCtx)
-	if entry, isDuplicate, conflict := s.checkWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey, fingerprint); isDuplicate {
-		if conflict {
-			s.writeWorktreeError(w, http.StatusConflict, string(errors.EIdempotencyConflict),
-				"idempotency_key was already used for a different worktree create request",
-				"retry with the original request or choose a new idempotency_key")
-			return
-		}
-		if s.writeIdempotentWorktreeCreate(w, repoIdentity.RepoID, entry) {
-			return
-		}
-		s.writeWorktreeError(w, http.StatusConflict, string(errors.EStoreCorrupt),
-			"idempotency_key was already accepted but worktree metadata is unreadable",
-			"inspect worktree state before retrying")
+	if s.handleWorktreeCreateIdempotency(w, repoIdentity.RepoID, req.IdempotencyKey, fingerprint) {
 		return
 	}
-	if record, exists, conflict, err := s.findWorktreeByIdempotencyKey(repoIdentity.RepoID, req.IdempotencyKey, fingerprint); err != nil {
-		s.writeWorktreeError(w, http.StatusInternalServerError, string(errors.EInternal),
-			"failed to scan worktrees for idempotency: "+err.Error(), "")
-		return
-	} else if exists {
-		if conflict {
-			s.writeWorktreeError(w, http.StatusConflict, string(errors.EIdempotencyConflict),
-				"idempotency_key was already used for a different worktree create request",
-				"retry with the original request or choose a new idempotency_key")
-			return
-		}
-		if record.Meta == nil || record.Broken {
-			s.writeWorktreeError(w, http.StatusConflict, string(errors.EStoreCorrupt),
-				"idempotency_key record exists but worktree metadata is unreadable",
-				"inspect worktree state before retrying")
-			return
-		}
-		s.recordWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey, record.WorktreeID, fingerprint)
-		s.writeWorktreeSuccess(w, record.WorktreeID, record.Meta.TreePath, record.Meta.Branch, repoIdentity.RepoID, record.Meta.ExecutionProfile, record.Meta.CheckoutRoot)
-		return
-	}
-
-	// Check again under the repo lock below before mutating.
 
 	// Acquire repo lock before mutation.
 	unlock, err := s.repoLock.Lock(repoIdentity.RepoID, "worktree create")
@@ -148,40 +113,9 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = unlock() }()
 
-	if entry, isDuplicate, conflict := s.checkWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey, fingerprint); isDuplicate {
-		if conflict {
-			s.writeWorktreeError(w, http.StatusConflict, string(errors.EIdempotencyConflict),
-				"idempotency_key was already used for a different worktree create request",
-				"retry with the original request or choose a new idempotency_key")
-			return
-		}
-		if s.writeIdempotentWorktreeCreate(w, repoIdentity.RepoID, entry) {
-			return
-		}
-		s.writeWorktreeError(w, http.StatusConflict, string(errors.EStoreCorrupt),
-			"idempotency_key was already accepted but worktree metadata is unreadable",
-			"inspect worktree state before retrying")
-		return
-	}
-	if record, exists, conflict, err := s.findWorktreeByIdempotencyKey(repoIdentity.RepoID, req.IdempotencyKey, fingerprint); err != nil {
-		s.writeWorktreeError(w, http.StatusInternalServerError, string(errors.EInternal),
-			"failed to scan worktrees for idempotency: "+err.Error(), "")
-		return
-	} else if exists {
-		if conflict {
-			s.writeWorktreeError(w, http.StatusConflict, string(errors.EIdempotencyConflict),
-				"idempotency_key was already used for a different worktree create request",
-				"retry with the original request or choose a new idempotency_key")
-			return
-		}
-		if record.Meta == nil || record.Broken {
-			s.writeWorktreeError(w, http.StatusConflict, string(errors.EStoreCorrupt),
-				"idempotency_key record exists but worktree metadata is unreadable",
-				"inspect worktree state before retrying")
-			return
-		}
-		s.recordWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey, record.WorktreeID, fingerprint)
-		s.writeWorktreeSuccess(w, record.WorktreeID, record.Meta.TreePath, record.Meta.Branch, repoIdentity.RepoID, record.Meta.ExecutionProfile, record.Meta.CheckoutRoot)
+	// Re-check under the lock: another request could have completed between the
+	// pre-lock check and lock acquisition.
+	if s.handleWorktreeCreateIdempotency(w, repoIdentity.RepoID, req.IdempotencyKey, fingerprint) {
 		return
 	}
 
@@ -233,6 +167,54 @@ func (s *Server) writeIdempotentWorktreeCreate(w http.ResponseWriter, repoID str
 		return true
 	}
 	return false
+}
+
+// handleWorktreeCreateIdempotency resolves a duplicate worktree-create request:
+// it consults the in-memory cache first, then scans the store for a matching
+// record. It writes the appropriate response and returns true if the request
+// was fully handled (either as a successful replay or a conflict). The caller
+// must invoke this once before the repo lock (to short-circuit known duplicates)
+// and once after the lock is held (to close the race between checks).
+func (s *Server) handleWorktreeCreateIdempotency(w http.ResponseWriter, repoID, idempotencyKey, fingerprint string) bool {
+	if entry, isDuplicate, conflict := s.checkWorktreeIdempotency(repoID, idempotencyKey, fingerprint); isDuplicate {
+		if conflict {
+			s.writeWorktreeError(w, http.StatusConflict, string(errors.EIdempotencyConflict),
+				"idempotency_key was already used for a different worktree create request",
+				"retry with the original request or choose a new idempotency_key")
+			return true
+		}
+		if s.writeIdempotentWorktreeCreate(w, repoID, entry) {
+			return true
+		}
+		s.writeWorktreeError(w, http.StatusConflict, string(errors.EStoreCorrupt),
+			"idempotency_key was already accepted but worktree metadata is unreadable",
+			"inspect worktree state before retrying")
+		return true
+	}
+	record, exists, conflict, err := s.findWorktreeByIdempotencyKey(repoID, idempotencyKey, fingerprint)
+	if err != nil {
+		s.writeWorktreeError(w, http.StatusInternalServerError, string(errors.EInternal),
+			"failed to scan worktrees for idempotency: "+err.Error(), "")
+		return true
+	}
+	if !exists {
+		return false
+	}
+	if conflict {
+		s.writeWorktreeError(w, http.StatusConflict, string(errors.EIdempotencyConflict),
+			"idempotency_key was already used for a different worktree create request",
+			"retry with the original request or choose a new idempotency_key")
+		return true
+	}
+	if record.Meta == nil || record.Broken {
+		s.writeWorktreeError(w, http.StatusConflict, string(errors.EStoreCorrupt),
+			"idempotency_key record exists but worktree metadata is unreadable",
+			"inspect worktree state before retrying")
+		return true
+	}
+	s.recordWorktreeIdempotency(repoID, idempotencyKey, record.WorktreeID, fingerprint)
+	s.writeWorktreeSuccess(w, record.WorktreeID, record.Meta.TreePath, record.Meta.Branch, repoID, record.Meta.ExecutionProfile, record.Meta.CheckoutRoot)
+	return true
 }
 
 // handleWorktreeRm handles POST /worktrees/{id}/rm.
@@ -345,14 +327,14 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 
 	if err := s.ensureWorktreeMergeInactive(repoID, record.WorktreeID, "remove the worktree"); err != nil {
 		code := errors.CodeOr(err, errors.EWorktreeMergeActive)
-		s.writeWorktreeRmError(w, http.StatusConflict, string(code), err.Error(), mergeHintFromError(err))
+		s.writeWorktreeRmError(w, http.StatusConflict, string(code), err.Error(), errors.Hint(err))
 		return
 	}
 
 	unresolved, err := s.unresolvedInvocationsForWorktree(repoID, record.WorktreeID)
 	if err != nil {
 		code := errors.CodeOr(err, errors.EInternal)
-		s.writeWorktreeRmError(w, http.StatusInternalServerError, string(code), err.Error(), mergeHintFromError(err))
+		s.writeWorktreeRmError(w, http.StatusInternalServerError, string(code), err.Error(), errors.Hint(err))
 		return
 	}
 	if len(unresolved) > 0 && !req.Force {
@@ -379,7 +361,7 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 				StopCallback: s.stopInvocationForDiscard,
 			}); err != nil {
 				code := errors.CodeOr(err, errors.ELandFailed)
-				s.writeWorktreeRmError(w, http.StatusConflict, string(code), err.Error(), mergeHintFromError(err))
+				s.writeWorktreeRmError(w, http.StatusConflict, string(code), err.Error(), errors.Hint(err))
 				return
 			}
 		}

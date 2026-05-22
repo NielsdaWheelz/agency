@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"io"
-	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
@@ -87,9 +86,8 @@ func TaskTarget(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 			}, stdout, stderr)
 		case TaskTargetActionWatch:
 			return TaskWatch(ctx, cr, fsys, cwd, TaskWatchOpts{
-				TaskRef:  taskRef,
-				RepoRef:  opts.RepoRef,
-				Interval: (2 * time.Second).String(),
+				TaskRef: taskRef,
+				RepoRef: opts.RepoRef,
 			}, stdout, stderr)
 		case TaskTargetActionRetry:
 			return TaskRetry(ctx, cr, fsys, cwd, TaskRetryOpts{

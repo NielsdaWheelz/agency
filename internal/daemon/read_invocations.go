@@ -182,6 +182,18 @@ type resolvedInvocation struct {
 	Meta         *store.InvocationMeta
 }
 
+// invocationResolveStatus maps an invocation-resolve error to the appropriate
+// HTTP status + agency error code. Used by mutation handlers that all share
+// the same not-found/ambiguous dispatch but pass control to their own typed
+// error writer.
+func invocationResolveStatus(err error) (int, errors.Code) {
+	code := errors.CodeOr(err, errors.EInvocationNotFound)
+	if code == errors.EInvocationIDAmbiguous {
+		return http.StatusConflict, code
+	}
+	return http.StatusNotFound, code
+}
+
 // resolveInvocationRef resolves an invocation reference across all repos.
 func (s *Server) resolveInvocationRef(ref string, repoID string) (*resolvedInvocation, error) {
 	repoIDs, err := getRepoIDsForQuery(s, repoID)

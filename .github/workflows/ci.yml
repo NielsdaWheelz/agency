@@ -49,15 +49,15 @@ jobs:
             echo "has_token=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_token=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Skipping GH-backed S5 happy-path e2e - AGENCY_GH_TOKEN not configured"
+            echo "::notice::Skipping GH-backed worktree PR happy-path e2e - AGENCY_GH_TOKEN not configured"
           fi
       - name: gh auth status
         if: steps.check-token.outputs.has_token == 'true'
         env:
           GH_TOKEN: ${{ secrets.AGENCY_GH_TOKEN }}
         run: gh auth status
-      - name: make e2e-s5-happy
+      - name: make e2e-gh-happy
         if: steps.check-token.outputs.has_token == 'true'
         env:
           GH_TOKEN: ${{ secrets.AGENCY_GH_TOKEN }}
-        run: make e2e-s5-happy
+        run: make e2e-gh-happy

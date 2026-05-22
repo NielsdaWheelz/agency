@@ -46,44 +46,6 @@ This file is binding for contributors and agents. If a rule is listed under Bind
 
 ## Runner Protocol
 
-`.agency/state/runner_status.json` is the only runner contract.
-
-It is the only semantic state contract for an invocation.
-Do not model separate semantic, display, or readiness layers in runner output.
-
-Update it at milestones:
-
-| State | When | Required Fields |
-|--------|------|-----------------|
-| `running` | Actively executing work | `summary` |
-| `waiting` | Not executing right now. Use this for both turn-complete idle and waiting for user input. | `summary` |
-| `succeeded` | Work is complete and validated enough to hand back. | `summary`, `how_to_test` |
-| `failed` | Work cannot complete successfully. | `summary` |
-
-Rules:
-
-- Use exactly one canonical `state`.
-- `waiting` covers both done-and-idle and waiting-for-user cases.
-- Use `reason` when `waiting` or `failed` needs clarification.
-- When `state` is `waiting` because the runner needs a user answer, include `questions[]`.
-- `blocked` is removed from the runner and user-facing vocabulary. Do not write it.
-- `ready` is removed. Use `succeeded`.
-- `needs_input` is removed. Use `waiting`.
-- `working` is removed. Use `running`.
-
-Schema:
-
-```json
-{
-  "schema_version": "2.0",
-  "state": "waiting",
-  "updated_at": "2026-01-19T12:00:00Z",
-  "reason": "awaiting_user_input",
-  "summary": "I finished the API refactor and need the preferred webhook path before I update the client.",
-  "questions": [
-    "Should the webhook stay at /webhooks/github or move to /api/github/webhook?"
-  ]
-}
-```
-
-Before finishing successfully, set `state` to `succeeded` and include `summary` and `how_to_test`.
+The canonical runner protocol text lives in `internal/scaffold/claude_md.go`.
+Do not maintain a second copy here; update the scaffold template and its tests
+when the runner contract changes.

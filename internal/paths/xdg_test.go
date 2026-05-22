@@ -7,12 +7,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// mapEnv is a simple map-backed Env implementation for testing.
+// mapEnv backs a getenv function for tests; pass mapEnv{...}.get.
 type mapEnv map[string]string
 
-func (m mapEnv) Get(key string) string {
-	return m[key]
-}
+func (m mapEnv) get(k string) string { return m[k] }
 
 func TestResolveDirs_DataDir(t *testing.T) {
 	t.Parallel()
@@ -44,13 +42,13 @@ func TestResolveDirs_DataDir(t *testing.T) {
 			want:     filepath.FromSlash("/home/testuser/Library/Application Support/agency"),
 		},
 		{
-			name:     "XDG_DATA_HOME fallback (linux)",
+			name:     "XDG_DATA_HOME directory (linux)",
 			env:      mapEnv{"XDG_DATA_HOME": "/xdg/data"},
 			isDarwin: false,
 			want:     filepath.FromSlash("/xdg/data/agency"),
 		},
 		{
-			name:     "default fallback (linux)",
+			name:     "Linux home directory default",
 			env:      mapEnv{},
 			isDarwin: false,
 			want:     filepath.FromSlash("/home/testuser/.local/share/agency"),
@@ -70,11 +68,10 @@ func TestResolveDirs_DataDir(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			dirs := resolveDirsWithOS(tt.env, home, tt.isDarwin)
+			dirs := resolveDirsWithOS(tt.env.get, home, tt.isDarwin)
 			assert.Equal(t, tt.want, dirs.DataDir)
 		})
 	}
@@ -110,13 +107,13 @@ func TestResolveDirs_ConfigDir(t *testing.T) {
 			want:     filepath.FromSlash("/home/testuser/Library/Preferences/agency"),
 		},
 		{
-			name:     "XDG_CONFIG_HOME fallback (linux)",
+			name:     "XDG_CONFIG_HOME directory (linux)",
 			env:      mapEnv{"XDG_CONFIG_HOME": "/xdg/config"},
 			isDarwin: false,
 			want:     filepath.FromSlash("/xdg/config/agency"),
 		},
 		{
-			name:     "default fallback (linux)",
+			name:     "Linux home directory default",
 			env:      mapEnv{},
 			isDarwin: false,
 			want:     filepath.FromSlash("/home/testuser/.config/agency"),
@@ -136,11 +133,10 @@ func TestResolveDirs_ConfigDir(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			dirs := resolveDirsWithOS(tt.env, home, tt.isDarwin)
+			dirs := resolveDirsWithOS(tt.env.get, home, tt.isDarwin)
 			assert.Equal(t, tt.want, dirs.ConfigDir)
 		})
 	}
@@ -176,13 +172,13 @@ func TestResolveDirs_CacheDir(t *testing.T) {
 			want:     filepath.FromSlash("/home/testuser/Library/Caches/agency"),
 		},
 		{
-			name:     "XDG_CACHE_HOME fallback (linux)",
+			name:     "XDG_CACHE_HOME directory (linux)",
 			env:      mapEnv{"XDG_CACHE_HOME": "/xdg/cache"},
 			isDarwin: false,
 			want:     filepath.FromSlash("/xdg/cache/agency"),
 		},
 		{
-			name:     "default fallback (linux)",
+			name:     "Linux home directory default",
 			env:      mapEnv{},
 			isDarwin: false,
 			want:     filepath.FromSlash("/home/testuser/.cache/agency"),
@@ -202,11 +198,10 @@ func TestResolveDirs_CacheDir(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			dirs := resolveDirsWithOS(tt.env, home, tt.isDarwin)
+			dirs := resolveDirsWithOS(tt.env.get, home, tt.isDarwin)
 			assert.Equal(t, tt.want, dirs.CacheDir)
 		})
 	}
@@ -224,7 +219,7 @@ func TestResolveDirs_AllDirs(t *testing.T) {
 		"AGENCY_CACHE_DIR":  "/ca",
 	}
 
-	dirs := resolveDirsWithOS(env, home, false)
+	dirs := resolveDirsWithOS(env.get, home, false)
 
 	assert.Equal(t, "/d", dirs.DataDir)
 	assert.Equal(t, "/c", dirs.ConfigDir)
@@ -238,7 +233,7 @@ func TestResolveDirs_TildeNotExpanded(t *testing.T) {
 	home := filepath.FromSlash("/home/testuser")
 	env := mapEnv{"AGENCY_DATA_DIR": "~/data"}
 
-	dirs := resolveDirsWithOS(env, home, false)
+	dirs := resolveDirsWithOS(env.get, home, false)
 
 	// Should be literal ~/data, not /home/testuser/data
 	assert.Equal(t, "~/data", dirs.DataDir, "tilde should not be expanded")
@@ -251,7 +246,7 @@ func TestResolveDirs_EmptyEnvVarIgnored(t *testing.T) {
 	// Empty string should be treated as unset
 	env := mapEnv{"AGENCY_DATA_DIR": ""}
 
-	dirs := resolveDirsWithOS(env, home, false)
+	dirs := resolveDirsWithOS(env.get, home, false)
 
 	// Should fall through to default, not use empty string
 	want := filepath.FromSlash("/home/testuser/.local/share/agency")

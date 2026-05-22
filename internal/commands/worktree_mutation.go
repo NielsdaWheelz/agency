@@ -19,6 +19,51 @@ import (
 
 const worktreeMergePollInterval = 500 * time.Millisecond
 
+// jsonFailFn returns an error-passthrough function that, when emitJSON is true,
+// writes a structured JSON error envelope to stdout for command-failure cases.
+func jsonFailFn(stdout io.Writer, emitJSON bool) func(error) error {
+	return func(err error) error {
+		if err == nil || !emitJSON {
+			return err
+		}
+		return writeCommandJSONError(stdout, err)
+	}
+}
+
+// requireConfirmation gates a destructive action behind interactive typed
+// confirmation: in a non-interactive context it returns EConfirmationRequired,
+// otherwise it prompts on stderr and reads from in (or os.Stdin if in is nil)
+// expecting the literal word. action names the user-facing operation noun used
+// in the non-interactive error message (e.g. "removal", "merge").
+func requireConfirmation(stderr io.Writer, in io.Reader, interactive bool, word, action string) error {
+	if !interactive {
+		return errors.NewWithDetails(
+			errors.EConfirmationRequired,
+			"non-interactive "+action+" requires explicit confirmation",
+			map[string]string{"hint": "re-run with --yes"},
+		)
+	}
+	_, _ = fmt.Fprintf(stderr, "confirm: type '%s' to proceed: ", word)
+	if in == nil {
+		in = os.Stdin
+	}
+	line, err := bufio.NewReader(io.LimitReader(in, maxConfirmationBytes+1)).ReadString('\n')
+	if err != nil && err != io.EOF {
+		return errors.Wrap(errors.EInternal, "failed to read "+action+" confirmation input", err)
+	}
+	if len(line) > maxConfirmationBytes {
+		return errors.NewWithDetails(
+			errors.EInvalidArgument,
+			"confirmation input exceeds maximum length",
+			map[string]string{"hint": "type '" + word + "' exactly"},
+		)
+	}
+	if strings.TrimSpace(line) != word {
+		return errors.New(errors.EAborted, action+" confirmation failed; expected '"+word+"'")
+	}
+	return nil
+}
+
 // WorktreeRmOpts holds options for the worktree rm command.
 type WorktreeRmOpts struct {
 	WorktreeRef string
@@ -26,62 +71,28 @@ type WorktreeRmOpts struct {
 	Force       bool
 	Yes         bool
 
-	// IsInteractive reports whether stdin/stderr are interactive terminals.
-	// If nil, defaults to checking os.Stdin + os.Stderr.
-	IsInteractive func() bool
+	// Interactive reports whether stdin/stderr are interactive terminals.
+	// Set by the CLI dispatcher; tests pass an explicit value.
+	Interactive bool
 
-	// ConfirmationIn provides interactive confirmation input.
+	// ConfirmationIn supplies the typed-confirmation reader.
 	// If nil, defaults to os.Stdin.
 	ConfirmationIn io.Reader
 }
 
 // WorktreeRm removes an integration worktree.
 func WorktreeRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeRmOpts, stdout, stderr io.Writer) error {
-	ns, err := setupDaemonNav(ctx, fsys, "")
-	if err != nil {
-		return err
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "worktree rm",
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, "", ResolveRepoContextOpts{
+		RepoRef: opts.RepoRef,
+		CmdName: "worktree rm",
 	})
 	if err != nil {
 		return err
 	}
 
 	if !opts.Yes {
-		isInteractive := opts.IsInteractive
-		if isInteractive == nil {
-			isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stderr.Fd()) }
-		}
-		if !isInteractive() {
-			return errors.NewWithDetails(
-				errors.EConfirmationRequired,
-				"non-interactive removal requires explicit confirmation",
-				map[string]string{"hint": "re-run with --yes"},
-			)
-		}
-
-		_, _ = fmt.Fprint(stderr, "confirm: type 'rm' to proceed: ")
-		confirmationIn := opts.ConfirmationIn
-		if confirmationIn == nil {
-			confirmationIn = os.Stdin
-		}
-		line, err := bufio.NewReader(io.LimitReader(confirmationIn, maxConfirmationBytes+1)).ReadString('\n')
-		if err != nil && err != io.EOF {
-			return errors.Wrap(errors.EInternal, "failed to read worktree remove confirmation input", err)
-		}
-		if len(line) > maxConfirmationBytes {
-			return errors.NewWithDetails(
-				errors.EInvalidArgument,
-				"confirmation input exceeds maximum length",
-				map[string]string{"hint": "type 'rm' exactly"},
-			)
-		}
-		if strings.TrimSpace(line) != "rm" {
-			return errors.New(errors.EAborted, "worktree remove confirmation failed; expected 'rm'")
+		if err := requireConfirmation(stderr, opts.ConfirmationIn, opts.Interactive, "rm", "removal"); err != nil {
+			return err
 		}
 	}
 
@@ -107,22 +118,11 @@ type WorktreePRSyncOpts struct {
 
 // WorktreePRSync performs worktree-scoped branch push + PR create/update via daemon.
 func WorktreePRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreePRSyncOpts, stdout, stderr io.Writer) error {
-	fail := func(err error) error {
-		if err == nil || !opts.JSON {
-			return err
-		}
-		return writeCommandJSONError(stdout, err)
-	}
+	fail := jsonFailFn(stdout, opts.JSON)
 
-	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
-	if err != nil {
-		return fail(err)
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "worktree pr sync",
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, opts.DataDirOverride, ResolveRepoContextOpts{
+		RepoRef: opts.RepoRef,
+		CmdName: "worktree pr sync",
 	})
 	if err != nil {
 		return fail(err)
@@ -165,96 +165,44 @@ func WorktreePRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 }
 
 // WorktreePRMergeOpts holds options for the worktree pr merge command.
+//
+// Strategy is one of "squash" (default if empty), "merge", or "rebase". The
+// daemon rejects any other value. The CLI layer narrows mutually-exclusive
+// cobra flags into this single string at the boundary.
 type WorktreePRMergeOpts struct {
 	WorktreeRef      string
 	RepoRef          string
-	Squash           bool
-	Merge            bool
-	Rebase           bool
+	Strategy         string
 	NoDeleteBranch   bool
 	Yes              bool
 	JSON             bool
 	AgencyConfigPath string
 
 	DataDirOverride string
-	IsInteractive   func() bool
+	Interactive     bool
 	ConfirmationIn  io.Reader
 }
 
 // WorktreePRMerge performs worktree-scoped verify + merge via daemon.
 func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreePRMergeOpts, stdout, stderr io.Writer) error {
-	fail := func(err error) error {
-		if err == nil || !opts.JSON {
-			return err
-		}
-		return writeCommandJSONError(stdout, err)
-	}
+	fail := jsonFailFn(stdout, opts.JSON)
 
-	strategyCount := 0
-	strategy := "squash"
-	if opts.Squash {
-		strategyCount++
+	strategy := opts.Strategy
+	if strategy == "" {
 		strategy = "squash"
-	}
-	if opts.Merge {
-		strategyCount++
-		strategy = "merge"
-	}
-	if opts.Rebase {
-		strategyCount++
-		strategy = "rebase"
-	}
-	if strategyCount > 1 {
-		return fail(errors.New(errors.EUsage, "at most one of --squash, --merge, --rebase may be specified"))
 	}
 
 	confirmationMode := "yes"
-	confirmed := true
 	if !opts.Yes {
-		isInteractive := opts.IsInteractive
-		if isInteractive == nil {
-			isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stderr.Fd()) }
-		}
-		if !isInteractive() {
-			return fail(errors.NewWithDetails(
-				errors.EConfirmationRequired,
-				"non-interactive merge requires explicit confirmation",
-				map[string]string{"hint": "re-run with --yes"},
-			))
-		}
-
-		_, _ = fmt.Fprint(stderr, "confirm: type 'merge' to proceed: ")
-		confirmationIn := opts.ConfirmationIn
-		if confirmationIn == nil {
-			confirmationIn = os.Stdin
-		}
-		line, err := bufio.NewReader(io.LimitReader(confirmationIn, maxConfirmationBytes+1)).ReadString('\n')
-		if err != nil && err != io.EOF {
-			return fail(errors.Wrap(errors.EInternal, "failed to read worktree merge confirmation input", err))
-		}
-		if len(line) > maxConfirmationBytes {
-			return fail(errors.NewWithDetails(
-				errors.EInvalidArgument,
-				"confirmation input exceeds maximum length",
-				map[string]string{"hint": "type 'merge' exactly"},
-			))
-		}
-		if strings.TrimSpace(line) != "merge" {
-			return fail(errors.New(errors.EAborted, "merge confirmation failed; expected 'merge'"))
+		if err := requireConfirmation(stderr, opts.ConfirmationIn, opts.Interactive, "merge", "merge"); err != nil {
+			return fail(err)
 		}
 		confirmationMode = "typed"
-		confirmed = true
 	}
 
-	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
-	if err != nil {
-		return fail(err)
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "worktree pr merge",
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, opts.DataDirOverride, ResolveRepoContextOpts{
+		RepoRef: opts.RepoRef,
+		CmdName: "worktree pr merge",
 	})
 	if err != nil {
 		return fail(err)
@@ -268,7 +216,7 @@ func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd
 	resp, err := ns.client.WorktreePRMerge(ctx, opts.WorktreeRef, repoCtx.RepoID, daemon.WorktreePRMergeRequest{
 		Strategy:         strategy,
 		ConfirmationMode: confirmationMode,
-		Confirmed:        confirmed,
+		Confirmed:        true,
 		NoDeleteBranch:   opts.NoDeleteBranch,
 		AgencyConfigPath: agencyConfigPath,
 	})
@@ -401,22 +349,11 @@ type WorktreeRebaseOpts struct {
 
 // WorktreeRebase performs worktree-scoped rebase via daemon.
 func WorktreeRebase(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeRebaseOpts, stdout, stderr io.Writer) error {
-	fail := func(err error) error {
-		if err == nil || !opts.JSON {
-			return err
-		}
-		return writeCommandJSONError(stdout, err)
-	}
+	fail := jsonFailFn(stdout, opts.JSON)
 
-	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
-	if err != nil {
-		return fail(err)
-	}
-
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, ResolveRepoContextOpts{
-		RepoRef:       opts.RepoRef,
-		AllowAllRepos: false,
-		CmdName:       "worktree rebase",
+	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, opts.DataDirOverride, ResolveRepoContextOpts{
+		RepoRef: opts.RepoRef,
+		CmdName: "worktree rebase",
 	})
 	if err != nil {
 		return fail(err)
@@ -446,6 +383,6 @@ func WorktreeRebase(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 	_, _ = fmt.Fprintln(stdout, "worktree rebase complete")
 	_, _ = fmt.Fprintf(stdout, "  worktree_id:     %s\n", resp.IntegrationWorktreeID)
 	_, _ = fmt.Fprintf(stdout, "  branch:          %s\n", resp.Branch)
-	_, _ = fmt.Fprintf(stdout, "  base_branch:   %s\n", resp.BaseBranch)
+	_, _ = fmt.Fprintf(stdout, "  base_branch:     %s\n", resp.BaseBranch)
 	return nil
 }

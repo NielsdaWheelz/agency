@@ -414,3 +414,34 @@ func firstNonEmpty(values ...string) string {
 	}
 	return ""
 }
+
+// setActionError flags the next render as showing an error message in the
+// action status line.
+func (m *model) setActionError(msg string) {
+	m.lastActionError = true
+	m.lastActionMessage = msg
+}
+
+// setActionMessage flags the next render as showing a non-error message.
+func (m *model) setActionMessage(msg string) {
+	m.lastActionError = false
+	m.lastActionMessage = msg
+}
+
+// resetInvocationSelection clears the cached invocations list and selection,
+// marking workspace as loading so the next tick triggers a fetch.
+func (m *model) resetInvocationSelection() {
+	m.snapshot.Invocations = nil
+	m.selectedIndex = 0
+	m.selectedInvocationID = ""
+	m.selectedRepoID = ""
+	m.workspaceLoading = true
+}
+
+// resetWorktreeSelection clears the cached worktree+invocation lists and
+// selection (extends resetInvocationSelection with worktree-pane state).
+func (m *model) resetWorktreeSelection() {
+	m.snapshot.Worktrees = nil
+	m.selectedWorktreeIndex = 0
+	m.resetInvocationSelection()
+}

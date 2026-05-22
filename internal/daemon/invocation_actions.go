@@ -30,11 +30,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 
 	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
 	if resolveErr != nil {
-		code := errors.CodeOr(resolveErr, errors.EInvocationNotFound)
-		status := http.StatusNotFound
-		if code == errors.EInvocationIDAmbiguous {
-			status = http.StatusConflict
-		}
+		status, code := invocationResolveStatus(resolveErr)
 		s.writeErrorWithRequestID(w, status, requestID, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
 		return
 	}
@@ -286,11 +282,7 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 
 	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
 	if resolveErr != nil {
-		code := errors.CodeOr(resolveErr, errors.EInvocationNotFound)
-		status := http.StatusNotFound
-		if code == errors.EInvocationIDAmbiguous {
-			status = http.StatusConflict
-		}
+		status, code := invocationResolveStatus(resolveErr)
 		writeKillError(status, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
 		return
 	}

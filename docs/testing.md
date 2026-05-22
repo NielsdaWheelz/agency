@@ -1,6 +1,6 @@
 # Testing
 
-> Normative target-state document for tests in this repo. This describes the desired steady state, not necessarily the current state. All new tests must conform. Existing tests should be migrated when touched or when a planned cleanup PR explicitly owns them.
+> Normative target-state document for tests in this repo. This describes the desired steady state, not necessarily the current state. All new tests must conform. Existing tests should be brought into conformance when touched or when a planned cleanup PR explicitly owns them.
 
 ## 1. Philosophy
 
@@ -149,7 +149,7 @@ Rules:
 - Run GH-backed and local E2E through the documented `make e2e*` targets, not ad hoc package-wide E2E invocations.
 - Keep E2E in `*_e2e_test.go` files.
 - Build the real binary before running: `go build -o <tmpdir>/agency ./cmd/agency`.
-- Invoke the binary as a subprocess with `exec.Command`.
+- Invoke the binary as a subprocess through `internal/exec` / `exec.CommandRunner`, not direct `os/exec`.
 - Assert on exit codes, stdout/stderr content, and filesystem side effects.
 - Use `testing.Short()` to skip in short mode.
 - Tests must be independent and can run with `-count=1`.
@@ -257,15 +257,6 @@ Use real implementations. Use real temp git repos, real `httptest.Server` instan
 | Daemon HTTP handlers | `httptest` is fast and tests real routing/serialization |
 | `internal/exec.CommandRunner` in integration tests that own the command | If you control the command, run it for real |
 | Mock generation frameworks (`gomock`, `mockery`, etc.) | Hand-written fakes are simpler, more readable, and do not couple tests to interface signatures |
-
-### Exceptions (Temporary and Explicit)
-
-Short-term exceptions are allowed only when migration work is in progress and the test would otherwise be deleted or blocked. Requirements:
-
-- The exception must be documented in the PR description or a code comment at the mock site.
-- The exception must be time-bounded (for example, "remove in this PR before merge" or "remove in next planned cleanup PR").
-- The exception must not be hidden in global/shared test setup.
-- Every exception entry must name the intended replacement layer/test.
 
 ## 8. Data Setup and Infrastructure
 
@@ -444,10 +435,10 @@ make vet         # go vet ./...
 make lint        # golangci-lint run ./...
 make fmt         # rewrite unformatted Go files in place
 make fmt-check   # gofmt formatting check
-make e2e         # E2E entrypoint (always runs S5 failure matrix; GH happy path when token exists, else local smoke)
-make e2e-gh      # run both S5 E2E suites (requires GH_TOKEN or GITHUB_TOKEN)
-make e2e-s5-happy # GH-backed S5 happy-path E2E (requires GH token)
-make e2e-s5-failure-matrix # S5 failure-matrix E2E (no GH token)
+make e2e         # E2E entrypoint (always runs worktree PR failure matrix; GH happy path when token exists, else local smoke)
+make e2e-gh      # run both worktree PR E2E suites (requires GH_TOKEN or GITHUB_TOKEN)
+make e2e-gh-happy # GH-backed worktree PR happy-path E2E (requires GH token)
+make e2e-pr-failure-matrix # worktree PR failure-matrix E2E (no GH token)
 make e2e-local   # local black-box CLI E2E smoke tests
 ```
 
@@ -456,17 +447,17 @@ Command semantics:
 - `make check`: fast resource-budgeted local feedback loop for routine development. It runs formatting, `go vet`, lint, unit and integration tests, and a build. It does not run race tests or E2E.
 - `make verify`: full resource-budgeted pre-merge verification. It runs formatting, `go vet`, lint, actionlint, shfmt, shellcheck, govulncheck, `go mod tidy -diff`, `go mod verify`, race tests, E2E, completions, `goreleaser check`, and a build.
 - `make vet`: standalone `go vet` target.
-- `make e2e`: primary E2E entrypoint. It always runs the deterministic S5 failure matrix, then runs the GH-backed S5 happy path when `AGENCY_GH_E2E=1` and a GH token are present; otherwise it runs local smoke E2E.
-- `make e2e-gh`: runs both S5 suites, requires `GH_TOKEN` or `GITHUB_TOKEN`, and sets `AGENCY_GH_E2E=1` for the happy-path run.
-- `make e2e-s5-happy`: runs only the GH-backed S5 happy-path suite with `AGENCY_GH_E2E=1`, `AGENCY_GH_REPO=NielsdaWheelz/agency-test`, and a GH token.
-- `make e2e-s5-failure-matrix`: runs only the deterministic S5 failure-matrix suite.
+- `make e2e`: primary E2E entrypoint. It always runs the deterministic worktree PR failure matrix, then runs the GH-backed worktree PR happy path when `AGENCY_GH_E2E=1` and a GH token are present; otherwise it runs local smoke E2E.
+- `make e2e-gh`: runs both worktree PR suites, requires `GH_TOKEN` or `GITHUB_TOKEN`, and sets `AGENCY_GH_E2E=1` for the happy-path run.
+- `make e2e-gh-happy`: runs only the GH-backed worktree PR happy-path suite with `AGENCY_GH_E2E=1`, `AGENCY_GH_REPO=NielsdaWheelz/agency-test`, and a GH token.
+- `make e2e-pr-failure-matrix`: runs only the deterministic worktree PR failure-matrix suite.
 - `make e2e-local`: runs only the local black-box CLI E2E smoke suite with `AGENCY_LOCAL_E2E=1`.
 
 ### CI Shape
 
 1. Run `make verify` in CI.
-2. Let `make verify` own the deterministic non-GitHub gate, including the S5 failure matrix and local smoke E2E.
-3. Run `make e2e-s5-happy` in a separate job only when `AGENCY_GH_TOKEN` is configured.
+2. Let `make verify` own the deterministic non-GitHub gate, including the worktree PR failure matrix and local smoke E2E.
+3. Run `make e2e-gh-happy` in a separate job only when `AGENCY_GH_TOKEN` is configured.
 4. Cancel stale runs for the same workflow/ref with GitHub Actions concurrency.
 5. Keep the GH-backed happy-path suite separate from the main verify job for attribution.
 
@@ -509,7 +500,7 @@ These requirements are enforced by CLAUDE.md and must be tested:
 - Safe delete operations must use `fs.SafeRemoveAll` — tests should verify containment checks.
 - Path comparisons must use absolute, clean, symlink-resolved paths.
 
-## 15. Migration Rules for Existing Tests
+## 15. Cleanup Rules for Existing Tests
 
 When modifying existing tests during cleanup:
 
@@ -517,7 +508,6 @@ When modifying existing tests during cleanup:
 2. If deleting a test, identify the replacement layer (unit, integration, or E2E).
 3. Do not add new global test mocks.
 4. Do not introduce mock generation frameworks.
-5. If a temporary exception is required, document it in the PR description and remove it before merge when feasible.
 
 ## 16. Pre-Submission Checklist
 

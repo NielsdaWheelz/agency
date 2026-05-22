@@ -180,11 +180,7 @@ type landingMutation struct {
 func (s *Server) prepareLandingMutation(w http.ResponseWriter, r *http.Request, requestID, invocationID, repoID, lockName string, writeError func(http.ResponseWriter, int, string, string, string, string)) (*landingMutation, bool) {
 	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
 	if resolveErr != nil {
-		code := errors.CodeOr(resolveErr, errors.EInvocationNotFound)
-		status := http.StatusNotFound
-		if code == errors.EInvocationIDAmbiguous {
-			status = http.StatusConflict
-		}
+		status, code := invocationResolveStatus(resolveErr)
 		writeError(w, status, requestID, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
 		return nil, false
 	}

@@ -15,7 +15,7 @@ This document covers Bubble Tea and terminal-facing workspace UI rules.
 - Repos and worktrees narrow the agent list; they are not top-level modes or tabs.
 - Present worktrees are shown by default.
 - Archived worktrees appear only through an explicit archived or all-worktrees toggle.
-- Narrow layouts may reflow, collapse, or shorten panes, but must not fall back to the legacy stacked workspace.
+- Narrow layouts may reflow, collapse, or shorten panes, but must keep the same responsive workspace model.
 - Read-only detail panes display selected agent details and are not focus targets.
 - Workspace focus cycles through interactive panes with `tab` and `shift+tab`.
 - In the workspace, `enter` applies scope in repo/worktree panes and runs the selected agent default action in the agent pane.

@@ -17,12 +17,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
-type completionEnv struct{}
-
-func (completionEnv) Get(key string) string {
-	return os.Getenv(key)
-}
-
 func completionClient(cmd *cobra.Command) (context.Context, *daemonclient.Client, error) {
 	ctx := context.Background()
 	if cmd != nil && cmd.Context() != nil {
@@ -35,7 +29,7 @@ func completionClient(cmd *cobra.Command) (context.Context, *daemonclient.Client
 	}
 
 	fsys := fs.NewRealFS()
-	dirs := paths.ResolveDirs(completionEnv{}, homeDir)
+	dirs := paths.ResolveDirs(os.Getenv, homeDir)
 	st := store.NewStore(fsys, dirs.DataDir, time.Now)
 
 	client := daemonclient.NewClient(st.DaemonSocketPath())

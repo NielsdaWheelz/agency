@@ -261,7 +261,7 @@ func resolveCommandDirs(dataDirOverride, configDirOverride string) (paths.Dirs, 
 	if err != nil {
 		return paths.Dirs{}, errors.Wrap(errors.EInternal, "failed to get home directory", err)
 	}
-	dirs := paths.ResolveDirs(osEnv{}, homeDir)
+	dirs := paths.ResolveDirs(os.Getenv, homeDir)
 	if dataDirOverride != "" {
 		dirs.DataDir = dataDirOverride
 	}
@@ -304,6 +304,23 @@ func setupDaemonNav(ctx context.Context, fsys fs.FS, dataDirOverride string) (*d
 		return nil, err
 	}
 	return &daemonNavSetup{dirs: dirs, client: client}, nil
+}
+
+// setupDaemonNavAndRepo bundles the daemon nav setup with repo-context
+// resolution, the universal two-step prelude for every CLI command that talks
+// to the daemon about a specific repo. Pass "" for dataDirOverride to use the
+// default. Returns the nav setup (so callers can access ns.client) plus the
+// resolved repo context.
+func setupDaemonNavAndRepo(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd, dataDirOverride string, repoOpts ResolveRepoContextOpts) (*daemonNavSetup, *RepoContextResult, error) {
+	ns, err := setupDaemonNav(ctx, fsys, dataDirOverride)
+	if err != nil {
+		return nil, nil, err
+	}
+	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, repoOpts)
+	if err != nil {
+		return nil, nil, err
+	}
+	return ns, repoCtx, nil
 }
 
 func runAttachedInDir(ctx context.Context, command string, args []string, dir string) (exec.CmdResult, error) {

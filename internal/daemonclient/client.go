@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
@@ -181,6 +182,47 @@ func (c *Client) doAPIRequest(ctx context.Context, method, rawURL string, reqBod
 		return nil, err
 	}
 	return &apiResp, nil
+}
+
+// postAction is the canonical POST-mutation helper used across this package:
+// checks API version, builds the URL with an optional ?repo_id= query, posts
+// body, decodes into T. repoID is "" for endpoints that don't take it.
+func postAction[T any](ctx context.Context, c *Client, urlPath, repoID string, body any) (*T, error) {
+	if err := c.CheckAPIVersion(ctx); err != nil {
+		return nil, err
+	}
+	u := daemonBaseURL + urlPath
+	if repoID != "" {
+		u += "?repo_id=" + url.QueryEscape(repoID)
+	}
+	var result T
+	if err := c.doActionRequest(ctx, http.MethodPost, u, body, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// getResult is the canonical GET-and-decode helper for read endpoints whose
+// only query parameter is an optional repo_id. Endpoints taking more
+// parameters build url.Values directly and call doAPIRequest themselves.
+func getResult[T any](ctx context.Context, c *Client, urlPath, repoID string) (*daemon.Result[T], error) {
+	u := daemonBaseURL + urlPath
+	if repoID != "" {
+		u += "?repo_id=" + url.QueryEscape(repoID)
+	}
+	apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	return decodeResult[T](apiResp)
+}
+
+// queryURL builds urlPath?<encoded query>. If q has no entries the "?" is omitted.
+func queryURL(urlPath string, q url.Values) string {
+	if encoded := q.Encode(); encoded != "" {
+		return daemonBaseURL + urlPath + "?" + encoded
+	}
+	return daemonBaseURL + urlPath
 }
 
 func decodeResult[T any](apiResp *rawAPIResponse) (*daemon.Result[T], error) {

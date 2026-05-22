@@ -583,11 +583,3 @@ func prSyncNonInteractiveEnv(profileEnv map[string]string) map[string]string {
 	return env
 }
 
-func prSyncHintFromError(err error) string {
-	if ae, ok := errors.AsAgencyError(err); ok && ae.Details != nil {
-		if hint := strings.TrimSpace(ae.Details["hint"]); hint != "" {
-			return hint
-		}
-	}
-	return ""
-}

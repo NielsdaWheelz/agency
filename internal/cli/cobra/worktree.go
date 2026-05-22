@@ -17,9 +17,7 @@ func newWorktreeCmd() *cobra.Command {
 	var yes bool
 	var allowDirty bool
 	var forceWithLease bool
-	var squash bool
-	var mergeStrategy bool
-	var rebaseStrategy bool
+	var squash, merge, rebase bool
 	var noDeleteBranch bool
 	var agencyConfigPath string
 	createCmd := newWorktreeCreateCmd()
@@ -76,9 +74,7 @@ Target action flags:
 				Yes:              yes,
 				AllowDirty:       allowDirty,
 				ForceWithLease:   forceWithLease,
-				Squash:           squash,
-				Merge:            mergeStrategy,
-				Rebase:           rebaseStrategy,
+				Strategy:         resolveMergeStrategy(squash, merge, rebase),
 				NoDeleteBranch:   noDeleteBranch,
 				AgencyConfigPath: agencyConfigPath,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
@@ -100,10 +96,11 @@ Target action flags:
 	cmd.Flags().BoolVar(&allowDirty, "allow-dirty", false, "Allow sync with dirty integration worktree")
 	cmd.Flags().BoolVar(&forceWithLease, "force-with-lease", false, "Use git push --force-with-lease")
 	cmd.Flags().BoolVar(&squash, "squash", false, "Use squash merge strategy (default)")
-	cmd.Flags().BoolVar(&mergeStrategy, "merge", false, "Use regular merge strategy")
-	cmd.Flags().BoolVar(&rebaseStrategy, "rebase", false, "Use rebase merge strategy")
+	cmd.Flags().BoolVar(&merge, "merge", false, "Use regular merge strategy")
+	cmd.Flags().BoolVar(&rebase, "rebase", false, "Use rebase merge strategy")
 	cmd.Flags().BoolVar(&noDeleteBranch, "no-delete-branch", false, "Preserve remote branch after merge")
 	cmd.Flags().StringVar(&agencyConfigPath, "agency-config", "", "Load agency config from this file")
+	cmd.MarkFlagsMutuallyExclusive("squash", "merge", "rebase")
 	lsCmd.MarkFlagsMutuallyExclusive("repo", "all-repos")
 	registerRepoFlagCompletion(cmd)
 
@@ -134,6 +131,20 @@ Target action flags:
 	}
 
 	return cmd
+}
+
+// resolveMergeStrategy maps cobra's mutually-exclusive --squash/--merge/--rebase
+// flags into the daemon's strategy string. "" means "use the daemon default".
+func resolveMergeStrategy(squash, merge, rebase bool) string {
+	switch {
+	case merge:
+		return "merge"
+	case rebase:
+		return "rebase"
+	case squash:
+		return "squash"
+	}
+	return ""
 }
 
 func worktreeTargetActionCompletions() []string {

@@ -3,10 +3,10 @@ package daemonclient
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
@@ -144,17 +144,14 @@ func (c *Client) DrainInvocationCheckpoints(ctx context.Context, invocationRef, 
 	cursor := opts.Cursor
 	seenCursors := seenDrainCursors(cursor)
 	for {
-		u := fmt.Sprintf("%s/invocations/%s/checkpoints?", daemonBaseURL, url.PathEscape(invocationRef))
+		q := url.Values{"limit": []string{strconv.Itoa(pageLimit)}}
 		if repoID != "" {
-			u += "repo_id=" + url.QueryEscape(repoID) + "&"
+			q.Set("repo_id", repoID)
 		}
-		u += fmt.Sprintf("limit=%d&", pageLimit)
 		if cursor != "" {
-			u += "cursor=" + url.QueryEscape(cursor) + "&"
+			q.Set("cursor", cursor)
 		}
-		u = strings.TrimSuffix(u, "&")
-
-		apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
+		apiResp, err := c.doAPIRequest(ctx, http.MethodGet, queryURL("/invocations/"+url.PathEscape(invocationRef)+"/checkpoints", q), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -199,16 +196,17 @@ func (c *Client) DrainInvocationLogs(ctx context.Context, invocationRef, repoID 
 
 	offset := opts.Offset
 	for {
-		u := fmt.Sprintf("%s/invocations/%s/logs?", daemonBaseURL, url.PathEscape(invocationRef))
+		q := url.Values{
+			"offset": []string{strconv.FormatInt(offset, 10)},
+			"limit":  []string{strconv.Itoa(limit)},
+		}
 		if repoID != "" {
-			u += "repo_id=" + url.QueryEscape(repoID) + "&"
+			q.Set("repo_id", repoID)
 		}
 		if opts.Kind != "" {
-			u += "kind=" + url.QueryEscape(opts.Kind) + "&"
+			q.Set("kind", opts.Kind)
 		}
-		u += fmt.Sprintf("offset=%d&limit=%d", offset, limit)
-
-		apiResp, err := c.doAPIRequest(ctx, http.MethodGet, u, nil)
+		apiResp, err := c.doAPIRequest(ctx, http.MethodGet, queryURL("/invocations/"+url.PathEscape(invocationRef)+"/logs", q), nil)
 		if err != nil {
 			return offset, err
 		}

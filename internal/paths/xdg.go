@@ -13,14 +13,9 @@ type Dirs struct {
 	CacheDir  string
 }
 
-// Env is the interface for environment variable lookups.
-// Implementations must return "" for unset variables.
-type Env interface {
-	Get(key string) string
-}
-
 // ResolveDirs computes the data, config, and cache directories from explicit
-// environment overrides and platform defaults.
+// environment overrides and platform defaults. Callers pass os.Getenv in
+// production; tests pass a closure over a map.
 //
 // Resolution order for data directory:
 //  1. AGENCY_DATA_DIR env var (if set)
@@ -44,69 +39,53 @@ type Env interface {
 // This function does not touch the filesystem (no mkdir).
 // Path joining is OS-correct via filepath.Join.
 // ~ inside env vars is treated as literal (not expanded).
-func ResolveDirs(env Env, homeDir string) Dirs {
-	return resolveDirsWithOS(env, homeDir, isDarwin())
+func ResolveDirs(getenv func(string) string, homeDir string) Dirs {
+	return resolveDirsWithOS(getenv, homeDir, runtime.GOOS == "darwin")
 }
 
-func isDarwin() bool {
-	return runtime.GOOS == "darwin"
-}
-
-func resolveDirsWithOS(env Env, homeDir string, isDarwin bool) Dirs {
+func resolveDirsWithOS(getenv func(string) string, homeDir string, isDarwin bool) Dirs {
 	return Dirs{
-		DataDir:   resolveDataDirWithOS(env, homeDir, isDarwin),
-		ConfigDir: resolveConfigDirWithOS(env, homeDir, isDarwin),
-		CacheDir:  resolveCacheDirWithOS(env, homeDir, isDarwin),
+		DataDir:   resolveDataDirWithOS(getenv, homeDir, isDarwin),
+		ConfigDir: resolveConfigDirWithOS(getenv, homeDir, isDarwin),
+		CacheDir:  resolveCacheDirWithOS(getenv, homeDir, isDarwin),
 	}
 }
 
-func resolveDataDirWithOS(env Env, homeDir string, isDarwin bool) string {
-	// 1. AGENCY_DATA_DIR override
-	if v := env.Get("AGENCY_DATA_DIR"); v != "" {
+func resolveDataDirWithOS(getenv func(string) string, homeDir string, isDarwin bool) string {
+	if v := getenv("AGENCY_DATA_DIR"); v != "" {
 		return v
 	}
-	// 2. macOS default
 	if isDarwin {
 		return filepath.Join(homeDir, "Library", "Application Support", "agency")
 	}
-	// 3. XDG_DATA_HOME fallback
-	if v := env.Get("XDG_DATA_HOME"); v != "" {
+	if v := getenv("XDG_DATA_HOME"); v != "" {
 		return filepath.Join(v, "agency")
 	}
-	// 4. Default fallback
 	return filepath.Join(homeDir, ".local", "share", "agency")
 }
 
-func resolveConfigDirWithOS(env Env, homeDir string, isDarwin bool) string {
-	// 1. AGENCY_CONFIG_DIR override
-	if v := env.Get("AGENCY_CONFIG_DIR"); v != "" {
+func resolveConfigDirWithOS(getenv func(string) string, homeDir string, isDarwin bool) string {
+	if v := getenv("AGENCY_CONFIG_DIR"); v != "" {
 		return v
 	}
-	// 2. macOS default
 	if isDarwin {
 		return filepath.Join(homeDir, "Library", "Preferences", "agency")
 	}
-	// 3. XDG_CONFIG_HOME fallback
-	if v := env.Get("XDG_CONFIG_HOME"); v != "" {
+	if v := getenv("XDG_CONFIG_HOME"); v != "" {
 		return filepath.Join(v, "agency")
 	}
-	// 4. Default fallback
 	return filepath.Join(homeDir, ".config", "agency")
 }
 
-func resolveCacheDirWithOS(env Env, homeDir string, isDarwin bool) string {
-	// 1. AGENCY_CACHE_DIR override
-	if v := env.Get("AGENCY_CACHE_DIR"); v != "" {
+func resolveCacheDirWithOS(getenv func(string) string, homeDir string, isDarwin bool) string {
+	if v := getenv("AGENCY_CACHE_DIR"); v != "" {
 		return v
 	}
-	// 2. macOS default
 	if isDarwin {
 		return filepath.Join(homeDir, "Library", "Caches", "agency")
 	}
-	// 3. XDG_CACHE_HOME fallback
-	if v := env.Get("XDG_CACHE_HOME"); v != "" {
+	if v := getenv("XDG_CACHE_HOME"); v != "" {
 		return filepath.Join(v, "agency")
 	}
-	// 4. Default fallback
 	return filepath.Join(homeDir, ".cache", "agency")
 }

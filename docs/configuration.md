@@ -14,7 +14,7 @@ For file locations and precedence, see [environment.md](environment.md).
 4. Run `agency init --path /path/to/repo` for local per-repo config, or `agency init --path /path/to/repo --repo-config` for the shareable repo file at the registered repo canonical root.
 
 `agency config init` owns user config. `agency init` owns repo config and repo scripts only. Integration worktrees and sandboxes do not own repo-shared config.
-Version `4` is a hard cutover. Older `config.json` and `agency.json` versions are rejected instead of migrated or interpreted through legacy compatibility paths.
+Version `4` is required. `config.json` and `agency.json` files with any other version are invalid; recreate them with the current init commands.
 
 ## User Config: `config.json`
 

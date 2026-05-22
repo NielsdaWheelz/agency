@@ -33,11 +33,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 
 	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
 	if resolveErr != nil {
-		code := errors.CodeOr(resolveErr, errors.EInvocationNotFound)
-		status := http.StatusNotFound
-		if code == errors.EInvocationIDAmbiguous {
-			status = http.StatusConflict
-		}
+		status, code := invocationResolveStatus(resolveErr)
 		s.writeCheckpointError(w, status, requestID, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
 		return
 	}

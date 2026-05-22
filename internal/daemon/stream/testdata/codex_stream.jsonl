@@ -1,9 +1,0 @@
-{"type":"thread.started","thread_id":"thread_xyz789"}
-{"type":"turn.started"}
-{"type":"item.completed","item":{"type":"reasoning","content":[{"type":"text","text":"I need to look at the code first."}]}}
-{"type":"item.started","item":{"type":"command_execution","command":"cat main.go"}}
-{"type":"item.completed","item":{"type":"command_execution","command":"cat main.go","exit_code":0}}
-{"type":"item.started","item":{"type":"command_execution","command":"echo 'package main' > main.go"}}
-{"type":"item.completed","item":{"type":"command_execution","command":"echo 'package main' > main.go","exit_code":0}}
-{"type":"item.completed","item":{"type":"agent_message","content":[{"type":"text","text":"I've fixed the bug in main.go. The issue was with the initialization."}]}}
-{"type":"turn.completed","usage":{"input_tokens":1200,"output_tokens":500}}

@@ -141,7 +141,7 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 				followUpRelay = relay.NewStdinRelay(pw, req.Runner)
 			}
 		case runners.FollowUpModeResume:
-			followUpRelay = relay.NewResumeRelay(req.Runner)
+			followUpRelay = relay.NewResumeRelay()
 		}
 	}
 	runnerCtx := daemonOwnedContext(ctx)

@@ -10,7 +10,6 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
-	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/mergeflow"
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -48,7 +47,7 @@ type mergeResult struct {
 	DeleteBranch   bool
 	MergeLogPath   string
 	ArchiveLogPath string
-	VerifyLog      string
+	VerifyLogPath  string
 }
 
 type mergePRView struct {
@@ -320,8 +319,7 @@ func mergeEnsureMergeable(ctx context.Context, runner exec.CommandRunner, workDi
 	)
 }
 
-func (s *Server) resolveMergeRepoRoot(ctx context.Context, repoID, workspaceRoot string) (string, error) {
-	_ = ctx
+func (s *Server) resolveMergeRepoRoot(repoID, workspaceRoot string) (string, error) {
 	return mergeflow.ResolveRepoRoot(s.store, repoID, workspaceRoot)
 }
 
@@ -392,15 +390,3 @@ func mergeConfirmPRMerged(ctx context.Context, runner exec.CommandRunner, workDi
 	return false, nil
 }
 
-func writeMergeLog(fsys agencyfs.FS, mergeLogPath, command string, result exec.CmdResult, runErr error) error {
-	return mergeflow.WriteMergeLog(fsys, mergeLogPath, command, result, runErr)
-}
-
-func mergeHintFromError(err error) string {
-	if ae, ok := errors.AsAgencyError(err); ok && ae.Details != nil {
-		if hint := strings.TrimSpace(ae.Details["hint"]); hint != "" {
-			return hint
-		}
-	}
-	return ""
-}

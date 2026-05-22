@@ -34,11 +34,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 
 	record, resolveErr := s.resolveInvocationRef(invocationRef, repoID)
 	if resolveErr != nil {
-		code := errors.CodeOr(resolveErr, errors.EInvocationNotFound)
-		status := http.StatusNotFound
-		if code == errors.EInvocationIDAmbiguous {
-			status = http.StatusConflict
-		}
+		status, code := invocationResolveStatus(resolveErr)
 		s.writeHeadedError(w, status, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations", "", requestID)
 		return
 	}
