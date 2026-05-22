@@ -15,6 +15,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/runners"
+	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/version"
 )
 
@@ -37,6 +38,51 @@ type startRunnerConfigOpts struct {
 	PermissionMode   string
 	AgencyConfigPath string
 	Headless         bool
+}
+
+// startModeOptions carries the mode-related CLI flags shared by all start
+// commands. Pass IsInteractive nil to default to checking os.Stdin.
+type startModeOptions struct {
+	Mode          string
+	Prompt        string
+	PromptFile    string
+	Detached      bool
+	IsInteractive func() bool
+}
+
+// validateStartMode normalizes opts.Mode against defaultMode, then enforces
+// the shared start/retry rules: --detached only with headed mode, headed mode
+// rejects --prompt/--prompt-file, and attached headed runs require a TTY. The
+// noun ("agent start", "task start", "task retry") is embedded in user-facing
+// error messages.
+func validateStartMode(opts startModeOptions, defaultMode, noun string) (mode string, headless bool, err error) {
+	mode = strings.TrimSpace(opts.Mode)
+	if mode == "" {
+		mode = defaultMode
+	}
+	headless = mode == string(store.RunnerModeHeadless)
+	switch mode {
+	case string(store.RunnerModeHeadless):
+		if opts.Detached {
+			return "", false, errors.NewWithDetails(errors.EUsage, "--detached is only valid with --mode headed", map[string]string{"hint": "omit --detached or pass --mode headed"})
+		}
+	case string(store.RunnerModeHeaded):
+		if strings.TrimSpace(opts.Prompt) != "" || strings.TrimSpace(opts.PromptFile) != "" {
+			return "", false, errors.NewWithDetails(errors.EUsage, "headed "+noun+" does not accept a prompt", map[string]string{"hint": "omit --prompt/--prompt-file or use --mode headless"})
+		}
+		if !opts.Detached {
+			isInteractive := opts.IsInteractive
+			if isInteractive == nil {
+				isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) }
+			}
+			if !isInteractive() {
+				return "", false, errors.NewWithDetails(errors.ENotInteractive, "headed "+noun+" requires an interactive terminal", map[string]string{"hint": "re-run in an interactive terminal or pass --detached"})
+			}
+		}
+	default:
+		return "", false, errors.New(errors.EInvalidArgument, "mode must be headless or headed")
+	}
+	return mode, headless, nil
 }
 
 func resolveAgentRunner(input, defaultRunner string) (string, error) {
@@ -358,6 +404,18 @@ func writeCommandJSON(w io.Writer, payload any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(payload)
+}
+
+// commandFail returns the error handler used by command entrypoints. When
+// jsonMode is true, errors are rendered as a JSON envelope to stdout and the
+// returned error is nil. When false, the error passes through unchanged.
+func commandFail(stdout io.Writer, jsonMode bool) func(error) error {
+	return func(err error) error {
+		if err == nil || !jsonMode {
+			return err
+		}
+		return writeCommandJSONError(stdout, err)
+	}
 }
 
 func writeCommandJSONError(w io.Writer, err error) error {

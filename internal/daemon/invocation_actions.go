@@ -177,7 +177,7 @@ func (s *Server) stopEscalation(repoID, invocationID string, pgid int, supervise
 		return
 	}
 
-	s.failInvocationStoppedWithKill(repoID, invocationID)
+	s.failInvocationStopped(repoID, invocationID, store.ExitReasonKilled)
 }
 
 func isProcessGroupAlive(pgid int) bool {

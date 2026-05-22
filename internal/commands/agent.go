@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -134,12 +133,7 @@ func resolveAgentStartWorktree(ctx context.Context, ns *daemonNavSetup, repoID, 
 
 // AgentStart starts a new agent invocation.
 func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentStartOpts, stdout, stderr io.Writer) error {
-	fail := func(err error) error {
-		if err == nil || !opts.JSON {
-			return err
-		}
-		return writeCommandJSONError(stdout, err)
-	}
+	fail := commandFail(stdout, opts.JSON)
 	worktreeRef := strings.TrimSpace(opts.WorktreeRef)
 	repoRef := strings.TrimSpace(opts.RepoRef)
 	if cr == nil {
@@ -149,37 +143,15 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		fsys = fs.NewRealFS()
 	}
 
-	mode := strings.TrimSpace(opts.Mode)
-	if mode == "" {
-		mode = string(store.RunnerModeHeaded)
-	}
-	headless := mode == string(store.RunnerModeHeadless)
-	switch mode {
-	case string(store.RunnerModeHeadless):
-		if opts.Detached {
-			return fail(errors.NewWithDetails(errors.EUsage, "--detached is only valid with --mode headed", map[string]string{"hint": "omit --detached or pass --mode headed"}))
-		}
-	case string(store.RunnerModeHeaded):
-		if strings.TrimSpace(opts.Prompt) != "" || strings.TrimSpace(opts.PromptFile) != "" {
-			return fail(errors.NewWithDetails(errors.EUsage, "headed agent start does not accept a prompt", map[string]string{"hint": "omit --prompt/--prompt-file or use --mode headless"}))
-		}
-		if !opts.Detached {
-			isInteractive := opts.IsInteractive
-			if isInteractive == nil {
-				isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) }
-			}
-			if !isInteractive() {
-				return fail(errors.NewWithDetails(
-					errors.ENotInteractive,
-					"headed start requires an interactive terminal",
-					map[string]string{
-						"hint": "re-run in an interactive terminal or pass --detached",
-					},
-				))
-			}
-		}
-	default:
-		return fail(errors.New(errors.EInvalidArgument, "mode must be headless or headed"))
+	_, headless, err := validateStartMode(startModeOptions{
+		Mode:          opts.Mode,
+		Prompt:        opts.Prompt,
+		PromptFile:    opts.PromptFile,
+		Detached:      opts.Detached,
+		IsInteractive: opts.IsInteractive,
+	}, string(store.RunnerModeHeaded), "agent start")
+	if err != nil {
+		return fail(err)
 	}
 
 	headlessPrompt := ""

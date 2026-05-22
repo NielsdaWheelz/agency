@@ -70,65 +70,106 @@ func (s *Server) restoreExistingHeadedSupervision(ctx context.Context, repoID, i
 	}
 
 	runnerArgs := slices.Clone(meta.RunnerArgs)
-	if err := s.claimHeadedInvocation(repoID, invocationID, canonicalRunner, sessionName, runnerArgs, slices.Clone(meta.CustomEnvKeys)); err != nil {
+	if err := s.claimHeadedInvocation(repoID, invocationID, "", canonicalRunner, sessionName, runnerArgs, slices.Clone(meta.CustomEnvKeys)); err != nil {
 		return fmt.Errorf("update invocation meta: %w", err)
 	}
 
-	streamLogPath := s.store.InvocationStreamLogPath(repoID, invocationID)
-	parser := stream.NewParser(invocationID, canonicalRunner, s.clock)
+	proc := s.buildSupervisedHeadedProcess(ctx, supervisedHeadedSetup{
+		invocationID:          invocationID,
+		repoID:                repoID,
+		integrationWorktreeID: meta.IntegrationWorktreeID,
+		repoRoot:              repoRoot,
+		sandboxPath:           meta.SandboxPath,
+		sessionName:           sessionName,
+		runner:                canonicalRunner,
+		runnerArgs:            runnerArgs,
+		includeUntracked:      meta.CheckpointIncludeUntracked,
+		gitEnv:                env,
+	})
+	if _, err := s.invocationEvents.Append(s.store.InvocationEventsPath(repoID, invocationID), invocationID, eventKind, map[string]any{
+		"tmux_session": sessionName,
+	}, eventlog.AppendOptions{}); err != nil {
+		return fmt.Errorf("append supervision event: %w", err)
+	}
+	s.launchSupervisedHeadedProcess(proc)
+	return nil
+}
+
+// supervisedHeadedSetup carries the parameters needed to bring a headed
+// invocation under supervision.
+type supervisedHeadedSetup struct {
+	invocationID          string
+	repoID                string
+	integrationWorktreeID string
+	repoRoot              string
+	sandboxPath           string
+	sessionName           string
+	runner                string
+	runnerArgs            []string
+	launchEnv             map[string]string
+	includeUntracked      bool
+	gitEnv                map[string]string
+}
+
+// buildSupervisedHeadedProcess assembles the supervised process for a headed
+// invocation: stream parser, checkpoint engine, and a supervisedProcess wired
+// to its triggers and notifiers. The returned proc is not yet registered;
+// callers should append any pre-launch events and then call
+// launchSupervisedHeadedProcess.
+func (s *Server) buildSupervisedHeadedProcess(ctx context.Context, setup supervisedHeadedSetup) *supervisedProcess {
+	streamLogPath := s.store.InvocationStreamLogPath(setup.repoID, setup.invocationID)
+	parser := stream.NewParser(setup.invocationID, setup.runner, s.clock)
 	parser.SetInitialSeq(loadMaxStreamSeq(streamLogPath))
-	checkpointsDir := s.store.InvocationDir(repoID, invocationID)
-	eventsPath := s.store.InvocationEventsPath(repoID, invocationID)
 	cpConfig := checkpoint.DefaultConfig()
-	cpConfig.IncludeUntracked = meta.CheckpointIncludeUntracked
-	cpConfig.Env = env
+	cpConfig.IncludeUntracked = setup.includeUntracked
+	cpConfig.Env = setup.gitEnv
 	cpEngine := checkpoint.NewEngineWithWriter(
-		invocationID,
-		repoID,
-		meta.SandboxPath,
-		repoRoot,
-		checkpointsDir,
-		eventsPath,
+		setup.invocationID,
+		setup.repoID,
+		setup.sandboxPath,
+		setup.repoRoot,
+		s.store.InvocationDir(setup.repoID, setup.invocationID),
+		s.store.InvocationEventsPath(setup.repoID, setup.invocationID),
 		cpConfig,
 		s.runner,
 		s.fsys,
 		s.clock,
 		s.invocationEvents,
 	)
-	s.configureCheckpointIgnoredDirs(daemonOwnedContext(ctx), repoID, invocationID, cpEngine, meta.SandboxPath, cpConfig.Env)
+	s.configureCheckpointIgnoredDirs(daemonOwnedContext(ctx), setup.repoID, setup.invocationID, cpEngine, setup.sandboxPath, cpConfig.Env)
 	proc := &supervisedProcess{
-		invocationID:          invocationID,
-		repoID:                repoID,
-		integrationWorktreeID: meta.IntegrationWorktreeID,
+		invocationID:          setup.invocationID,
+		repoID:                setup.repoID,
+		integrationWorktreeID: setup.integrationWorktreeID,
 		mode:                  "headed",
-		tmuxSession:           sessionName,
-		sandboxPath:           meta.SandboxPath,
-		runner:                canonicalRunner,
-		repoRoot:              repoRoot,
-		runnerArgs:            runnerArgs,
-		noIncludeUntracked:    !meta.CheckpointIncludeUntracked,
+		tmuxSession:           setup.sessionName,
+		sandboxPath:           setup.sandboxPath,
+		runner:                setup.runner,
+		repoRoot:              setup.repoRoot,
+		runnerArgs:            setup.runnerArgs,
+		env:                   copyStringMap(setup.launchEnv),
+		noIncludeUntracked:    !setup.includeUntracked,
 		parser:                parser,
 		checkpointEngine:      cpEngine,
 		done:                  make(chan struct{}),
 	}
-	s.attachCheckpointTriggers(repoID, invocationID, parser, cpEngine)
+	s.attachCheckpointTriggers(setup.repoID, setup.invocationID, parser, cpEngine)
 	parser.SetFinalNotify(func(n stream.FinalNotification) {
 		s.handleSuccessfulFinalNotification(proc, n)
 	})
 	parser.SetSessionStartNotify(func(n stream.SessionStartNotification) {
 		proc.setResumeSessionID(n.SessionID)
 	})
-	if _, err := s.invocationEvents.Append(eventsPath, invocationID, eventKind, map[string]any{
-		"tmux_session": sessionName,
-	}, eventlog.AppendOptions{}); err != nil {
-		return fmt.Errorf("append supervision event: %w", err)
-	}
+	return proc
+}
 
-	s.replaceInvocationProcess(invocationID, proc)
+// launchSupervisedHeadedProcess registers a built proc with the server and
+// starts its output and checkpoint supervision goroutines.
+func (s *Server) launchSupervisedHeadedProcess(proc *supervisedProcess) {
+	s.replaceInvocationProcess(proc.invocationID, proc)
 	s.supervisionWg.Add(2)
 	go s.runOutputFlushLoop(proc)
 	go s.runCheckpointLoop(proc)
-	return nil
 }
 
 func (s *Server) resolveHeadedSupervisionRepoRoot(repoID string) (string, error) {

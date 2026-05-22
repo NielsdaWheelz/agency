@@ -173,7 +173,7 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 
 	wtMeta, err := s.store.ReadIntegrationWorktreeMeta(repoID, meta.WorktreeID)
 	if err != nil {
-		fail := taskStartFailureFromError(http.StatusInternalServerError, errors.EWorktreeBroken, err, "")
+		fail := startFailureFromError(http.StatusInternalServerError, errors.EWorktreeBroken, err, "")
 		s.markTaskRetryFailed(repoID, meta.TaskID, req.ClientRequestID, fail)
 		if latest, readErr := s.store.ReadTaskMeta(repoID, meta.TaskID); readErr == nil {
 			meta = latest
@@ -212,7 +212,7 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 		invMeta, err = s.startTaskHeadedInvocation(ctx, meta.RepoRoot, repoID, meta.TaskID, retryFingerprint, wtRecord, startReq, envKeys, gitEnv)
 	}
 	if err != nil {
-		fail := normalizeTaskStartFailure(err)
+		fail := asStartFailure(err)
 		s.markTaskRetryFailed(repoID, meta.TaskID, req.ClientRequestID, fail)
 		if latest, readErr := s.store.ReadTaskMeta(repoID, meta.TaskID); readErr == nil {
 			meta = latest
@@ -225,7 +225,7 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 		"checkout_root":     invMeta.CheckoutRoot,
 		"execution_profile": invMeta.ExecutionProfile,
 	}); err != nil {
-		fail := newTaskStartFailure(http.StatusInternalServerError, errors.EPersistFailed, "failed to append task event: "+err.Error(), "")
+		fail := newStartFailure(http.StatusInternalServerError, errors.EPersistFailed, "failed to append task event: "+err.Error(), "")
 		s.abortStartedTaskInvocation(repoID, invMeta, "task_retry_event_failed")
 		s.markTaskRetryFailed(repoID, meta.TaskID, req.ClientRequestID, fail)
 		if latest, readErr := s.store.ReadTaskMeta(repoID, meta.TaskID); readErr == nil {
@@ -235,7 +235,7 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 		return
 	}
 	if err := s.markTaskRetryRunning(repoID, meta.TaskID, req.ClientRequestID, invMeta); err != nil {
-		fail := taskStartFailureFromError(http.StatusInternalServerError, errors.EMetaWriteFailed, err, "")
+		fail := startFailureFromError(http.StatusInternalServerError, errors.EMetaWriteFailed, err, "")
 		s.abortStartedTaskInvocation(repoID, invMeta, "retry_task_update_failed")
 		s.markTaskRetryFailed(repoID, meta.TaskID, req.ClientRequestID, fail)
 		if latest, readErr := s.store.ReadTaskMeta(repoID, meta.TaskID); readErr == nil {
@@ -310,7 +310,7 @@ func (s *Server) writeTaskRetryIdempotencyResult(w http.ResponseWriter, requestI
 		if record.ErrorCode != "" {
 			code = errors.Code(record.ErrorCode)
 		}
-		fail := newTaskStartFailure(http.StatusConflict, code, message, "inspect task state before retrying")
+		fail := newStartFailure(http.StatusConflict, code, message, "inspect task state before retrying")
 		if record.State == store.TaskRetryStateStarting && finalizeIncomplete {
 			s.markTaskRetryFailed(meta.RepoID, meta.TaskID, clientRequestID, fail)
 			if latest, err := s.store.ReadTaskMeta(meta.RepoID, meta.TaskID); err == nil {
@@ -388,7 +388,7 @@ func (s *Server) markTaskRetryRunning(repoID, taskID, clientRequestID string, in
 	})
 }
 
-func (s *Server) markTaskRetryFailed(repoID, taskID, clientRequestID string, failure taskStartFailure) {
+func (s *Server) markTaskRetryFailed(repoID, taskID, clientRequestID string, failure startFailure) {
 	if err := s.store.UpdateTaskMeta(repoID, taskID, func(meta *store.TaskMeta) {
 		record, ok := meta.RetryRequests[clientRequestID]
 		if !ok {

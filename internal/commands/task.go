@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -96,12 +95,7 @@ type TaskWatchOpts struct {
 }
 
 func TaskStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts TaskStartOpts, stdout, stderr io.Writer) error {
-	fail := func(err error) error {
-		if err == nil || !opts.JSON {
-			return err
-		}
-		return writeCommandJSONError(stdout, err)
-	}
+	fail := commandFail(stdout, opts.JSON)
 	if cr == nil {
 		cr = exec.NewRealRunner()
 	}
@@ -112,35 +106,18 @@ func TaskStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	if taskName == "" {
 		return fail(errors.New(errors.EUsage, "use 'agency task start <name>'"))
 	}
-	mode := strings.TrimSpace(opts.Mode)
-	if mode == "" {
-		mode = string(store.RunnerModeHeadless)
-	}
-	headless := mode == string(store.RunnerModeHeadless)
-	switch mode {
-	case string(store.RunnerModeHeadless):
-		if opts.Detached {
-			return fail(errors.NewWithDetails(errors.EUsage, "--detached is only valid with --mode headed", map[string]string{"hint": "omit --detached or pass --mode headed"}))
-		}
-	case string(store.RunnerModeHeaded):
-		if strings.TrimSpace(opts.Prompt) != "" || strings.TrimSpace(opts.PromptFile) != "" {
-			return fail(errors.NewWithDetails(errors.EUsage, "headed task start does not accept a prompt", map[string]string{"hint": "omit --prompt/--prompt-file or use --mode headless"}))
-		}
-		if !opts.Detached {
-			isInteractive := opts.IsInteractive
-			if isInteractive == nil {
-				isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) }
-			}
-			if !isInteractive() {
-				return fail(errors.NewWithDetails(errors.ENotInteractive, "headed task start requires an interactive terminal", map[string]string{"hint": "re-run in an interactive terminal or pass --detached"}))
-			}
-		}
-	default:
-		return fail(errors.New(errors.EInvalidArgument, "mode must be headless or headed"))
+	mode, headless, err := validateStartMode(startModeOptions{
+		Mode:          opts.Mode,
+		Prompt:        opts.Prompt,
+		PromptFile:    opts.PromptFile,
+		Detached:      opts.Detached,
+		IsInteractive: opts.IsInteractive,
+	}, string(store.RunnerModeHeadless), "task start")
+	if err != nil {
+		return fail(err)
 	}
 
 	prompt := ""
-	var err error
 	if headless {
 		prompt, err = resolveBoundedPromptInput(
 			opts.Prompt,
@@ -375,43 +352,21 @@ func TaskArchive(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 }
 
 func TaskRetry(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts TaskRetryOpts, stdout, stderr io.Writer) error {
-	fail := func(err error) error {
-		if err == nil || !opts.JSON {
-			return err
-		}
-		return writeCommandJSONError(stdout, err)
-	}
+	fail := commandFail(stdout, opts.JSON)
 	if fsys == nil {
 		fsys = fs.NewRealFS()
 	}
-	mode := strings.TrimSpace(opts.Mode)
-	if mode == "" {
-		mode = string(store.RunnerModeHeadless)
-	}
-	headless := mode == string(store.RunnerModeHeadless)
-	switch mode {
-	case string(store.RunnerModeHeadless):
-		if opts.Detached {
-			return fail(errors.NewWithDetails(errors.EUsage, "--detached is only valid with --mode headed", map[string]string{"hint": "omit --detached or pass --mode headed"}))
-		}
-	case string(store.RunnerModeHeaded):
-		if strings.TrimSpace(opts.Prompt) != "" || strings.TrimSpace(opts.PromptFile) != "" {
-			return fail(errors.NewWithDetails(errors.EUsage, "headed task retry does not accept a prompt", map[string]string{"hint": "omit --prompt/--prompt-file or use --mode headless"}))
-		}
-		if !opts.Detached {
-			isInteractive := opts.IsInteractive
-			if isInteractive == nil {
-				isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) }
-			}
-			if !isInteractive() {
-				return fail(errors.NewWithDetails(errors.ENotInteractive, "headed task retry requires an interactive terminal", map[string]string{"hint": "re-run in an interactive terminal or pass --detached"}))
-			}
-		}
-	default:
-		return fail(errors.New(errors.EInvalidArgument, "mode must be headless or headed"))
+	mode, headless, err := validateStartMode(startModeOptions{
+		Mode:          opts.Mode,
+		Prompt:        opts.Prompt,
+		PromptFile:    opts.PromptFile,
+		Detached:      opts.Detached,
+		IsInteractive: opts.IsInteractive,
+	}, string(store.RunnerModeHeadless), "task retry")
+	if err != nil {
+		return fail(err)
 	}
 	prompt := ""
-	var err error
 	if headless {
 		prompt, err = resolveBoundedPromptInput(opts.Prompt, opts.PromptFile, daemon.MaxPromptSize, "headless task retry requires a prompt (use --prompt or --prompt-file)", "headless task retry prompt cannot be empty")
 		if err != nil {

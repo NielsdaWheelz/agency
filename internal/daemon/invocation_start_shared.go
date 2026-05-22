@@ -40,6 +40,44 @@ type controlPlaneStartResolved struct {
 	unlockRepo   func() error
 }
 
+// startFailure carries the HTTP status and error metadata for a failed
+// invocation or task start. Returned by the shared start helpers so callers
+// can render their own response shape and, for task starts, persist failure
+// state via markTaskFailed.
+type startFailure struct {
+	status int
+	code   errors.Code
+	msg    string
+	hint   string
+}
+
+func (e startFailure) Error() string {
+	if e.code == "" {
+		return e.msg
+	}
+	return string(e.code) + ": " + e.msg
+}
+
+func newStartFailure(status int, code errors.Code, msg, hint string) startFailure {
+	if code == "" {
+		code = errors.EInternal
+	}
+	return startFailure{status: status, code: code, msg: msg, hint: hint}
+}
+
+func startFailureFromError(status int, defaultCode errors.Code, err error, hint string) startFailure {
+	code := errors.CodeOr(err, defaultCode)
+	return newStartFailure(status, code, apiErrorMessage(err), hint)
+}
+
+func asStartFailure(err error) startFailure {
+	var failure startFailure
+	if stderrors.As(err, &failure) {
+		return failure
+	}
+	return startFailureFromError(http.StatusInternalServerError, errors.EInternal, err, "")
+}
+
 func safeIntPtr(p *int) int {
 	if p == nil {
 		return 0

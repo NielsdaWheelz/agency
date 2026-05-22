@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -195,46 +196,6 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 		m.followupInput = false
 		m.followupText = ""
 		return m, tea.Quit
-	case actionOpen:
-		if m.open == nil {
-			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
-			return m, nil
-		}
-		run = func() (string, error) {
-			return m.open(m.ctx, selected.InvocationID, selected.RepoID)
-		}
-	case actionStop:
-		if m.stop == nil {
-			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
-			return m, nil
-		}
-		run = func() (string, error) {
-			return m.stop(m.ctx, selected.InvocationID, selected.RepoID)
-		}
-	case actionKill:
-		if m.kill == nil {
-			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
-			return m, nil
-		}
-		run = func() (string, error) {
-			return m.kill(m.ctx, selected.InvocationID, selected.RepoID)
-		}
-	case actionLand:
-		if m.land == nil {
-			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
-			return m, nil
-		}
-		run = func() (string, error) {
-			return m.land(m.ctx, selected.InvocationID, selected.RepoID)
-		}
-	case actionDiscard:
-		if m.discard == nil {
-			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
-			return m, nil
-		}
-		run = func() (string, error) {
-			return m.discard(m.ctx, selected.InvocationID, selected.RepoID)
-		}
 	case actionFollowup:
 		if m.followup == nil {
 			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
@@ -247,41 +208,19 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 		run = func() (string, error) {
 			return m.followup(m.ctx, selected.InvocationID, selected.RepoID, prompt)
 		}
-	case actionRecreate:
-		if m.recreate == nil {
-			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
-			return m, nil
-		}
-		run = func() (string, error) {
-			return m.recreate(m.ctx, selected.InvocationID, selected.RepoID)
-		}
-	case actionPRSync:
-		if m.prSync == nil {
-			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
-			return m, nil
-		}
-		run = func() (string, error) {
-			return m.prSync(m.ctx, selected.WorktreeID, selected.RepoID)
-		}
-	case actionPRMerge:
-		if m.prMerge == nil {
-			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
-			return m, nil
-		}
-		run = func() (string, error) {
-			return m.prMerge(m.ctx, selected.WorktreeID, selected.RepoID)
-		}
-	case actionRebase:
-		if m.rebase == nil {
-			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
-			return m, nil
-		}
-		run = func() (string, error) {
-			return m.rebase(m.ctx, selected.WorktreeID, selected.RepoID)
-		}
 	default:
-		m.setActionError(fmt.Sprintf("%s unavailable: unsupported action", kind))
-		return m, nil
+		fn, targetID, supported := m.resolveSimpleAction(kind, selected)
+		if !supported {
+			m.setActionError(fmt.Sprintf("%s unavailable: unsupported action", kind))
+			return m, nil
+		}
+		if fn == nil {
+			m.setActionError(fmt.Sprintf("%s unavailable: action is not configured", kind))
+			return m, nil
+		}
+		run = func() (string, error) {
+			return fn(m.ctx, targetID, selected.RepoID)
+		}
 	}
 	if (kind == actionPRSync || kind == actionPRMerge || kind == actionRebase) && strings.TrimSpace(selected.WorktreeID) == "" {
 		m.setActionError(formatActionError(
@@ -321,6 +260,37 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 			err:          err,
 		}
 	}
+}
+
+// resolveSimpleAction returns the run function and target id for the simple
+// invocation/worktree actions whose dispatch is structurally identical. The
+// supported flag is false for actionFollowup, actionAttach, or any action kind
+// not in the simple set.
+func (m model) resolveSimpleAction(kind actionKind, selected daemon.InvocationDTO) (fn func(context.Context, string, string) (string, error), targetID string, supported bool) {
+	supported = true
+	switch kind {
+	case actionOpen:
+		fn, targetID = m.open, selected.InvocationID
+	case actionStop:
+		fn, targetID = m.stop, selected.InvocationID
+	case actionKill:
+		fn, targetID = m.kill, selected.InvocationID
+	case actionLand:
+		fn, targetID = m.land, selected.InvocationID
+	case actionDiscard:
+		fn, targetID = m.discard, selected.InvocationID
+	case actionRecreate:
+		fn, targetID = m.recreate, selected.InvocationID
+	case actionPRSync:
+		fn, targetID = m.prSync, selected.WorktreeID
+	case actionPRMerge:
+		fn, targetID = m.prMerge, selected.WorktreeID
+	case actionRebase:
+		fn, targetID = m.rebase, selected.WorktreeID
+	default:
+		supported = false
+	}
+	return
 }
 
 func (m model) requestedAttach() (string, string, bool) {

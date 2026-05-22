@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -8,8 +9,6 @@ import (
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
-	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
-	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/invocation"
 	"github.com/NielsdaWheelz/agency/internal/runners"
@@ -236,135 +235,123 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	meta, fail := s.finishHeadedInvocationStart(ctx, repoRoot, repoIdentity.RepoID, "", prep.wtRecord, createResult, headedInvocationStartParams{
+		runner:             req.Runner,
+		runnerArgs:         slices.Clone(req.RunnerArgs),
+		headedRunnerArgs:   headedRunnerArgs,
+		launchEnv:          req.Env,
+		envKeys:            sortedEnvKeys(requestEnv),
+		gitEnv:             gitEnv,
+		noIncludeUntracked: req.NoIncludeUntracked,
+	})
+	if fail != nil {
+		s.writeHeadedError(w, fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID, requestID)
+		return
+	}
+
+	s.recordHeadedIdempotency(repoIdentity.RepoID, req.ClientRequestID, createResult.InvocationID, fingerprint)
+	s.writeHeadedSuccess(w, createResult.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, false)
+}
+
+type headedInvocationStartParams struct {
+	runner             string
+	runnerArgs         []string
+	headedRunnerArgs   []string
+	launchEnv          map[string]string
+	envKeys            []string
+	gitEnv             map[string]string
+	noIncludeUntracked bool
+}
+
+// finishHeadedInvocationStart performs the post-Create steps required to bring
+// a headed invocation under supervision: resolve the runner binary, install
+// hooks, create and capture the tmux session, claim the invocation, attach the
+// checkpoint engine and stream parser, and launch the output/checkpoint
+// goroutines. On any failure the invocation is marked start_failed and the
+// failure is returned for the caller to render.
+func (s *Server) finishHeadedInvocationStart(ctx context.Context, repoRoot, repoID, taskID string, wtRecord *store.IntegrationWorktreeRecord, createResult *invocation.CreateResult, params headedInvocationStartParams) (*store.InvocationMeta, *startFailure) {
+	failStart := func(status int, code errors.Code, msg, hint string) *startFailure {
+		s.failInvocationStart(repoID, createResult.InvocationID, "start_failed", true)
+		f := newStartFailure(status, code, msg, hint)
+		return &f
+	}
+
 	userCfg, err := s.LoadUserConfig()
 	if err != nil {
-		s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvalidUserConfig), "failed to load user config: "+err.Error(), "run `agency config init`", req.ClientRequestID, requestID)
-		return
+		return nil, failStart(http.StatusInternalServerError, errors.EInvalidUserConfig, "failed to load user config: "+err.Error(), "run `agency config init`")
 	}
-	runnerCmd, err := config.ResolveRunnerCmd(s.runner, s.fsys, s.configDir, userCfg, req.Runner)
+	runnerCmd, err := config.ResolveRunnerCmd(s.runner, s.fsys, s.configDir, userCfg, params.runner)
 	if err != nil {
-		s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ERunnerNotFound), "failed to resolve runner command: "+err.Error(), "ensure runner is installed and configured", req.ClientRequestID, requestID)
-		return
+		return nil, failStart(http.StatusInternalServerError, errors.ERunnerNotFound, "failed to resolve runner command: "+err.Error(), "ensure runner is installed and configured")
 	}
-	if err := s.installHeadedRunnerHooks(ctx, repoIdentity.RepoID, createResult.InvocationID, req.Runner, headedRunnerArgs, createResult.SandboxPath, gitEnv); err != nil {
-		s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to install headed runner hooks: "+err.Error(), "ensure sandbox hook files can be written", req.ClientRequestID, requestID)
-		return
+	if err := s.installHeadedRunnerHooks(ctx, repoID, createResult.InvocationID, params.runner, params.headedRunnerArgs, createResult.SandboxPath, params.gitEnv); err != nil {
+		return nil, failStart(http.StatusInternalServerError, errors.EInvocationStartFailed, "failed to install headed runner hooks: "+err.Error(), "ensure sandbox hook files can be written")
 	}
 
 	sessionName := createResult.TmuxSession
-	exists, err := s.tmuxClient.HasSession(ctx, sessionName)
-	if err != nil {
-		s.recordInvocationWarning(repoIdentity.RepoID, createResult.InvocationID, "start_headed_tmux_has_session_failed", err.Error(), map[string]any{
+	if exists, err := s.tmuxClient.HasSession(ctx, sessionName); err != nil {
+		s.recordInvocationWarning(repoID, createResult.InvocationID, "start_headed_tmux_has_session_failed", err.Error(), map[string]any{
 			"session_name": sessionName,
 		})
 	} else if exists {
-		s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
-		s.writeHeadedError(w, http.StatusConflict, string(errors.ETmuxSessionExists), "tmux session already exists: "+sessionName, "a tmux session with this name already exists; kill it with 'tmux kill-session -t "+sessionName+"'", req.ClientRequestID, requestID)
-		return
+		return nil, failStart(http.StatusConflict, errors.ETmuxSessionExists, "tmux session already exists: "+sessionName, "a tmux session with this name already exists; kill it with 'tmux kill-session -t "+sessionName+"'")
 	}
 
-	terminalLogPath, err := s.prepareWritableInvocationLogPath(repoIdentity.RepoID, createResult.InvocationID, InvocationLogKindTerminal)
+	terminalLogPath, err := s.prepareWritableInvocationLogPath(repoID, createResult.InvocationID, InvocationLogKindTerminal)
 	if err != nil {
-		s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to prepare terminal log: "+err.Error(), "", req.ClientRequestID, requestID)
-		return
+		return nil, failStart(http.StatusInternalServerError, errors.EInvocationStartFailed, "failed to prepare terminal log: "+err.Error(), "")
 	}
 	terminalFile, err := os.OpenFile(terminalLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to create terminal log: "+err.Error(), "", req.ClientRequestID, requestID)
-		return
+		return nil, failStart(http.StatusInternalServerError, errors.EInvocationStartFailed, "failed to create terminal log: "+err.Error(), "")
 	}
 	_ = terminalFile.Close()
 
-	argv := append([]string{runnerCmd}, headedRunnerArgs...)
-	if err := s.tmuxClient.NewSession(ctx, sessionName, createResult.SandboxPath, argv, req.Env); err != nil {
-		s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to create tmux session: "+err.Error(), "ensure tmux is installed and working", req.ClientRequestID, requestID)
-		return
+	argv := append([]string{runnerCmd}, params.headedRunnerArgs...)
+	if err := s.tmuxClient.NewSession(ctx, sessionName, createResult.SandboxPath, argv, params.launchEnv); err != nil {
+		return nil, failStart(http.StatusInternalServerError, errors.EInvocationStartFailed, "failed to create tmux session: "+err.Error(), "ensure tmux is installed and working")
 	}
 	target := sessionName + ":0.0"
 	if scrollback, err := s.tmuxClient.CaptureScrollback(ctx, target); err != nil {
-		s.recordInvocationWarning(repoIdentity.RepoID, createResult.InvocationID, "start_headed_tmux_capture_failed", err.Error(), map[string]any{
+		s.recordInvocationWarning(repoID, createResult.InvocationID, "start_headed_tmux_capture_failed", err.Error(), map[string]any{
 			"target": target,
 		})
 	} else if scrollback != "" {
 		if err := os.WriteFile(terminalLogPath, []byte(scrollback), 0o600); err != nil {
 			_ = s.tmuxClient.KillSession(ctx, sessionName)
-			s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
-			s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to write initial terminal capture: "+err.Error(), "", req.ClientRequestID, requestID)
-			return
+			return nil, failStart(http.StatusInternalServerError, errors.EInvocationStartFailed, "failed to write initial terminal capture: "+err.Error(), "")
 		}
 	}
 	if err := s.tmuxClient.PipePane(ctx, target, terminalLogPath); err != nil {
 		_ = s.tmuxClient.KillSession(ctx, sessionName)
-		s.failInvocationStart(repoIdentity.RepoID, createResult.InvocationID, "start_failed", true)
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to pipe tmux pane output: "+err.Error(), "ensure tmux pipe-pane is available", req.ClientRequestID, requestID)
-		return
+		return nil, failStart(http.StatusInternalServerError, errors.EInvocationStartFailed, "failed to pipe tmux pane output: "+err.Error(), "ensure tmux pipe-pane is available")
 	}
 
-	runnerArgs := slices.Clone(req.RunnerArgs)
-	if err := s.claimHeadedInvocation(repoIdentity.RepoID, createResult.InvocationID, req.Runner, sessionName, runnerArgs, sortedEnvKeys(requestEnv)); err != nil {
+	if err := s.claimHeadedInvocation(repoID, createResult.InvocationID, taskID, params.runner, sessionName, params.runnerArgs, params.envKeys); err != nil {
 		_ = s.tmuxClient.KillSession(ctx, sessionName)
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInternal), "failed to update invocation meta: "+err.Error(), "", req.ClientRequestID, requestID)
-		return
+		f := newStartFailure(http.StatusInternalServerError, errors.EInternal, "failed to update invocation meta: "+err.Error(), "")
+		return nil, &f
 	}
 
-	streamLogPath := s.store.InvocationStreamLogPath(repoIdentity.RepoID, createResult.InvocationID)
-	parser := stream.NewParser(createResult.InvocationID, req.Runner, s.clock)
-	parser.SetInitialSeq(loadMaxStreamSeq(streamLogPath))
-	checkpointsDir := s.store.InvocationDir(repoIdentity.RepoID, createResult.InvocationID)
-	eventsPath := s.store.InvocationEventsPath(repoIdentity.RepoID, createResult.InvocationID)
-	cpConfig := checkpoint.DefaultConfig()
-	cpConfig.IncludeUntracked = !req.NoIncludeUntracked
-	cpConfig.Env = gitEnv
-	cpEngine := checkpoint.NewEngineWithWriter(
-		createResult.InvocationID,
-		repoIdentity.RepoID,
-		createResult.SandboxPath,
-		repoRoot,
-		checkpointsDir,
-		eventsPath,
-		cpConfig,
-		s.runner,
-		s.fsys,
-		s.clock,
-		s.invocationEvents,
-	)
-	s.configureCheckpointIgnoredDirs(daemonOwnedContext(ctx), repoIdentity.RepoID, createResult.InvocationID, cpEngine, createResult.SandboxPath, cpConfig.Env)
-	proc := &supervisedProcess{
+	proc := s.buildSupervisedHeadedProcess(ctx, supervisedHeadedSetup{
 		invocationID:          createResult.InvocationID,
-		repoID:                repoIdentity.RepoID,
-		integrationWorktreeID: prep.wtRecord.WorktreeID,
-		mode:                  "headed",
-		tmuxSession:           sessionName,
-		sandboxPath:           createResult.SandboxPath,
-		runner:                req.Runner,
+		repoID:                repoID,
+		integrationWorktreeID: wtRecord.WorktreeID,
 		repoRoot:              repoRoot,
-		runnerArgs:            runnerArgs,
-		env:                   copyStringMap(req.Env),
-		noIncludeUntracked:    req.NoIncludeUntracked,
-		parser:                parser,
-		checkpointEngine:      cpEngine,
-		done:                  make(chan struct{}),
+		sandboxPath:           createResult.SandboxPath,
+		sessionName:           sessionName,
+		runner:                params.runner,
+		runnerArgs:            params.runnerArgs,
+		launchEnv:             params.launchEnv,
+		includeUntracked:      !params.noIncludeUntracked,
+		gitEnv:                params.gitEnv,
+	})
+	s.launchSupervisedHeadedProcess(proc)
+
+	meta, err := s.store.ReadInvocationMeta(repoID, createResult.InvocationID)
+	if err != nil {
+		f := startFailureFromError(http.StatusInternalServerError, errors.EInvocationBroken, err, "")
+		return nil, &f
 	}
-	s.attachCheckpointTriggers(repoIdentity.RepoID, createResult.InvocationID, parser, cpEngine)
-	parser.SetFinalNotify(func(n stream.FinalNotification) {
-		s.handleSuccessfulFinalNotification(proc, n)
-	})
-	parser.SetSessionStartNotify(func(n stream.SessionStartNotification) {
-		proc.setResumeSessionID(n.SessionID)
-	})
-	s.replaceInvocationProcess(createResult.InvocationID, proc)
-	s.supervisionWg.Add(2)
-	go s.runOutputFlushLoop(proc)
-	go s.runCheckpointLoop(proc)
-
-	s.recordHeadedIdempotency(repoIdentity.RepoID, req.ClientRequestID, createResult.InvocationID, fingerprint)
-
-	meta, _ := s.store.ReadInvocationMeta(repoIdentity.RepoID, createResult.InvocationID)
-	s.writeHeadedSuccess(w, createResult.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, false)
+	return meta, nil
 }

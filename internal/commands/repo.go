@@ -109,12 +109,7 @@ type RepoAddOpts struct {
 
 // RepoAdd registers a repository with the daemon.
 func RepoAdd(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoAddOpts, stdout, stderr io.Writer) error {
-	fail := func(err error) error {
-		if err == nil || !opts.JSON {
-			return err
-		}
-		return writeCommandJSONError(stdout, err)
-	}
+	fail := commandFail(stdout, opts.JSON)
 
 	client, err := ensureDaemonClient(ctx, fsys, "")
 	if err != nil {
@@ -407,12 +402,7 @@ type RepoRmOpts struct {
 // RepoRm removes a registered repository from the daemon registry.
 func RepoRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoRmOpts, stdout, stderr io.Writer) error {
 	_ = cr
-	fail := func(err error) error {
-		if err == nil || !opts.JSON {
-			return err
-		}
-		return writeCommandJSONError(stdout, err)
-	}
+	fail := commandFail(stdout, opts.JSON)
 
 	if strings.TrimSpace(opts.RepoRef) == "" {
 		return fail(errors.New(errors.EUsage, "repo_ref is required"))

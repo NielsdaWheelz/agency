@@ -650,55 +650,43 @@ func (m model) agentDisplay(inv daemon.InvocationDTO) string {
 }
 
 func (m model) worktreeDisplay(name, worktreeID string) string {
-	if strings.TrimSpace(name) != "" || strings.TrimSpace(worktreeID) == "" {
-		return displayWorktree(name, worktreeID)
-	}
-	for _, wt := range m.snapshot.Worktrees {
-		if wt.WorktreeID == worktreeID {
-			return displayWorktree(wt.WorktreeName, wt.WorktreeID)
+	if strings.TrimSpace(name) == "" && strings.TrimSpace(worktreeID) != "" {
+		for _, wt := range m.snapshot.Worktrees {
+			if wt.WorktreeID == worktreeID {
+				name = wt.WorktreeName
+				break
+			}
 		}
 	}
-	return displayWorktree(name, worktreeID)
+	return displayNamed(name, worktreeID)
 }
 
 func (m model) repoDisplay(name, repoID string) string {
-	if strings.TrimSpace(name) != "" || strings.TrimSpace(repoID) == "" {
-		return displayRepo(name, repoID)
-	}
-	for _, repo := range m.snapshot.Repos {
-		if repo.RepoID == repoID {
-			return displayRepo(repo.RepoKey, repo.RepoID)
+	if strings.TrimSpace(name) == "" && strings.TrimSpace(repoID) != "" {
+		for _, repo := range m.snapshot.Repos {
+			if repo.RepoID == repoID {
+				name = repo.RepoKey
+				break
+			}
 		}
 	}
-	return displayRepo(name, repoID)
+	return displayNamed(name, repoID)
 }
 
-func displayWorktree(name, worktreeID string) string {
-	worktreeID = strings.TrimSpace(worktreeID)
+// displayNamed formats a "name (id)" label for an identified record. Falls
+// back to the id alone when the name is empty, the name alone when the id is
+// empty, and "-" when both are empty.
+func displayNamed(name, id string) string {
+	id = strings.TrimSpace(id)
 	name = strings.TrimSpace(name)
 	if name == "" {
-		if worktreeID == "" {
+		if id == "" {
 			return "-"
 		}
-		return worktreeID
+		return id
 	}
-	if worktreeID == "" {
+	if id == "" {
 		return name
 	}
-	return name + " (" + worktreeID + ")"
-}
-
-func displayRepo(name, repoID string) string {
-	repoID = strings.TrimSpace(repoID)
-	name = strings.TrimSpace(name)
-	if name == "" {
-		if repoID == "" {
-			return "-"
-		}
-		return repoID
-	}
-	if repoID == "" {
-		return name
-	}
-	return name + " (" + repoID + ")"
+	return name + " (" + id + ")"
 }

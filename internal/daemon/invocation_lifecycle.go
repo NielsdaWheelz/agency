@@ -34,7 +34,7 @@ func (s *Server) requestInvocationStop(repoID, invocationID string) {
 	})
 }
 
-func (s *Server) claimHeadlessInvocationStart(repoID, invocationID, runner string, pid, pgid int, promptPath, promptSHA string, runnerArgs, envKeys []string) error {
+func (s *Server) claimHeadlessInvocationStart(repoID, invocationID, taskID, runner string, pid, pgid int, promptPath, promptSHA string, runnerArgs, envKeys []string) error {
 	now := s.nowRFC3339()
 	daemonPID := os.Getpid()
 	return s.store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
@@ -50,6 +50,9 @@ func (s *Server) claimHeadlessInvocationStart(repoID, invocationID, runner strin
 		meta.PromptSHA256 = promptSHA
 		meta.RunnerArgs = runnerArgs
 		meta.CustomEnvKeys = envKeys
+		if taskID != "" {
+			meta.TaskID = taskID
+		}
 		meta.FinishedAt = ""
 		meta.ExitReason = ""
 		meta.FailureReason = ""
@@ -83,7 +86,7 @@ func (s *Server) claimHeadlessInvocationResume(repoID, invocationID string, pid,
 	})
 }
 
-func (s *Server) claimHeadedInvocation(repoID, invocationID, runner, sessionName string, runnerArgs, envKeys []string) error {
+func (s *Server) claimHeadedInvocation(repoID, invocationID, taskID, runner, sessionName string, runnerArgs, envKeys []string) error {
 	now := s.nowRFC3339()
 	daemonPID := os.Getpid()
 	return s.store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
@@ -98,6 +101,9 @@ func (s *Server) claimHeadedInvocation(repoID, invocationID, runner, sessionName
 		meta.DaemonInstanceID = s.instanceID
 		meta.ClaimedAt = now
 		meta.LifecycleOwner = daemonLifecycleOwner
+		if taskID != "" {
+			meta.TaskID = taskID
+		}
 		meta.FinishedAt = ""
 		meta.ExitReason = ""
 		meta.FailureReason = ""
@@ -143,20 +149,6 @@ func (s *Server) failInvocationStopped(repoID, invocationID, exitReason string) 
 	s.persistInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusFailed
 		meta.ExitReason = exitReason
-		meta.FailureReason = "stopped"
-		meta.FinishedAt = now
-		meta.ExitCode = nil
-		meta.PID = nil
-		meta.PGID = nil
-		meta.LifecycleOwner = ""
-	})
-}
-
-func (s *Server) failInvocationStoppedWithKill(repoID, invocationID string) {
-	now := s.nowRFC3339()
-	s.persistInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
-		meta.Status = store.InvocationStatusFailed
-		meta.ExitReason = store.ExitReasonKilled
 		meta.FailureReason = "stopped"
 		meta.FinishedAt = now
 		meta.ExitCode = nil

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -225,51 +226,88 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		return
 	}
 
-	logsDir := s.store.InvocationLogsDir(repoIdentity.RepoID, createResult.InvocationID)
-	if err := s.fsys.MkdirAll(logsDir, 0o700); err != nil {
-		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "start_failed", gitEnv)
-		writeErr(http.StatusInternalServerError, string(errors.EInternal), "failed to create logs directory: "+err.Error(), "", req.ClientRequestID)
-		return
-	}
-
-	promptPath := s.store.InvocationPromptPath(repoIdentity.RepoID, createResult.InvocationID)
-	if err := s.fsys.WriteFile(promptPath, []byte(req.Prompt), 0o600); err != nil {
-		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "start_failed", gitEnv)
-		writeErr(http.StatusInternalServerError, string(errors.EInternal), "failed to write prompt file: "+err.Error(), "", req.ClientRequestID)
-		return
-	}
-
-	promptHash := sha256.Sum256([]byte(req.Prompt))
-	promptSHA := hex.EncodeToString(promptHash[:])
-	envKeys := sortedEnvKeys(requestEnv)
-	runnerArgs := slices.Clone(req.RunnerArgs)
-	claim := func(pid, pgid int) error {
-		return s.claimHeadlessInvocationStart(
-			repoIdentity.RepoID,
-			createResult.InvocationID,
-			req.Runner,
-			pid,
-			pgid,
-			s.store.InvocationPromptPath(repoIdentity.RepoID, createResult.InvocationID),
-			promptSHA,
-			runnerArgs,
-			envKeys,
-		)
-	}
-	_, _, err = s.startRunner(ctx, repoIdentity.RepoID, createResult, repoRoot, prep.wtRecord.WorktreeID, req, gitEnv, claim)
-	if err != nil {
-		s.cleanupFailedInvocation(ctx, repoIdentity.RepoID, createResult, repoRoot, "spawn_failed", gitEnv)
-		code := errors.CodeOr(err, errors.ERunnerStartFailed)
-		writeErr(http.StatusInternalServerError, string(code), err.Error(), "", req.ClientRequestID)
+	meta, fail := s.finishHeadlessInvocationStart(ctx, repoRoot, repoIdentity.RepoID, "", prep.wtRecord, createResult, headlessInvocationStartParams{
+		runner:             req.Runner,
+		runnerArgs:         req.RunnerArgs,
+		prompt:             req.Prompt,
+		invocationName:     req.InvocationName,
+		env:                req.Env,
+		envKeys:            sortedEnvKeys(requestEnv),
+		gitEnv:             gitEnv,
+		noIncludeUntracked: req.NoIncludeUntracked,
+		clientRequestID:    req.ClientRequestID,
+	})
+	if fail != nil {
+		writeErr(fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID)
 		return
 	}
 
 	s.recordIdempotency(repoIdentity.RepoID, req.ClientRequestID, createResult.InvocationID, fingerprint)
-
-	meta, err := s.store.ReadInvocationMeta(repoIdentity.RepoID, createResult.InvocationID)
-	if err != nil {
-		writeErr(http.StatusInternalServerError, string(errors.EInternal), "failed to read invocation meta: "+err.Error(), "", req.ClientRequestID)
-		return
-	}
 	s.writeControlPlaneSuccess(w, createResult.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, false)
+}
+
+type headlessInvocationStartParams struct {
+	runner             string
+	runnerArgs         []string
+	prompt             string
+	invocationName     string
+	env                map[string]string
+	envKeys            []string
+	gitEnv             map[string]string
+	noIncludeUntracked bool
+	clientRequestID    string
+}
+
+// finishHeadlessInvocationStart performs the post-Create steps required to
+// bring a headless invocation under supervision: prepare logs and prompt,
+// launch the runner via startRunner, and claim it on success. On any failure
+// the invocation is cleaned up and the failure is returned for the caller to
+// render.
+func (s *Server) finishHeadlessInvocationStart(ctx context.Context, repoRoot, repoID, taskID string, wtRecord *store.IntegrationWorktreeRecord, createResult *invocation.CreateResult, params headlessInvocationStartParams) (*store.InvocationMeta, *startFailure) {
+	cleanup := func(reason string) {
+		s.cleanupFailedInvocation(ctx, repoID, createResult, repoRoot, reason, params.gitEnv)
+	}
+
+	logsDir := s.store.InvocationLogsDir(repoID, createResult.InvocationID)
+	if err := s.fsys.MkdirAll(logsDir, 0o700); err != nil {
+		cleanup("start_failed")
+		f := newStartFailure(http.StatusInternalServerError, errors.EInternal, "failed to create logs directory: "+err.Error(), "")
+		return nil, &f
+	}
+	promptPath := s.store.InvocationPromptPath(repoID, createResult.InvocationID)
+	if err := s.fsys.WriteFile(promptPath, []byte(params.prompt), 0o600); err != nil {
+		cleanup("start_failed")
+		f := newStartFailure(http.StatusInternalServerError, errors.EInternal, "failed to write prompt file: "+err.Error(), "")
+		return nil, &f
+	}
+
+	promptHash := sha256.Sum256([]byte(params.prompt))
+	promptSHA := hex.EncodeToString(promptHash[:])
+	runnerArgs := slices.Clone(params.runnerArgs)
+	startReq := ControlPlaneStartRequest{
+		RepoRoot:           repoRoot,
+		WorktreeRef:        wtRecord.WorktreeID,
+		Runner:             params.runner,
+		Prompt:             params.prompt,
+		InvocationName:     params.invocationName,
+		RunnerArgs:         params.runnerArgs,
+		Env:                params.env,
+		ClientRequestID:    params.clientRequestID,
+		NoIncludeUntracked: params.noIncludeUntracked,
+	}
+	claim := func(pid, pgid int) error {
+		return s.claimHeadlessInvocationStart(repoID, createResult.InvocationID, taskID, params.runner, pid, pgid, promptPath, promptSHA, runnerArgs, params.envKeys)
+	}
+	if _, _, err := s.startRunner(ctx, repoID, createResult, repoRoot, wtRecord.WorktreeID, startReq, params.gitEnv, claim); err != nil {
+		cleanup("spawn_failed")
+		f := newStartFailure(http.StatusInternalServerError, errors.CodeOr(err, errors.ERunnerStartFailed), err.Error(), "")
+		return nil, &f
+	}
+
+	meta, err := s.store.ReadInvocationMeta(repoID, createResult.InvocationID)
+	if err != nil {
+		f := startFailureFromError(http.StatusInternalServerError, errors.EInvocationBroken, err, "")
+		return nil, &f
+	}
+	return meta, nil
 }

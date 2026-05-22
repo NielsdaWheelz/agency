@@ -25,12 +25,7 @@ type AgentStopOpts struct {
 
 // AgentStop sends a graceful stop signal (Ctrl-C) to a running invocation.
 func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentStopOpts, stdout, stderr io.Writer) error {
-	fail := func(err error) error {
-		if err == nil || !opts.JSON {
-			return err
-		}
-		return writeCommandJSONError(stdout, err)
-	}
+	fail := commandFail(stdout, opts.JSON)
 
 	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, "", ResolveRepoContextOpts{
 		RepoRef: opts.RepoRef,
@@ -74,12 +69,7 @@ type AgentKillOpts struct {
 
 // AgentKill forcefully terminates a running invocation.
 func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentKillOpts, stdout, stderr io.Writer) error {
-	fail := func(err error) error {
-		if err == nil || !opts.JSON {
-			return err
-		}
-		return writeCommandJSONError(stdout, err)
-	}
+	fail := commandFail(stdout, opts.JSON)
 
 	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, "", ResolveRepoContextOpts{
 		RepoRef: opts.RepoRef,
@@ -124,12 +114,7 @@ type AgentLandOpts struct {
 
 // AgentLand lands sandbox changes to the integration worktree via daemon.
 func AgentLand(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentLandOpts, stdout, stderr io.Writer) error {
-	fail := func(err error) error {
-		if err == nil || !opts.JSON {
-			return err
-		}
-		return writeCommandJSONError(stdout, err)
-	}
+	fail := commandFail(stdout, opts.JSON)
 
 	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, "", ResolveRepoContextOpts{
 		RepoRef: opts.RepoRef,
@@ -210,12 +195,7 @@ type AgentDiscardOpts struct {
 
 // AgentDiscard discards a sandbox without landing via daemon.
 func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentDiscardOpts, stdout, stderr io.Writer) error {
-	fail := func(err error) error {
-		if err == nil || !opts.JSON {
-			return err
-		}
-		return writeCommandJSONError(stdout, err)
-	}
+	fail := commandFail(stdout, opts.JSON)
 
 	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, "", ResolveRepoContextOpts{
 		RepoRef: opts.RepoRef,
@@ -262,12 +242,7 @@ type AgentFollowupOpts struct {
 
 // AgentFollowup submits a follow-up prompt to an existing headless invocation.
 func AgentFollowup(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentFollowupOpts, stdout, stderr io.Writer) error {
-	fail := func(err error) error {
-		if err == nil || !opts.JSON {
-			return err
-		}
-		return writeCommandJSONError(stdout, err)
-	}
+	fail := commandFail(stdout, opts.JSON)
 
 	prompt, err := resolveBoundedPromptInput(
 		opts.Prompt,
@@ -335,12 +310,7 @@ type AgentRecreateOpts struct {
 
 // AgentRecreate starts a new tmux session for an existing headed invocation.
 func AgentRecreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentRecreateOpts, stdout, stderr io.Writer) error {
-	fail := func(err error) error {
-		if err == nil || !opts.JSON {
-			return err
-		}
-		return writeCommandJSONError(stdout, err)
-	}
+	fail := commandFail(stdout, opts.JSON)
 	if !opts.JSON && !opts.Detached {
 		isInteractive := opts.IsInteractive
 		if isInteractive == nil {
@@ -452,12 +422,7 @@ type AgentRestoreOpts struct {
 // AgentRestore restores an invocation sandbox to a checkpoint selected either
 // explicitly or by history turn id.
 func AgentRestore(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentRestoreOpts, stdout, stderr io.Writer) error {
-	fail := func(err error) error {
-		if err == nil || !opts.JSON {
-			return err
-		}
-		return writeCommandJSONError(stdout, err)
-	}
+	fail := commandFail(stdout, opts.JSON)
 	if fsys == nil {
 		fsys = fs.NewRealFS()
 	}
