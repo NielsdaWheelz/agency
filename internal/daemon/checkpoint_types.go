@@ -8,7 +8,7 @@ type CheckpointApplyRequest struct {
 
 // CheckpointApplyResponse is the response body for POST /invocations/{id}/checkpoints/apply.
 type CheckpointApplyResponse struct {
-	responseEnvelope
+	ResponseEnvelope
 	CheckpointID   int    `json:"checkpoint_id,omitempty"`
 	SnapshotCommit string `json:"snapshot_commit,omitempty"`
 	RestoredAt     string `json:"restored_at,omitempty"`

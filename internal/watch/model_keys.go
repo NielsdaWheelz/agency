@@ -212,37 +212,26 @@ func (m model) updateWorkspaceFilterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		return m, nil
 	}
 
+	var filter *string
+	switch m.workspaceFocus {
+	case workspacePaneRepos:
+		filter = &m.repoFilter
+	case workspacePaneWorktrees:
+		filter = &m.worktreeFilter
+	default:
+		filter = &m.agentFilter
+	}
+
 	switch msg.String() {
 	case "backspace", "ctrl+h":
-		switch m.workspaceFocus {
-		case workspacePaneRepos:
-			m.repoFilter = trimLastRune(m.repoFilter)
-		case workspacePaneWorktrees:
-			m.worktreeFilter = trimLastRune(m.worktreeFilter)
-		default:
-			m.agentFilter = trimLastRune(m.agentFilter)
-		}
+		*filter = trimLastRune(*filter)
 	case "ctrl+u":
-		switch m.workspaceFocus {
-		case workspacePaneRepos:
-			m.repoFilter = ""
-		case workspacePaneWorktrees:
-			m.worktreeFilter = ""
-		default:
-			m.agentFilter = ""
-		}
+		*filter = ""
 	default:
 		if msg.Text == "" {
 			return m, nil
 		}
-		switch m.workspaceFocus {
-		case workspacePaneRepos:
-			m.repoFilter += msg.Text
-		case workspacePaneWorktrees:
-			m.worktreeFilter += msg.Text
-		default:
-			m.agentFilter += msg.Text
-		}
+		*filter += msg.Text
 	}
 
 	m.reconcileSelection()

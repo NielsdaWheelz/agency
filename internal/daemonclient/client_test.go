@@ -347,9 +347,9 @@ func TestDaemonClient_ControlPlaneStartPreservesClientRequestID(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/invocations/start_headless":
-			_ = json.NewEncoder(w).Encode(daemon.ControlPlaneStartResponse{OK: true, APIVersion: daemon.APIVersion, ClientRequestID: seen[r.URL.Path]})
+			_ = json.NewEncoder(w).Encode(daemon.ControlPlaneStartResponse{ResponseEnvelope: daemon.ResponseEnvelope{OK: true, APIVersion: daemon.APIVersion}, ClientRequestID: seen[r.URL.Path]})
 		case "/invocations/start_headed":
-			_ = json.NewEncoder(w).Encode(daemon.ControlPlaneStartHeadedResponse{OK: true, APIVersion: daemon.APIVersion, ClientRequestID: seen[r.URL.Path]})
+			_ = json.NewEncoder(w).Encode(daemon.ControlPlaneStartHeadedResponse{ResponseEnvelope: daemon.ResponseEnvelope{OK: true, APIVersion: daemon.APIVersion}, ClientRequestID: seen[r.URL.Path]})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -378,7 +378,7 @@ func TestDaemonClient_SubmitFollowUpPreservesClientRequestID(t *testing.T) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		seen = body["client_request_id"].(string)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(daemon.ControlPlaneFollowUpResponse{OK: true, APIVersion: daemon.APIVersion, ClientRequestID: seen})
+		_ = json.NewEncoder(w).Encode(daemon.ControlPlaneFollowUpResponse{ResponseEnvelope: daemon.ResponseEnvelope{OK: true, APIVersion: daemon.APIVersion}, ClientRequestID: seen})
 	})
 
 	client := NewClient(startFakeDaemon(t, handler))

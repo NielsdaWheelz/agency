@@ -12,7 +12,18 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
-func (s *Service) cleanupAfterLand(ctx context.Context, repoID, invocationID, repoRoot string, meta *store.InvocationMeta, env map[string]string) error {
+// exitCodeError formats a non-zero exit-code failure with optional stderr context.
+func exitCodeError(action string, exitCode int, stderr string) error {
+	msg := fmt.Sprintf("%s exited %d", action, exitCode)
+	if trimmed := strings.TrimSpace(stderr); trimmed != "" {
+		msg += ": " + trimmed
+	}
+	return errors.New(msg)
+}
+
+// cleanupSandbox removes the sandbox worktree, branch, snapshot refs, and sandbox directory.
+// Used by both the land and discard flows; failures are aggregated into one error.
+func (s *Service) cleanupSandbox(ctx context.Context, repoID, invocationID, repoRoot string, meta *store.InvocationMeta, env map[string]string) error {
 	var errs []string
 
 	if err := s.removeGitWorktreeIfPresent(ctx, repoRoot, meta.SandboxPath, env); err != nil {
@@ -66,11 +77,7 @@ func (s *Service) landCleanupNeeded(ctx context.Context, repoRoot, invocationID 
 			return true, nil
 		}
 		if result.ExitCode != 1 {
-			msg := fmt.Sprintf("branch lookup exited %d", result.ExitCode)
-			if stderr := strings.TrimSpace(result.Stderr); stderr != "" {
-				msg += ": " + stderr
-			}
-			return false, errors.New(msg)
+			return false, exitCodeError("branch lookup", result.ExitCode, result.Stderr)
 		}
 	}
 
@@ -82,11 +89,7 @@ func (s *Service) landCleanupNeeded(ctx context.Context, repoRoot, invocationID 
 		return false, fmt.Errorf("list snapshot refs: %w", err)
 	}
 	if result.ExitCode != 0 {
-		msg := fmt.Sprintf("list snapshot refs exited %d", result.ExitCode)
-		if stderr := strings.TrimSpace(result.Stderr); stderr != "" {
-			msg += ": " + stderr
-		}
-		return false, errors.New(msg)
+		return false, exitCodeError("list snapshot refs", result.ExitCode, result.Stderr)
 	}
 	return strings.TrimSpace(result.Stdout) != "", nil
 }
@@ -102,11 +105,7 @@ func (s *Service) cleanupSnapshotRefs(ctx context.Context, repoRoot, invocationI
 		return fmt.Errorf("list snapshot refs: %w", err)
 	}
 	if result.ExitCode != 0 {
-		msg := fmt.Sprintf("list snapshot refs exited %d", result.ExitCode)
-		if stderr := strings.TrimSpace(result.Stderr); stderr != "" {
-			msg += ": " + stderr
-		}
-		return errors.New(msg)
+		return exitCodeError("list snapshot refs", result.ExitCode, result.Stderr)
 	}
 
 	refs := strings.Split(strings.TrimSpace(result.Stdout), "\n")
@@ -122,38 +121,8 @@ func (s *Service) cleanupSnapshotRefs(ctx context.Context, repoRoot, invocationI
 			return fmt.Errorf("delete snapshot ref %s: %w", ref, err)
 		}
 		if result.ExitCode != 0 {
-			msg := fmt.Sprintf("delete snapshot ref %s exited %d", ref, result.ExitCode)
-			if stderr := strings.TrimSpace(result.Stderr); stderr != "" {
-				msg += ": " + stderr
-			}
-			return errors.New(msg)
+			return exitCodeError("delete snapshot ref "+ref, result.ExitCode, result.Stderr)
 		}
-	}
-
-	return nil
-}
-
-func (s *Service) cleanupSandbox(ctx context.Context, repoID, invocationID, repoRoot string, meta *store.InvocationMeta, env map[string]string) error {
-	var errs []string
-
-	if err := s.removeGitWorktreeIfPresent(ctx, repoRoot, meta.SandboxPath, env); err != nil {
-		errs = append(errs, err.Error())
-	}
-
-	if err := s.deleteGitBranchIfPresent(ctx, repoRoot, meta.SandboxBranch, env); err != nil {
-		errs = append(errs, err.Error())
-	}
-
-	if err := s.cleanupSnapshotRefs(ctx, repoRoot, invocationID, env); err != nil {
-		errs = append(errs, fmt.Sprintf("snapshot ref cleanup: %v", err))
-	}
-
-	if err := fs.SafeRemoveAll(meta.SandboxPath, meta.CheckoutRoot); err != nil {
-		errs = append(errs, fmt.Sprintf("sandbox dir removal: %v", err))
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("cleanup failed: %s", strings.Join(errs, "; "))
 	}
 
 	return nil
@@ -178,11 +147,7 @@ func (s *Service) removeGitWorktreeIfPresent(ctx context.Context, repoRoot, tree
 		return fmt.Errorf("worktree remove: %w", err)
 	}
 	if result.ExitCode != 0 {
-		msg := fmt.Sprintf("worktree remove exited %d", result.ExitCode)
-		if stderr := strings.TrimSpace(result.Stderr); stderr != "" {
-			msg += ": " + stderr
-		}
-		return errors.New(msg)
+		return exitCodeError("worktree remove", result.ExitCode, result.Stderr)
 	}
 	return nil
 }
@@ -203,11 +168,7 @@ func (s *Service) deleteGitBranchIfPresent(ctx context.Context, repoRoot, branch
 		return nil
 	}
 	if result.ExitCode != 0 {
-		msg := fmt.Sprintf("branch lookup exited %d", result.ExitCode)
-		if stderr := strings.TrimSpace(result.Stderr); stderr != "" {
-			msg += ": " + stderr
-		}
-		return errors.New(msg)
+		return exitCodeError("branch lookup", result.ExitCode, result.Stderr)
 	}
 
 	result, err = s.runner.Run(ctx, "git", []string{
@@ -218,11 +179,7 @@ func (s *Service) deleteGitBranchIfPresent(ctx context.Context, repoRoot, branch
 		return fmt.Errorf("branch delete: %w", err)
 	}
 	if result.ExitCode != 0 {
-		msg := fmt.Sprintf("branch delete exited %d", result.ExitCode)
-		if stderr := strings.TrimSpace(result.Stderr); stderr != "" {
-			msg += ": " + stderr
-		}
-		return errors.New(msg)
+		return exitCodeError("branch delete", result.ExitCode, result.Stderr)
 	}
 	return nil
 }

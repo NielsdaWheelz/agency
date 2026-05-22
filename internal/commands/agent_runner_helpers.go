@@ -406,6 +406,18 @@ func writeCommandJSON(w io.Writer, payload any) error {
 	return enc.Encode(payload)
 }
 
+// writeInvocationActionJSON renders the canonical {invocation_id} JSON success body
+// used by stop/kill/discard and other invocation-action commands.
+func writeInvocationActionJSON(w io.Writer, env daemon.ResponseEnvelope, invocationID string) error {
+	return writeCommandJSON(w, struct {
+		commandJSONBase
+		InvocationID string `json:"invocation_id,omitempty"`
+	}{
+		commandJSONBase: newCommandJSONSuccess(env.APIVersion, env.BuildVersion, "", env.RequestID),
+		InvocationID:    invocationID,
+	})
+}
+
 // commandFail returns the error handler used by command entrypoints. When
 // jsonMode is true, errors are rendered as a JSON envelope to stdout and the
 // returned error is nil. When false, the error passes through unchanged.

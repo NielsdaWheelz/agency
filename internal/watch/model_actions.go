@@ -98,6 +98,14 @@ func (m model) updateFollowupKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// closeActionState clears all action-related transient state.
+func (m *model) closeActionState() {
+	m.actionMenuOpen = false
+	m.confirmAction = ""
+	m.followupInput = false
+	m.followupText = ""
+}
+
 func (m model) startInvocationAction(kind actionKind) (tea.Model, tea.Cmd) {
 	if kind == actionFollowup {
 		if !m.canStartAction(kind) {
@@ -191,10 +199,7 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 		}
 		m.attachInvocationID = invocationID
 		m.attachRequestedRepo = repoID
-		m.actionMenuOpen = false
-		m.confirmAction = ""
-		m.followupInput = false
-		m.followupText = ""
+		m.closeActionState()
 		return m, tea.Quit
 	case actionFollowup:
 		if m.followup == nil {
@@ -241,10 +246,7 @@ func (m model) executeInvocationAction(kind actionKind, prompt string) (tea.Mode
 	}
 
 	m.actionRunning = true
-	m.actionMenuOpen = false
-	m.confirmAction = ""
-	m.followupInput = false
-	m.followupText = ""
+	m.closeActionState()
 	m.setActionMessage(fmt.Sprintf("%s in progress for %s", kind, actionTarget(kind, selected.InvocationID, selected.WorktreeID, "")))
 
 	invocationID := selected.InvocationID

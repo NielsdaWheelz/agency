@@ -165,11 +165,8 @@ func validateRepoRecord(path string, rec RepoRecord, repoID string, fields map[s
 			return errors.New(errors.EStoreCorrupt, "repo.json: missing required capabilities."+field)
 		}
 	}
-	if rec.SchemaVersion == "" {
-		return errors.New(errors.EStoreCorrupt, "repo.json: missing schema_version")
-	}
-	if rec.SchemaVersion != SchemaVersion {
-		return errors.New(errors.EStoreCorrupt, "repo.json: unsupported schema_version: "+rec.SchemaVersion)
+	if err := validateSchemaVersion(rec.SchemaVersion, "repo.json", path); err != nil {
+		return err
 	}
 	if rec.RepoKey == "" || rec.RepoID == "" || rec.RepoRootLastSeen == "" || rec.CreatedAt == "" || rec.UpdatedAt == "" {
 		return errors.New(errors.EStoreCorrupt, "repo.json: missing required fields")

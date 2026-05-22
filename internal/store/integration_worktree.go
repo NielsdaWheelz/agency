@@ -207,23 +207,8 @@ func (s *Store) ReadIntegrationWorktreeMeta(repoID, worktreeID string) (*Integra
 }
 
 func validateIntegrationWorktreeMeta(meta IntegrationWorktreeMeta, repoID, worktreeID, metaPath string) error {
-	if meta.SchemaVersion == "" {
-		return errors.NewWithDetails(
-			errors.EStoreCorrupt,
-			"integration worktree meta.json missing schema_version",
-			map[string]string{"meta_path": metaPath},
-		)
-	}
-	if meta.SchemaVersion != SchemaVersion {
-		return errors.NewWithDetails(
-			errors.EStoreCorrupt,
-			"integration worktree meta.json has unsupported schema_version",
-			map[string]string{
-				"meta_path":       metaPath,
-				"schema_version":  meta.SchemaVersion,
-				"expected_schema": SchemaVersion,
-			},
-		)
+	if err := validateSchemaVersion(meta.SchemaVersion, "integration worktree meta.json", metaPath); err != nil {
+		return err
 	}
 	if meta.WorktreeID == "" || meta.Name == "" || meta.RepoID == "" || meta.Branch == "" ||
 		meta.BaseBranch == "" || meta.TreePath == "" || meta.CheckoutRoot == "" ||

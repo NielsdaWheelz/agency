@@ -45,13 +45,7 @@ func AgentStop(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		invocationID = opts.InvocationRef
 	}
 	if opts.JSON {
-		return writeCommandJSON(stdout, struct {
-			commandJSONBase
-			InvocationID string `json:"invocation_id,omitempty"`
-		}{
-			commandJSONBase: newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, "", resp.RequestID),
-			InvocationID:    invocationID,
-		})
+		return writeInvocationActionJSON(stdout, resp.ResponseEnvelope, invocationID)
 	}
 
 	_, _ = fmt.Fprintf(stdout, "Stop signal sent to invocation %s\n", invocationID)
@@ -89,13 +83,7 @@ func AgentKill(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 		invocationID = opts.InvocationRef
 	}
 	if opts.JSON {
-		return writeCommandJSON(stdout, struct {
-			commandJSONBase
-			InvocationID string `json:"invocation_id,omitempty"`
-		}{
-			commandJSONBase: newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, "", resp.RequestID),
-			InvocationID:    invocationID,
-		})
+		return writeInvocationActionJSON(stdout, resp.ResponseEnvelope, invocationID)
 	}
 
 	_, _ = fmt.Fprintf(stdout, "Killed invocation %s\n", invocationID)
@@ -215,13 +203,7 @@ func AgentDiscard(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		invocationID = opts.InvocationRef
 	}
 	if opts.JSON {
-		return writeCommandJSON(stdout, struct {
-			commandJSONBase
-			InvocationID string `json:"invocation_id,omitempty"`
-		}{
-			commandJSONBase: newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, "", resp.RequestID),
-			InvocationID:    invocationID,
-		})
+		return writeInvocationActionJSON(stdout, resp.ResponseEnvelope, invocationID)
 	}
 
 	_, _ = fmt.Fprintf(stdout, "Discarded invocation %s\n", invocationID)

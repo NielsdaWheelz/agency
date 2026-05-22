@@ -45,12 +45,5 @@ func (s *Server) writeError(w http.ResponseWriter, status int, code, message, hi
 func (s *Server) writeErrorWithRequestID(w http.ResponseWriter, status int, requestID, code, message, hint string) {
 	requestID = resolveOrGenerateRequestID(requestID)
 	setRequestIDHeader(w, requestID)
-	resp := errorResponse{
-		OK:        false,
-		RequestID: requestID,
-		ErrorCode: code,
-		Message:   message,
-		Hint:      hint,
-	}
-	s.writeJSON(w, status, resp)
+	s.writeJSON(w, status, NewErrorEnvelope(requestID, code, message, hint))
 }

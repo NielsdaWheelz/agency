@@ -159,23 +159,8 @@ func (s *Store) ReadIntegrationWorktreeMerge(repoID, worktreeID string) (*Integr
 			)
 		}
 	}
-	if meta.SchemaVersion == "" {
-		return nil, errors.NewWithDetails(
-			errors.EStoreCorrupt,
-			"integration worktree merge.json missing schema_version",
-			map[string]string{"merge_path": mergePath},
-		)
-	}
-	if meta.SchemaVersion != SchemaVersion {
-		return nil, errors.NewWithDetails(
-			errors.EStoreCorrupt,
-			"integration worktree merge.json has unsupported schema_version",
-			map[string]string{
-				"merge_path":      mergePath,
-				"schema_version":  meta.SchemaVersion,
-				"expected_schema": SchemaVersion,
-			},
-		)
+	if err := validateSchemaVersion(meta.SchemaVersion, "integration worktree merge.json", mergePath); err != nil {
+		return nil, err
 	}
 	if meta.WorktreeID == "" || meta.RepoID == "" || meta.AttemptID == "" || meta.Strategy == "" ||
 		meta.StartedAt == "" || meta.UpdatedAt == "" {

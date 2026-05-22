@@ -256,12 +256,8 @@ func (s *Store) ScanTasksForRepo(repoID string) ([]TaskRecord, error) {
 }
 
 func validateTaskMeta(meta TaskMeta, repoID, taskID, metaPath string) error {
-	if meta.SchemaVersion == "" {
-		return errors.NewWithDetails(
-			errors.EStoreCorrupt,
-			"task meta.json missing schema_version",
-			map[string]string{"meta_path": metaPath},
-		)
+	if err := validateSchemaVersion(meta.SchemaVersion, "task meta.json", metaPath); err != nil {
+		return err
 	}
 	if meta.TaskID == "" || meta.Name == "" || meta.RepoID == "" || meta.RepoRoot == "" ||
 		meta.BaseBranch == "" || meta.State == "" || meta.Mode == "" || meta.Runner == "" || meta.CreatedAt == "" || meta.UpdatedAt == "" {
@@ -269,17 +265,6 @@ func validateTaskMeta(meta TaskMeta, repoID, taskID, metaPath string) error {
 			errors.EStoreCorrupt,
 			"task meta.json missing required fields",
 			map[string]string{"meta_path": metaPath},
-		)
-	}
-	if meta.SchemaVersion != SchemaVersion {
-		return errors.NewWithDetails(
-			errors.EStoreCorrupt,
-			"task meta.json has unsupported schema_version",
-			map[string]string{
-				"meta_path":       metaPath,
-				"schema_version":  meta.SchemaVersion,
-				"expected_schema": SchemaVersion,
-			},
 		)
 	}
 	if meta.CheckoutRoot == "" || meta.ExecutionProfile == "" {

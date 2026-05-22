@@ -101,15 +101,12 @@ func (s *Server) handleControlPlaneFollowUp(w http.ResponseWriter, r *http.Reque
 	deliveryMode := s.deliverFollowUp(record.InvocationID, req.Prompt)
 
 	s.writeJSON(w, http.StatusOK, ControlPlaneFollowUpResponse{
-		OK:              true,
-		InvocationID:    record.InvocationID,
-		TimelineEntry:   timelineEntryID,
-		AlreadyApplied:  alreadyApplied,
-		DeliveryMode:    deliveryMode,
-		RequestID:       requestID,
-		APIVersion:      APIVersion,
-		BuildVersion:    daemonBuildVersion(),
-		ClientRequestID: req.ClientRequestID,
+		ResponseEnvelope: NewSuccessEnvelope(requestID),
+		InvocationID:     record.InvocationID,
+		TimelineEntry:    timelineEntryID,
+		AlreadyApplied:   alreadyApplied,
+		DeliveryMode:     deliveryMode,
+		ClientRequestID:  req.ClientRequestID,
 	})
 }
 

@@ -70,7 +70,7 @@ func (r *ControlPlaneStartRequest) UnmarshalJSON(data []byte) error {
 
 // ControlPlaneStartResponse is the response body for POST /invocations/start_headless.
 type ControlPlaneStartResponse struct {
-	OK               bool      `json:"ok"`
+	ResponseEnvelope
 	InvocationID     string    `json:"invocation_id,omitempty"`
 	SandboxPath      string    `json:"sandbox_path,omitempty"`
 	RepoID           string    `json:"repo_id,omitempty"`
@@ -85,17 +85,7 @@ type ControlPlaneStartResponse struct {
 	DaemonInstanceID string    `json:"daemon_instance_id,omitempty"`
 	AlreadyRunning   bool      `json:"already_running,omitempty"`
 	LogPaths         *LogPaths `json:"log_paths,omitempty"`
-	RequestID        string    `json:"request_id,omitempty"`
-
-	// Standard response fields
-	APIVersion      int    `json:"api_version"`
-	BuildVersion    string `json:"build_version,omitempty"`
-	ClientRequestID string `json:"client_request_id,omitempty"`
-
-	// Error fields (only set when OK is false)
-	ErrorCode string `json:"error_code,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Hint      string `json:"hint,omitempty"`
+	ClientRequestID  string    `json:"client_request_id,omitempty"`
 }
 
 // ControlPlaneFollowUpRequest is the request body for POST /invocations/{ref}/followup.
@@ -109,27 +99,17 @@ type ControlPlaneFollowUpRequest struct {
 
 // ControlPlaneFollowUpResponse is the response body for POST /invocations/{ref}/followup.
 type ControlPlaneFollowUpResponse struct {
-	OK             bool   `json:"ok"`
-	InvocationID   string `json:"invocation_id,omitempty"`
-	TimelineEntry  string `json:"timeline_entry_id,omitempty"`
-	AlreadyApplied bool   `json:"already_applied,omitempty"`
-	DeliveryMode   string `json:"delivery_mode,omitempty"` // "delivered" (stdin), "queued" (resume), "audit_only" (no relay)
-	RequestID      string `json:"request_id,omitempty"`
-
-	// Standard response fields
-	APIVersion      int    `json:"api_version"`
-	BuildVersion    string `json:"build_version,omitempty"`
+	ResponseEnvelope
+	InvocationID    string `json:"invocation_id,omitempty"`
+	TimelineEntry   string `json:"timeline_entry_id,omitempty"`
+	AlreadyApplied  bool   `json:"already_applied,omitempty"`
+	DeliveryMode    string `json:"delivery_mode,omitempty"` // "delivered" (stdin), "queued" (resume), "audit_only" (no relay)
 	ClientRequestID string `json:"client_request_id,omitempty"`
-
-	// Error fields (only set when OK is false)
-	ErrorCode string `json:"error_code,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Hint      string `json:"hint,omitempty"`
 }
 
 // InvocationActionResponse is the shared response body for POST /invocations/{id}/stop and /kill.
 type InvocationActionResponse struct {
-	responseEnvelope
+	ResponseEnvelope
 	InvocationID string `json:"invocation_id,omitempty"`
 }
 
@@ -154,18 +134,9 @@ type HealthResponse struct {
 	UptimeSeconds    int64  `json:"uptime_seconds"`
 }
 
-// errorResponse is a generic error response.
-type errorResponse struct {
-	OK        bool   `json:"ok"`
-	RequestID string `json:"request_id,omitempty"`
-	ErrorCode string `json:"error_code"`
-	Message   string `json:"message"`
-	Hint      string `json:"hint,omitempty"`
-}
-
 // ControlPlaneStartHeadedResponse is the response body for POST /invocations/start_headed.
 type ControlPlaneStartHeadedResponse struct {
-	OK               bool      `json:"ok"`
+	ResponseEnvelope
 	InvocationID     string    `json:"invocation_id,omitempty"`
 	SandboxPath      string    `json:"sandbox_path,omitempty"`
 	RepoID           string    `json:"repo_id,omitempty"`
@@ -179,16 +150,6 @@ type ControlPlaneStartHeadedResponse struct {
 	DaemonInstanceID string    `json:"daemon_instance_id,omitempty"`
 	AlreadyRunning   bool      `json:"already_running,omitempty"`
 	LogPaths         *LogPaths `json:"log_paths,omitempty"`
-	RequestID        string    `json:"request_id,omitempty"`
-
-	// Standard response fields
-	APIVersion      int    `json:"api_version"`
-	BuildVersion    string `json:"build_version,omitempty"`
-	GitSHA          string `json:"git_sha,omitempty"`
-	ClientRequestID string `json:"client_request_id,omitempty"`
-
-	// Error fields (only set when OK is false)
-	ErrorCode string `json:"error_code,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Hint      string `json:"hint,omitempty"`
+	GitSHA           string    `json:"git_sha,omitempty"`
+	ClientRequestID  string    `json:"client_request_id,omitempty"`
 }

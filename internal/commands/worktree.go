@@ -152,25 +152,8 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 	_, _ = fmt.Fprintf(stdout, "  branch:      %s\n", result.Branch)
 	_, _ = fmt.Fprintf(stdout, "  path:        %s\n", result.TreePath)
 
-	// Open in editor if requested
 	if opts.Open {
-		editorCmd, err := resolveEditorCmdWithOptionalOverride(cr, fsys, ns.dirs.ConfigDir, opts.Editor)
-		if err != nil {
-			emitOpenOnCreateStatus(stdout, stderr, err)
-			return nil
-		}
-
-		runResult, runErr := runAttachedInDir(ctx, editorCmd, []string{result.TreePath}, result.TreePath)
-		if runErr != nil {
-			emitOpenOnCreateStatus(stdout, stderr, runErr)
-			return nil
-		}
-		if runResult.ExitCode != 0 {
-			emitOpenOnCreateStatus(stdout, stderr, fmt.Errorf("editor exited with code %d", runResult.ExitCode))
-			return nil
-		}
-
-		emitOpenOnCreateStatus(stdout, stderr, nil)
+		emitOpenOnCreateStatus(stdout, stderr, runEditorAt(ctx, cr, fsys, ns.dirs.ConfigDir, opts.Editor, result.TreePath))
 	}
 
 	return nil

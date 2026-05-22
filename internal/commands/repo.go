@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
@@ -18,7 +17,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/git"
-	"github.com/NielsdaWheelz/agency/internal/paths"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
@@ -202,11 +200,6 @@ func RepoLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoLSO
 	return nil
 }
 
-type daemonNavSetup struct {
-	dirs   paths.Dirs
-	client *daemonclient.Client
-}
-
 func canonicalCommandDir(pathValue, label string) (string, error) {
 	absPath, err := filepath.Abs(pathValue)
 	if err != nil {
@@ -249,82 +242,6 @@ func registeredRepoRootFromStore(st *store.Store, repoID string) (string, error)
 		"registered repo root is not accessible",
 		map[string]string{"hint": "run `agency repo add <path>` from an accessible checkout"},
 	)
-}
-
-func resolveCommandDirs(dataDirOverride, configDirOverride string) (paths.Dirs, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return paths.Dirs{}, errors.Wrap(errors.EInternal, "failed to get home directory", err)
-	}
-	dirs := paths.ResolveDirs(os.Getenv, homeDir)
-	if dataDirOverride != "" {
-		dirs.DataDir = dataDirOverride
-	}
-	if configDirOverride != "" {
-		dirs.ConfigDir = configDirOverride
-	}
-	return dirs, nil
-}
-
-func ensureDaemonClient(ctx context.Context, fsys fs.FS, dataDirOverride string) (*daemonclient.Client, error) {
-	dirs, err := resolveCommandDirs(dataDirOverride, "")
-	if err != nil {
-		return nil, err
-	}
-	return ensureDaemonClientFromDirs(ctx, fsys, dirs)
-}
-
-func ensureDaemonClientFromDirs(ctx context.Context, fsys fs.FS, dirs paths.Dirs) (*daemonclient.Client, error) {
-	st := store.NewStore(fsys, dirs.DataDir, time.Now)
-	socketPath := st.DaemonSocketPath()
-	logPath := st.DaemonLogPath()
-
-	client, err := daemonclient.EnsureDaemonRunning(ctx, socketPath, logPath)
-	if err != nil {
-		return nil, err
-	}
-	if err := client.CheckAPIVersion(ctx); err != nil {
-		return nil, err
-	}
-	return client, nil
-}
-
-func setupDaemonNav(ctx context.Context, fsys fs.FS, dataDirOverride string) (*daemonNavSetup, error) {
-	dirs, err := resolveCommandDirs(dataDirOverride, "")
-	if err != nil {
-		return nil, err
-	}
-	client, err := ensureDaemonClientFromDirs(ctx, fsys, dirs)
-	if err != nil {
-		return nil, err
-	}
-	return &daemonNavSetup{dirs: dirs, client: client}, nil
-}
-
-// setupDaemonNavAndRepo bundles the daemon nav setup with repo-context
-// resolution, the universal two-step prelude for every CLI command that talks
-// to the daemon about a specific repo. Pass "" for dataDirOverride to use the
-// default. Returns the nav setup (so callers can access ns.client) plus the
-// resolved repo context.
-func setupDaemonNavAndRepo(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd, dataDirOverride string, repoOpts ResolveRepoContextOpts) (*daemonNavSetup, *RepoContextResult, error) {
-	ns, err := setupDaemonNav(ctx, fsys, dataDirOverride)
-	if err != nil {
-		return nil, nil, err
-	}
-	repoCtx, err := ResolveRepoViaClient(ctx, cr, ns.client, cwd, repoOpts)
-	if err != nil {
-		return nil, nil, err
-	}
-	return ns, repoCtx, nil
-}
-
-func runAttachedInDir(ctx context.Context, command string, args []string, dir string) (exec.CmdResult, error) {
-	return exec.RunAttached(ctx, command, args, exec.AttachedRunOpts{
-		Dir:    dir,
-		Stdin:  os.Stdin,
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
-	})
 }
 
 func ensureAccessibleRepo(repo daemon.RepoDTO, repoRef string) (daemon.RepoDTO, error) {

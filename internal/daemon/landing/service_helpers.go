@@ -10,32 +10,32 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/exec"
 )
 
-func (s *Service) getHeadCommit(ctx context.Context, treePath string, env map[string]string) (string, error) {
-	result, err := s.runner.Run(ctx, "git", []string{
-		"-C", treePath,
-		"rev-parse", "HEAD",
-	}, exec.RunOpts{Env: env})
+// runGit runs `git -C <dir> <args...>` and maps non-zero exit / process error to a single labelled failure.
+func (s *Service) runGit(ctx context.Context, dir string, env map[string]string, label string, args ...string) (exec.CmdResult, error) {
+	fullArgs := append([]string{"-C", dir}, args...)
+	result, err := s.runner.Run(ctx, "git", fullArgs, exec.RunOpts{Env: env})
 	if err != nil {
-		return "", err
+		return result, err
 	}
 	if result.ExitCode != 0 {
-		return "", fmt.Errorf("git rev-parse failed: %s", result.Stderr)
+		return result, fmt.Errorf("%s failed: %s", label, result.Stderr)
+	}
+	return result, nil
+}
+
+func (s *Service) getHeadCommit(ctx context.Context, treePath string, env map[string]string) (string, error) {
+	result, err := s.runGit(ctx, treePath, env, "git rev-parse", "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
 	}
 	return strings.TrimSpace(result.Stdout), nil
 }
 
 func (s *Service) countCommits(ctx context.Context, repoRoot, baseCommit, sandboxBranch string, env map[string]string) (int, error) {
-	result, err := s.runner.Run(ctx, "git", []string{
-		"-C", repoRoot,
-		"rev-list", "--count", fmt.Sprintf("%s..%s", baseCommit, sandboxBranch),
-	}, exec.RunOpts{Env: env})
+	result, err := s.runGit(ctx, repoRoot, env, "git rev-list", "rev-list", "--count", fmt.Sprintf("%s..%s", baseCommit, sandboxBranch))
 	if err != nil {
 		return 0, err
 	}
-	if result.ExitCode != 0 {
-		return 0, fmt.Errorf("git rev-list failed: %s", result.Stderr)
-	}
-
 	var count int
 	if _, err := fmt.Sscanf(strings.TrimSpace(result.Stdout), "%d", &count); err != nil {
 		return 0, fmt.Errorf("failed to parse commit count: %w", err)
@@ -44,15 +44,9 @@ func (s *Service) countCommits(ctx context.Context, repoRoot, baseCommit, sandbo
 }
 
 func (s *Service) isSandboxDirty(ctx context.Context, sandboxPath string, env map[string]string) (bool, error) {
-	result, err := s.runner.Run(ctx, "git", []string{
-		"-C", sandboxPath,
-		"status", "--porcelain", "--", ":(exclude).agency",
-	}, exec.RunOpts{Env: env})
+	result, err := s.runGit(ctx, sandboxPath, env, "git status", "status", "--porcelain", "--", ":(exclude).agency")
 	if err != nil {
 		return false, err
-	}
-	if result.ExitCode != 0 {
-		return false, fmt.Errorf("git status failed: %s", result.Stderr)
 	}
 	return strings.TrimSpace(result.Stdout) != "", nil
 }

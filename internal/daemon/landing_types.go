@@ -27,7 +27,7 @@ type LandRequest struct {
 
 // LandResponse is the response body for POST /invocations/{id}/land.
 type LandResponse struct {
-	responseEnvelope
+	ResponseEnvelope
 	InvocationID          string      `json:"invocation_id,omitempty"`
 	AppliedMode           LandingMode `json:"applied_mode,omitempty"`
 	IntegrationHeadBefore string      `json:"integration_head_before,omitempty"`
@@ -40,6 +40,6 @@ type LandResponse struct {
 
 // DiscardResponse is the response body for POST /invocations/{id}/discard.
 type DiscardResponse struct {
-	responseEnvelope
+	ResponseEnvelope
 	InvocationID string `json:"invocation_id,omitempty"`
 }

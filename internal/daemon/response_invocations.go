@@ -21,20 +21,14 @@ func apiErrorMessage(err error) string {
 
 func (s *Server) writeControlPlaneError(w http.ResponseWriter, status int, requestID, code, message, hint, clientRequestID string) {
 	s.writeJSON(w, status, ControlPlaneStartResponse{
-		OK:              false,
-		RequestID:       requestID,
-		APIVersion:      APIVersion,
-		BuildVersion:    daemonBuildVersion(),
-		ClientRequestID: clientRequestID,
-		ErrorCode:       code,
-		Message:         message,
-		Hint:            hint,
+		ResponseEnvelope: NewErrorEnvelope(requestID, code, message, hint),
+		ClientRequestID:  clientRequestID,
 	})
 }
 
 func (s *Server) writeControlPlaneSuccess(w http.ResponseWriter, invocationID string, meta *store.InvocationMeta, repoID, clientRequestID, requestID string, alreadyRunning bool) {
 	resp := ControlPlaneStartResponse{
-		OK:               true,
+		ResponseEnvelope: NewSuccessEnvelope(requestID),
 		InvocationID:     invocationID,
 		SandboxPath:      meta.SandboxPath,
 		RepoID:           repoID,
@@ -47,9 +41,6 @@ func (s *Server) writeControlPlaneSuccess(w http.ResponseWriter, invocationID st
 		DaemonInstanceID: s.instanceID,
 		AlreadyRunning:   alreadyRunning,
 		LogPaths:         s.invocationLogPaths(repoID, invocationID),
-		RequestID:        requestID,
-		APIVersion:       APIVersion,
-		BuildVersion:     daemonBuildVersion(),
 		ClientRequestID:  clientRequestID,
 	}
 	if meta.PID != nil {
@@ -63,21 +54,15 @@ func (s *Server) writeControlPlaneSuccess(w http.ResponseWriter, invocationID st
 
 func (s *Server) writeHeadedError(w http.ResponseWriter, status int, code, message, hint, clientRequestID, requestID string) {
 	s.writeJSON(w, status, ControlPlaneStartHeadedResponse{
-		OK:              false,
-		RequestID:       requestID,
-		APIVersion:      APIVersion,
-		BuildVersion:    daemonBuildVersion(),
-		GitSHA:          version.Commit,
-		ClientRequestID: clientRequestID,
-		ErrorCode:       code,
-		Message:         message,
-		Hint:            hint,
+		ResponseEnvelope: NewErrorEnvelope(requestID, code, message, hint),
+		GitSHA:           version.Commit,
+		ClientRequestID:  clientRequestID,
 	})
 }
 
 func (s *Server) writeHeadedSuccess(w http.ResponseWriter, invocationID string, meta *store.InvocationMeta, repoID, clientRequestID, requestID string, alreadyRunning bool) {
-	resp := ControlPlaneStartHeadedResponse{
-		OK:               true,
+	s.writeJSON(w, http.StatusOK, ControlPlaneStartHeadedResponse{
+		ResponseEnvelope: NewSuccessEnvelope(requestID),
 		InvocationID:     invocationID,
 		SandboxPath:      meta.SandboxPath,
 		RepoID:           repoID,
@@ -91,31 +76,21 @@ func (s *Server) writeHeadedSuccess(w http.ResponseWriter, invocationID string, 
 		DaemonInstanceID: s.instanceID,
 		AlreadyRunning:   alreadyRunning,
 		LogPaths:         s.invocationLogPaths(repoID, invocationID),
-		RequestID:        requestID,
-		APIVersion:       APIVersion,
-		BuildVersion:     daemonBuildVersion(),
 		GitSHA:           version.Commit,
 		ClientRequestID:  clientRequestID,
-	}
-	s.writeJSON(w, http.StatusOK, resp)
+	})
 }
 
 func (s *Server) writeFollowUpError(w http.ResponseWriter, status int, requestID, code, message, hint, clientRequestID string) {
 	s.writeJSON(w, status, ControlPlaneFollowUpResponse{
-		OK:              false,
-		RequestID:       requestID,
-		APIVersion:      APIVersion,
-		BuildVersion:    daemonBuildVersion(),
-		ClientRequestID: clientRequestID,
-		ErrorCode:       code,
-		Message:         message,
-		Hint:            hint,
+		ResponseEnvelope: NewErrorEnvelope(requestID, code, message, hint),
+		ClientRequestID:  clientRequestID,
 	})
 }
 
 func (s *Server) writeInvocationActionSuccess(w http.ResponseWriter, requestID, invocationID string) {
 	s.writeJSON(w, http.StatusOK, InvocationActionResponse{
-		responseEnvelope: newSuccessEnvelope(requestID),
+		ResponseEnvelope: NewSuccessEnvelope(requestID),
 		InvocationID:     invocationID,
 	})
 }

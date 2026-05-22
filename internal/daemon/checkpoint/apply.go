@@ -163,30 +163,28 @@ func (a *Applier) ApplyWithOptions(ctx context.Context, checkpointID int, opts A
 	return cp, nil
 }
 
-func (a *Applier) verifyCommitExists(ctx context.Context, sha string, env map[string]string) error {
-	verifyResult, err := a.runner.Run(ctx, "git", []string{
-		"-C", a.sandboxPath,
-		"cat-file", "-t", sha,
-	}, exec.RunOpts{Env: env})
+// runGit runs `git -C <sandbox> <args...>` and maps non-zero exit / process error to a single labelled failure.
+func (a *Applier) runGit(ctx context.Context, env map[string]string, label string, args ...string) (exec.CmdResult, error) {
+	fullArgs := append([]string{"-C", a.sandboxPath}, args...)
+	result, err := a.runner.Run(ctx, "git", fullArgs, exec.RunOpts{Env: env})
 	if err != nil {
-		return err
+		return result, err
 	}
-	if verifyResult.ExitCode != 0 {
-		return fmt.Errorf("git cat-file -t %s failed: %s", sha, verifyResult.Stderr)
+	if result.ExitCode != 0 {
+		return result, fmt.Errorf("%s failed: %s", label, result.Stderr)
 	}
-	return nil
+	return result, nil
+}
+
+func (a *Applier) verifyCommitExists(ctx context.Context, sha string, env map[string]string) error {
+	_, err := a.runGit(ctx, env, "git cat-file -t "+sha, "cat-file", "-t", sha)
+	return err
 }
 
 func (a *Applier) currentHead(ctx context.Context, env map[string]string) (string, error) {
-	result, err := a.runner.Run(ctx, "git", []string{
-		"-C", a.sandboxPath,
-		"rev-parse", "HEAD",
-	}, exec.RunOpts{Env: env})
+	result, err := a.runGit(ctx, env, "git rev-parse HEAD", "rev-parse", "HEAD")
 	if err != nil {
 		return "", err
-	}
-	if result.ExitCode != 0 {
-		return "", fmt.Errorf("git rev-parse HEAD failed: %s", result.Stderr)
 	}
 	return strings.TrimSpace(result.Stdout), nil
 }
@@ -202,60 +200,27 @@ func (a *Applier) buildBackupRef(prefix string, checkpointID int) string {
 }
 
 func (a *Applier) createBackupRef(ctx context.Context, backupRef, headSHA string, env map[string]string) error {
-	result, err := a.runner.Run(ctx, "git", []string{
-		"-C", a.sandboxPath,
-		"update-ref", backupRef, headSHA,
-	}, exec.RunOpts{Env: env})
-	if err != nil {
-		return err
-	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("git update-ref %s %s failed: %s", backupRef, headSHA, result.Stderr)
-	}
-	return nil
+	_, err := a.runGit(ctx, env, fmt.Sprintf("git update-ref %s %s", backupRef, headSHA), "update-ref", backupRef, headSHA)
+	return err
 }
 
 func (a *Applier) gitResetHard(ctx context.Context, target string, env map[string]string) error {
-	args := []string{"-C", a.sandboxPath, "reset", "--hard"}
+	args := []string{"reset", "--hard"}
 	if strings.TrimSpace(target) != "" {
 		args = append(args, target)
 	}
-	result, err := a.runner.Run(ctx, "git", args, exec.RunOpts{Env: env})
-	if err != nil {
-		return err
-	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("git reset --hard failed: %s", result.Stderr)
-	}
-	return nil
+	_, err := a.runGit(ctx, env, "git reset --hard", args...)
+	return err
 }
 
 func (a *Applier) gitClean(ctx context.Context, env map[string]string) error {
-	result, err := a.runner.Run(ctx, "git", []string{
-		"-C", a.sandboxPath,
-		"clean", "-fd",
-	}, exec.RunOpts{Env: env})
-	if err != nil {
-		return err
-	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("git clean -fd failed: %s", result.Stderr)
-	}
-	return nil
+	_, err := a.runGit(ctx, env, "git clean -fd", "clean", "-fd")
+	return err
 }
 
 func (a *Applier) gitReadTree(ctx context.Context, snapshotCommit string, env map[string]string) error {
-	result, err := a.runner.Run(ctx, "git", []string{
-		"-C", a.sandboxPath,
-		"read-tree", "--reset", "-u", snapshotCommit,
-	}, exec.RunOpts{Env: env})
-	if err != nil {
-		return err
-	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("git read-tree --reset -u %s failed: %s", snapshotCommit, result.Stderr)
-	}
-	return nil
+	_, err := a.runGit(ctx, env, "git read-tree --reset -u "+snapshotCommit, "read-tree", "--reset", "-u", snapshotCommit)
+	return err
 }
 
 func (a *Applier) recoverPreApplyState(preApplyHead string, env map[string]string) error {

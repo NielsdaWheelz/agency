@@ -98,7 +98,7 @@ func (s *Service) Land(ctx context.Context, opts LandOpts) (*landResult, error) 
 		if !needed {
 			return nil, errors.New(errors.ELandAlreadyLanded, "invocation has already been landed")
 		}
-		if err := s.cleanupAfterLand(ctx, opts.RepoID, opts.InvocationID, opts.RepoRoot, meta, opts.Env); err != nil {
+		if err := s.cleanupSandbox(ctx, opts.RepoID, opts.InvocationID, opts.RepoRoot, meta, opts.Env); err != nil {
 			if emitErr := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_cleanup_failed", map[string]any{
 				"invocation_id": opts.InvocationID,
 				"error":         err.Error(),
@@ -162,7 +162,7 @@ func (s *Service) Land(ctx context.Context, opts LandOpts) (*landResult, error) 
 		return nil, err
 	}
 
-	if err := s.cleanupAfterLand(ctx, opts.RepoID, opts.InvocationID, opts.RepoRoot, meta, opts.Env); err != nil {
+	if err := s.cleanupSandbox(ctx, opts.RepoID, opts.InvocationID, opts.RepoRoot, meta, opts.Env); err != nil {
 		if emitErr := s.emitEvent(opts.RepoID, opts.InvocationID, "agency.land_cleanup_failed", map[string]any{
 			"invocation_id": opts.InvocationID,
 			"error":         err.Error(),

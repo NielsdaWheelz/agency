@@ -415,23 +415,8 @@ func (s *Store) ReadInvocationMeta(repoID, invocationID string) (*InvocationMeta
 }
 
 func validateInvocationMeta(meta InvocationMeta, invocationID, metaPath string, fields map[string]json.RawMessage) error {
-	if meta.SchemaVersion == "" {
-		return errors.NewWithDetails(
-			errors.EStoreCorrupt,
-			"invocation meta.json missing schema_version",
-			map[string]string{"meta_path": metaPath},
-		)
-	}
-	if meta.SchemaVersion != SchemaVersion {
-		return errors.NewWithDetails(
-			errors.EStoreCorrupt,
-			"invocation meta.json has unsupported schema_version",
-			map[string]string{
-				"meta_path":       metaPath,
-				"schema_version":  meta.SchemaVersion,
-				"expected_schema": SchemaVersion,
-			},
-		)
+	if err := validateSchemaVersion(meta.SchemaVersion, "invocation meta.json", metaPath); err != nil {
+		return err
 	}
 	if meta.InvocationID == "" || meta.IntegrationWorktreeID == "" || meta.SandboxPath == "" ||
 		meta.CheckoutRoot == "" || meta.ExecutionProfile == "" || meta.SandboxBranch == "" ||

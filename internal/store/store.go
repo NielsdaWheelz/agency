@@ -6,8 +6,33 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 )
+
+// validateSchemaVersion checks that version equals the canonical SchemaVersion.
+// It returns a typed EStoreCorrupt error keyed to a human label and the on-disk path.
+func validateSchemaVersion(version, label, path string) error {
+	if version == "" {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			label+" missing schema_version",
+			map[string]string{"path": path},
+		)
+	}
+	if version != SchemaVersion {
+		return errors.NewWithDetails(
+			errors.EStoreCorrupt,
+			label+" has unsupported schema_version",
+			map[string]string{
+				"path":            path,
+				"schema_version":  version,
+				"expected_schema": SchemaVersion,
+			},
+		)
+	}
+	return nil
+}
 
 // Store handles persistence of repo index and repo records.
 type Store struct {

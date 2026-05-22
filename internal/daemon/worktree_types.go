@@ -17,7 +17,7 @@ type WorktreeCreateRequest struct {
 
 // WorktreeCreateResponse is the response body for POST /worktrees/create.
 type WorktreeCreateResponse struct {
-	responseEnvelope
+	ResponseEnvelope
 	WorktreeID       string `json:"worktree_id,omitempty"`
 	TreePath         string `json:"tree_path,omitempty"`
 	Branch           string `json:"branch,omitempty"`
@@ -34,7 +34,7 @@ type WorktreeRmRequest struct {
 
 // WorktreeRmResponse is the response body for POST /worktrees/{id}/rm.
 type WorktreeRmResponse struct {
-	responseEnvelope
+	ResponseEnvelope
 }
 
 // WorktreePRSyncRequest is the request body for POST /worktrees/{ref}/pr/sync.
@@ -48,7 +48,7 @@ type WorktreePRSyncRequest struct {
 
 // WorktreePRSyncResponse is the response body for POST /worktrees/{ref}/pr/sync.
 type WorktreePRSyncResponse struct {
-	responseEnvelope
+	ResponseEnvelope
 	RepoID                string `json:"repo_id,omitempty"`
 	IntegrationWorktreeID string `json:"integration_worktree_id,omitempty"`
 	Branch                string `json:"branch,omitempty"`
@@ -77,7 +77,7 @@ type WorktreePRMergeRequest struct {
 
 // WorktreePRMergeResponse is the response body for POST /worktrees/{ref}/pr/merge.
 type WorktreePRMergeResponse struct {
-	responseEnvelope
+	ResponseEnvelope
 	Action                string            `json:"action,omitempty"` // started|attached
 	RepoID                string            `json:"repo_id,omitempty"`
 	IntegrationWorktreeID string            `json:"integration_worktree_id,omitempty"`
@@ -86,7 +86,7 @@ type WorktreePRMergeResponse struct {
 
 // WorktreeRebaseResponse is the response body for POST /worktrees/{ref}/rebase.
 type WorktreeRebaseResponse struct {
-	responseEnvelope
+	ResponseEnvelope
 	RepoID                string `json:"repo_id,omitempty"`
 	IntegrationWorktreeID string `json:"integration_worktree_id,omitempty"`
 	Branch                string `json:"branch,omitempty"`

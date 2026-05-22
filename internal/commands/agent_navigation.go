@@ -57,24 +57,7 @@ func AgentOpen(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 	if err != nil {
 		return err
 	}
-
-	editorCmd, err := resolveEditorCmdWithOptionalOverride(cr, fsys, ns.dirs.ConfigDir, "")
-	if err != nil {
-		return err
-	}
-
-	runResult, runErr := runAttachedInDir(ctx, editorCmd, []string{sandboxPath}, sandboxPath)
-	if runErr != nil {
-		return errors.Wrap(errors.EEditorNotConfigured, "failed to open editor", runErr)
-	}
-	if runResult.ExitCode != 0 {
-		return errors.WithExitCode(
-			errors.New(errors.EInternal, fmt.Sprintf("editor exited with code %d", runResult.ExitCode)),
-			runResult.ExitCode,
-		)
-	}
-
-	return nil
+	return runEditorAt(ctx, cr, fsys, ns.dirs.ConfigDir, "", sandboxPath)
 }
 
 // AgentShellOpts holds options for the agent shell command.
@@ -89,24 +72,7 @@ func AgentShell(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	if err != nil {
 		return err
 	}
-
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/sh"
-	}
-
-	runResult, runErr := runAttachedInDir(ctx, shell, []string{"-l"}, sandboxPath)
-	if runErr != nil {
-		return errors.Wrap(errors.EInternal, "failed to run shell", runErr)
-	}
-	if runResult.ExitCode != 0 {
-		return errors.WithExitCode(
-			errors.New(errors.EInternal, fmt.Sprintf("shell exited with code %d", runResult.ExitCode)),
-			runResult.ExitCode,
-		)
-	}
-
-	return nil
+	return runShellAt(ctx, sandboxPath)
 }
 
 func resolvePresentAgentSandbox(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd, dataDirOverride, cmdName, invocationRef, repoRef string) (*daemonNavSetup, string, error) {

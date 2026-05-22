@@ -121,11 +121,8 @@ func (s *Store) SaveRepoIndex(idx RepoIndex) error {
 }
 
 func validateRepoIndex(path string, idx RepoIndex) error {
-	if idx.SchemaVersion == "" {
-		return errors.New(errors.EStoreCorrupt, "repo_index.json: missing schema_version")
-	}
-	if idx.SchemaVersion != SchemaVersion {
-		return errors.New(errors.EStoreCorrupt, "repo_index.json: unsupported schema_version: "+idx.SchemaVersion)
+	if err := validateSchemaVersion(idx.SchemaVersion, "repo_index.json", path); err != nil {
+		return err
 	}
 	if idx.Repos == nil {
 		return errors.New(errors.EStoreCorrupt, "repo_index.json: missing repos")

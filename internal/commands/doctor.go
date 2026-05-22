@@ -194,30 +194,10 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	defaultsRunnerModel := ""
-	defaultsRunnerModelSource := "none"
-	defaultsRunnerEffort := ""
-	defaultsRunnerEffortSource := "none"
-	if runnerDefaults, ok := userCfg.RunnerDefaults[canonicalRunner]; ok {
-		if runnerDefaults.Model != "" {
-			defaultsRunnerModel = runnerDefaults.Model
-			defaultsRunnerModelSource = "user"
-		}
-		if runnerDefaults.Effort != "" {
-			defaultsRunnerEffort = runnerDefaults.Effort
-			defaultsRunnerEffortSource = "user"
-		}
-	}
-	if runnerDefaults, ok := cfg.RunnerDefaults[canonicalRunner]; ok {
-		if runnerDefaults.Model != "" {
-			defaultsRunnerModel = runnerDefaults.Model
-			defaultsRunnerModelSource = resolvedAgencyConfig.Source
-		}
-		if runnerDefaults.Effort != "" {
-			defaultsRunnerEffort = runnerDefaults.Effort
-			defaultsRunnerEffortSource = resolvedAgencyConfig.Source
-		}
-	}
+	userDefaults := userCfg.RunnerDefaults[canonicalRunner]
+	repoDefaults := cfg.RunnerDefaults[canonicalRunner]
+	defaultsRunnerModel, defaultsRunnerModelSource := pickRunnerDefault(userDefaults.Model, repoDefaults.Model, resolvedAgencyConfig.Source)
+	defaultsRunnerEffort, defaultsRunnerEffortSource := pickRunnerDefault(userDefaults.Effort, repoDefaults.Effort, resolvedAgencyConfig.Source)
 
 	executionProfile := strings.TrimSpace(cfg.Execution.Profile)
 	executionProfileSource := resolvedAgencyConfig.Source
@@ -445,6 +425,18 @@ func writeDoctorOutput(w io.Writer, r DoctorReport) {
 
 	// Final
 	_, _ = fmt.Fprintln(w, "status: ok")
+}
+
+// pickRunnerDefault returns the higher-precedence non-empty value: repo overrides user;
+// either with the appropriate source label, or ("", "none") when neither is set.
+func pickRunnerDefault(userVal, repoVal, repoSource string) (string, string) {
+	if repoVal != "" {
+		return repoVal, repoSource
+	}
+	if userVal != "" {
+		return userVal, "user"
+	}
+	return "", "none"
 }
 
 func boolStr(b bool) string {
