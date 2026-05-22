@@ -136,6 +136,13 @@ func (p *Parser) Stop() {
 	p.stopped = true
 }
 
+// isStopped returns true if Stop was called.
+func (p *Parser) isStopped() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.stopped
+}
+
 // StreamAndParse reads from reader line-by-line, writes verbatim to rawFile,
 // parses each line, and writes normalized events to streamFile.
 // This function blocks until EOF or error.
@@ -148,10 +155,7 @@ func (p *Parser) StreamAndParse(reader io.Reader, rawFile, streamFile *os.File) 
 	bufReader := bufio.NewReader(reader)
 
 	for {
-		p.mu.Lock()
-		stopped := p.stopped
-		p.mu.Unlock()
-		if stopped {
+		if p.isStopped() {
 			return nil
 		}
 
@@ -347,10 +351,7 @@ func (p *Parser) emitParseError(streamFile *os.File, reason string) error {
 func (p *Parser) streamRawOnly(reader io.Reader, rawFile *os.File) error {
 	buf := make([]byte, 4096)
 	for {
-		p.mu.Lock()
-		stopped := p.stopped
-		p.mu.Unlock()
-		if stopped {
+		if p.isStopped() {
 			return nil
 		}
 

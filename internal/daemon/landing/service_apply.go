@@ -154,28 +154,21 @@ func (s *Service) commitLandingPatch(ctx context.Context, opts LandOpts, integra
 }
 
 func (s *Service) resetLandingTreeAndFail(ctx context.Context, opts LandOpts, integrationPath, reason string, operationErr error) error {
+	const resetFailMsg = "failed to reset integration worktree after land failure"
 	result, resetErr := s.runner.Run(ctx, "git", []string{"-C", integrationPath, "reset", "--hard"}, exec.RunOpts{Env: opts.Env})
 	if resetErr != nil {
-		return s.emitLandFailure(
-			opts.RepoID,
-			opts.InvocationID,
-			"failed to reset integration worktree after land failure: "+resetErr.Error(),
-			errors.WrapWithDetails(errors.ELandFailed, "failed to reset integration worktree after land failure", resetErr, map[string]string{
+		return s.emitLandFailure(opts.RepoID, opts.InvocationID, resetFailMsg+": "+resetErr.Error(),
+			errors.WrapWithDetails(errors.ELandFailed, resetFailMsg, resetErr, map[string]string{
 				"operation_error": operationErr.Error(),
-			}),
-		)
+			}))
 	}
 	if result.ExitCode != 0 {
-		return s.emitLandFailure(
-			opts.RepoID,
-			opts.InvocationID,
-			"failed to reset integration worktree after land failure: "+result.Stderr,
-			errors.NewWithDetails(errors.ELandFailed, "failed to reset integration worktree after land failure", map[string]string{
+		return s.emitLandFailure(opts.RepoID, opts.InvocationID, resetFailMsg+": "+result.Stderr,
+			errors.NewWithDetails(errors.ELandFailed, resetFailMsg, map[string]string{
 				"exit_code":       fmt.Sprintf("%d", result.ExitCode),
 				"operation_error": operationErr.Error(),
 				"stderr":          strings.TrimSpace(result.Stderr),
-			}),
-		)
+			}))
 	}
 	return s.emitLandFailure(opts.RepoID, opts.InvocationID, reason, operationErr)
 }
