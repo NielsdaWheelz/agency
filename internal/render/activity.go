@@ -185,30 +185,13 @@ func DecodeTimelinePayload(data map[string]interface{}) timelinePayload {
 		blocks:          timelineContentBlocks(data),
 	}
 
-	if exitCode, ok := timelineFloat(data, "exit_code"); ok {
-		payload.ExitCode = int(exitCode)
-		payload.HasExitCode = true
-	}
-	if durationMS, ok := timelineFloat(data, "duration_ms"); ok {
-		payload.DurationMS = durationMS
-		payload.HasDurationMS = true
-	}
-	if costUSD, ok := timelineFloat(data, "cost_usd"); ok {
-		payload.CostUSD = costUSD
-		payload.HasCostUSD = true
-	}
-	if inputTokens, ok := timelineFloat(data, "input_tokens"); ok {
-		payload.InputTokens = int64(inputTokens)
-		payload.HasInputTokens = true
-	}
-	if outputTokens, ok := timelineFloat(data, "output_tokens"); ok {
-		payload.OutputTokens = int64(outputTokens)
-		payload.HasOutputTokens = true
-	}
-	if parseErrorCount, ok := timelineFloat(data, "parse_error_count"); ok {
-		payload.ParseErrorCount = int(parseErrorCount)
-		payload.HasParseErrorCount = true
-	}
+	decodeNumber(data, "exit_code", &payload.ExitCode, &payload.HasExitCode)
+	decodeNumber(data, "duration_ms", &payload.DurationMS, &payload.HasDurationMS)
+	decodeNumber(data, "cost_usd", &payload.CostUSD, &payload.HasCostUSD)
+	decodeNumber(data, "input_tokens", &payload.InputTokens, &payload.HasInputTokens)
+	decodeNumber(data, "output_tokens", &payload.OutputTokens, &payload.HasOutputTokens)
+	decodeNumber(data, "parse_error_count", &payload.ParseErrorCount, &payload.HasParseErrorCount)
+
 	if checkpointID, ok := timelineFloat(data, "checkpoint_id"); ok && checkpointID > 0 {
 		payload.CheckpointID = int(checkpointID)
 		payload.HasCheckpointID = true
@@ -219,17 +202,19 @@ func DecodeTimelinePayload(data map[string]interface{}) timelinePayload {
 	}
 
 	if usage, ok := data["usage"].(map[string]interface{}); ok {
-		if inputTokens, ok := timelineFloat(usage, "input_tokens"); ok {
-			payload.usage.InputTokens = int64(inputTokens)
-			payload.usage.HasInputTokens = true
-		}
-		if outputTokens, ok := timelineFloat(usage, "output_tokens"); ok {
-			payload.usage.OutputTokens = int64(outputTokens)
-			payload.usage.HasOutputTokens = true
-		}
+		decodeNumber(usage, "input_tokens", &payload.usage.InputTokens, &payload.usage.HasInputTokens)
+		decodeNumber(usage, "output_tokens", &payload.usage.OutputTokens, &payload.usage.HasOutputTokens)
 	}
 
 	return payload
+}
+
+// decodeNumber reads a numeric field from data into dst and sets has=true on success.
+func decodeNumber[T int | int64 | float64](data map[string]interface{}, key string, dst *T, has *bool) {
+	if v, ok := timelineFloat(data, key); ok {
+		*dst = T(v)
+		*has = true
+	}
 }
 
 // PromptLikeSummary returns the best prompt/follow-up summary extracted from a

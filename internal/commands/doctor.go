@@ -240,9 +240,12 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	currentBranch, err := currentBranch(ctx, cr, repoRoot.Path)
+	branch, branchOK, err := git.GetCurrentBranch(ctx, cr, repoRoot.Path, nil)
 	if err != nil {
-		return err
+		return errors.Wrap(errors.EInternal, "failed to get current branch", err)
+	}
+	if !branchOK {
+		branch = ""
 	}
 	report := DoctorReport{
 		RepoRoot:                    repoRoot.Path,
@@ -262,7 +265,7 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 		TmuxVersion:                 tmuxVersion,
 		GhVersion:                   ghVersion,
 		GhAuthenticated:             true,
-		DefaultsBaseBranch:          currentBranch,
+		DefaultsBaseBranch:          branch,
 		DefaultsRunner:              userCfg.Defaults.Runner,
 		DefaultsRunnerModel:         defaultsRunnerModel,
 		DefaultsRunnerModelSource:   defaultsRunnerModelSource,
@@ -365,17 +368,6 @@ func checkScript(fsys fs.FS, scriptPath, repoRoot, scriptName string) (string, e
 	}
 
 	return absPath, nil
-}
-
-func currentBranch(ctx context.Context, cr agencyexec.CommandRunner, repoRoot string) (string, error) {
-	branch, ok, err := git.GetCurrentBranch(ctx, cr, repoRoot, nil)
-	if err != nil {
-		return "", errors.Wrap(errors.EInternal, "failed to get current branch", err)
-	}
-	if !ok {
-		return "", nil
-	}
-	return branch, nil
 }
 
 // writeDoctorOutput writes the stable key: value output.
