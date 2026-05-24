@@ -229,7 +229,10 @@ func (s *Server) importHeadedSyntheticStop(repoID, invocationID, runner string, 
 		if sessionID != "" {
 			raw["session_id"] = sessionID
 		}
-		line, _ := json.Marshal(raw)
+		line, err := json.Marshal(raw)
+		if err != nil {
+			return 0, errors.Wrap(errors.EInternal, "marshal synthetic stop event", err)
+		}
 		return s.parseHeadedReader(repoID, invocationID, runner, bytes.NewReader(append(line, '\n')))
 	case "codex":
 		raw := map[string]any{
@@ -239,7 +242,10 @@ func (s *Server) importHeadedSyntheticStop(repoID, invocationID, runner string, 
 				"text": hookString(payload, "last_assistant_message"),
 			},
 		}
-		line, _ := json.Marshal(raw)
+		line, err := json.Marshal(raw)
+		if err != nil {
+			return 0, errors.Wrap(errors.EInternal, "marshal synthetic stop event", err)
+		}
 		return s.parseHeadedReader(repoID, invocationID, runner, bytes.NewReader(append(line, '\n')))
 	default:
 		return 0, nil
