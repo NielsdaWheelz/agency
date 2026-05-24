@@ -33,10 +33,11 @@ func (s *Server) handleTaskArchive(w http.ResponseWriter, r *http.Request, taskR
 		return
 	}
 
-	if _, err := s.store.UpdateTaskMeta(repoID, record.TaskID, func(meta *store.TaskMeta) {
+	meta, err := s.store.UpdateTaskMeta(repoID, record.TaskID, func(meta *store.TaskMeta) {
 		meta.State = store.TaskStateArchived
 		meta.UpdatedAt = s.clock().UTC().Format(time.RFC3339)
-	}); err != nil {
+	})
+	if err != nil {
 		s.writeTaskStartError(w, http.StatusInternalServerError, requestID, errors.GetCode(err), err.Error(), "", "", record.Meta)
 		return
 	}
@@ -44,7 +45,6 @@ func (s *Server) handleTaskArchive(w http.ResponseWriter, r *http.Request, taskR
 		s.writeTaskStartError(w, http.StatusInternalServerError, requestID, errors.EPersistFailed, "failed to append task event: "+err.Error(), "", "", record.Meta)
 		return
 	}
-	meta, _ := s.store.ReadTaskMeta(repoID, record.TaskID)
 	s.writeTaskStartSuccess(w, requestID, meta.ClientRequestID, meta, false)
 }
 
@@ -234,17 +234,17 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 		s.writeTaskStartError(w, fail.status, requestID, fail.code, fail.msg, fail.hint, req.ClientRequestID, meta)
 		return
 	}
-	if err := s.markTaskRetryRunning(repoID, meta.TaskID, req.ClientRequestID, invMeta); err != nil {
+	latest, err := s.markTaskRetryRunning(repoID, meta.TaskID, req.ClientRequestID, invMeta)
+	if err != nil {
 		fail := startFailureFromError(http.StatusInternalServerError, errors.EMetaWriteFailed, err, "")
 		s.abortStartedTaskInvocation(repoID, invMeta, "retry_task_update_failed")
 		s.markTaskRetryFailed(repoID, meta.TaskID, req.ClientRequestID, fail)
-		if latest, readErr := s.store.ReadTaskMeta(repoID, meta.TaskID); readErr == nil {
-			meta = latest
+		if reread, readErr := s.store.ReadTaskMeta(repoID, meta.TaskID); readErr == nil {
+			meta = reread
 		}
 		s.writeTaskStartError(w, fail.status, requestID, fail.code, fail.msg, fail.hint, req.ClientRequestID, meta)
 		return
 	}
-	latest, _ := s.store.ReadTaskMeta(repoID, meta.TaskID)
 	s.writeTaskStartSuccess(w, requestID, req.ClientRequestID, latest, false)
 }
 
@@ -342,10 +342,7 @@ func (s *Server) repairTaskRetryFromClaimedInvocation(repoID string, meta *store
 	}); err != nil {
 		return nil, err
 	}
-	if err := s.markTaskRetryRunning(repoID, meta.TaskID, clientRequestID, invMeta); err != nil {
-		return nil, err
-	}
-	return s.store.ReadTaskMeta(repoID, meta.TaskID)
+	return s.markTaskRetryRunning(repoID, meta.TaskID, clientRequestID, invMeta)
 }
 
 func (s *Server) reserveTaskRetryRequest(repoID string, meta *store.TaskMeta, clientRequestID, fingerprint string) error {
@@ -365,8 +362,8 @@ func (s *Server) reserveTaskRetryRequest(repoID string, meta *store.TaskMeta, cl
 	return err
 }
 
-func (s *Server) markTaskRetryRunning(repoID, taskID, clientRequestID string, invMeta *store.InvocationMeta) error {
-	_, err := s.store.UpdateTaskMeta(repoID, taskID, func(meta *store.TaskMeta) {
+func (s *Server) markTaskRetryRunning(repoID, taskID, clientRequestID string, invMeta *store.InvocationMeta) (*store.TaskMeta, error) {
+	return s.store.UpdateTaskMeta(repoID, taskID, func(meta *store.TaskMeta) {
 		now := s.clock().UTC().Format(time.RFC3339)
 		meta.State = store.TaskStateRunning
 		meta.PrimaryInvocationID = invMeta.InvocationID
@@ -387,7 +384,6 @@ func (s *Server) markTaskRetryRunning(repoID, taskID, clientRequestID string, in
 		meta.RetryRequests[clientRequestID] = record
 		meta.UpdatedAt = now
 	})
-	return err
 }
 
 func (s *Server) markTaskRetryFailed(repoID, taskID, clientRequestID string, failure startFailure) {
