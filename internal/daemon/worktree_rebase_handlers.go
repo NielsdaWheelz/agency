@@ -22,34 +22,34 @@ func (s *Server) handleWorktreeRebase(w http.ResponseWriter, r *http.Request, wo
 
 	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
 	if repoID == "" {
-		s.writeWorktreeRebaseError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
 		return
 	}
 
 	var req struct{}
 	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
-		s.writeWorktreeRebaseError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "")
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "")
 		return
 	}
 
 	record, err := s.resolveWorktreeRefForRepo(worktreeRef, repoID)
 	if err != nil {
 		code := errors.CodeOr(err, errors.EInternal)
-		s.writeWorktreeRebaseError(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), "use 'agency worktree ls' to list worktrees")
+		s.writeErrorWithRequestID(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), "use 'agency worktree ls' to list worktrees")
 		return
 	}
 	if record == nil || record.Broken || record.Meta == nil {
-		s.writeWorktreeRebaseError(w, http.StatusBadRequest, requestID, string(errors.EWorktreeBroken), "integration worktree exists but meta.json is unreadable", "inspect or recreate the worktree")
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EWorktreeBroken), "integration worktree exists but meta.json is unreadable", "inspect or recreate the worktree")
 		return
 	}
 	if record.Meta.State != store.WorktreeStatePresent {
-		s.writeWorktreeRebaseError(w, http.StatusNotFound, requestID, string(errors.EWorktreeNotFound), "integration worktree is archived", "use a present (non-archived) integration worktree")
+		s.writeErrorWithRequestID(w, http.StatusNotFound, requestID, string(errors.EWorktreeNotFound), "integration worktree is archived", "use a present (non-archived) integration worktree")
 		return
 	}
 
 	if err := s.executeWorktreeRebase(r.Context(), record); err != nil {
 		code := errors.CodeOr(err, errors.EInternal)
-		s.writeWorktreeRebaseError(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), errors.Hint(err))
+		s.writeErrorWithRequestID(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), errors.Hint(err))
 		return
 	}
 	s.writeWorktreeRebaseSuccess(w, requestID, record)

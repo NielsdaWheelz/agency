@@ -36,7 +36,7 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 
 	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
 	if repoID == "" {
-		s.writeWorktreeMergeError(
+		s.writeErrorWithRequestID(
 			w,
 			http.StatusBadRequest,
 			requestID,
@@ -49,7 +49,7 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 
 	var req WorktreePRMergeRequest
 	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
-		s.writeWorktreeMergeError(
+		s.writeErrorWithRequestID(
 			w,
 			http.StatusBadRequest,
 			requestID,
@@ -63,29 +63,29 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 	normalizedReq, err := normalizeMergeRequest(req)
 	if err != nil {
 		code := errors.CodeOr(err, errors.EInvalidArgument)
-		s.writeWorktreeMergeError(w, httpStatusForCode(code), requestID, string(code), err.Error(), errors.Hint(err))
+		s.writeErrorWithRequestID(w, httpStatusForCode(code), requestID, string(code), err.Error(), errors.Hint(err))
 		return
 	}
 
 	record, err := s.resolveWorktreeRefForRepo(worktreeRef, repoID)
 	if err != nil {
 		code := errors.CodeOr(err, errors.EInternal)
-		s.writeWorktreeMergeError(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), "use 'agency worktree ls' to list worktrees")
+		s.writeErrorWithRequestID(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), "use 'agency worktree ls' to list worktrees")
 		return
 	}
 	if record == nil || record.Broken || record.Meta == nil {
-		s.writeWorktreeMergeError(w, http.StatusBadRequest, requestID, string(errors.EWorktreeBroken), "integration worktree exists but meta.json is unreadable", "inspect or recreate the worktree")
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EWorktreeBroken), "integration worktree exists but meta.json is unreadable", "inspect or recreate the worktree")
 		return
 	}
 	if record.Meta.State != store.WorktreeStatePresent {
 		mergeMeta, readErr := s.store.ReadIntegrationWorktreeMerge(record.RepoID, record.WorktreeID)
 		if readErr != nil {
 			code := errors.CodeOr(readErr, errors.EStoreCorrupt)
-			s.writeWorktreeMergeError(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(readErr), "inspect worktree merge state")
+			s.writeErrorWithRequestID(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(readErr), "inspect worktree merge state")
 			return
 		}
 		if record.Meta.State != store.WorktreeStateArchived || worktreeRef != record.WorktreeID || mergeMeta == nil || mergeMeta.Status == store.WorktreeMergeStatusSucceeded || mergeMeta.Stage != store.WorktreeMergeStageArchive {
-			s.writeWorktreeMergeError(w, http.StatusNotFound, requestID, string(errors.EWorktreeNotFound), "integration worktree is archived", "archived worktree merge cleanup retries must use the exact worktree_id")
+			s.writeErrorWithRequestID(w, http.StatusNotFound, requestID, string(errors.EWorktreeNotFound), "integration worktree is archived", "archived worktree merge cleanup retries must use the exact worktree_id")
 			return
 		}
 	}
@@ -93,7 +93,7 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 	resp, status, err := s.startWorktreePRMerge(record, worktreeRef, requestID, normalizedReq)
 	if err != nil {
 		code := errors.CodeOr(err, errors.EInternal)
-		s.writeWorktreeMergeError(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), errors.Hint(err))
+		s.writeErrorWithRequestID(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), errors.Hint(err))
 		return
 	}
 

@@ -125,18 +125,18 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 	// Read repo_id from query params
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
-		s.writeDiscardError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
 		return
 	}
 
 	// Parse request body (currently empty, but allow for future expansion)
 	var req struct{}
 	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
-		s.writeDiscardError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "")
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "")
 		return
 	}
 
-	mutation, ok := s.prepareLandingMutation(w, r, requestID, invocationID, repoID, "discard", s.writeDiscardError)
+	mutation, ok := s.prepareLandingMutation(w, r, requestID, invocationID, repoID, "discard", s.writeErrorWithRequestID)
 	if !ok {
 		return
 	}
@@ -161,7 +161,7 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request, invocatio
 			httpStatus = http.StatusConflict
 		}
 
-		s.writeDiscardError(w, httpStatus, requestID, string(code), err.Error(), "")
+		s.writeErrorWithRequestID(w, httpStatus, requestID, string(code), err.Error(), "")
 		return
 	}
 

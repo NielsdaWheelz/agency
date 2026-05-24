@@ -15,33 +15,33 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 	// Read repo_id from query params
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
-		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
 		return
 	}
 
 	// Parse request body
 	var req CheckpointApplyRequest
 	if err := decodeStrictJSON(r.Body, &req); err != nil {
-		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "")
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "")
 		return
 	}
 
 	if req.CheckpointID <= 0 {
-		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "checkpoint_id must be positive", "")
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "checkpoint_id must be positive", "")
 		return
 	}
 
 	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
 	if resolveErr != nil {
 		status, code := invocationResolveStatus(resolveErr)
-		s.writeCheckpointError(w, status, requestID, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
+		s.writeErrorWithRequestID(w, status, requestID, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
 		return
 	}
 
 	// Repo-scoped lock serializes rollback mutations with other git-mutating flows.
 	unlock, err := s.repoLock.Lock(record.RepoID, "checkpoint_apply")
 	if err != nil {
-		s.writeCheckpointError(
+		s.writeErrorWithRequestID(
 			w,
 			http.StatusConflict,
 			requestID,
@@ -57,16 +57,16 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 	meta, err := s.store.ReadInvocationMeta(record.RepoID, record.InvocationID)
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
-			s.writeCheckpointError(w, http.StatusNotFound, requestID, string(errors.EInvocationNotFound), "invocation not found", "")
+			s.writeErrorWithRequestID(w, http.StatusNotFound, requestID, string(errors.EInvocationNotFound), "invocation not found", "")
 			return
 		}
-		s.writeCheckpointError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to read invocation meta: "+err.Error(), "")
+		s.writeErrorWithRequestID(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to read invocation meta: "+err.Error(), "")
 		return
 	}
 
 	// Only for headless invocations
 	if meta.Mode != store.RunnerModeHeadless {
-		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(errors.EInvocationInvalidMode),
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvocationInvalidMode),
 			"checkpoint apply is only supported for headless invocations",
 			"use 'agency agent <invocation-ref> recreate' to start a new headed tmux session in the same sandbox")
 		return
@@ -76,7 +76,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 	if meta.Status == store.InvocationStatusStarting ||
 		meta.Status == store.InvocationStatusRunning ||
 		meta.Status == store.InvocationStatusStopping {
-		s.writeCheckpointError(w, http.StatusConflict, requestID, string(errors.EInvocationStillRunning),
+		s.writeErrorWithRequestID(w, http.StatusConflict, requestID, string(errors.EInvocationStillRunning),
 			"invocation is still active",
 			"stop the invocation first with 'agency agent <invocation-ref> stop' or 'agency agent <invocation-ref> kill'")
 		return
@@ -89,7 +89,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 	profileEnv, err := s.executionProfileEnv(meta.ExecutionProfile)
 	if err != nil {
 		code := errors.CodeOr(err, errors.EExecutionProfileNotFound)
-		s.writeCheckpointError(w, http.StatusBadRequest, requestID, string(code), apiErrorMessage(err), "")
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(code), apiErrorMessage(err), "")
 		return
 	}
 
@@ -109,16 +109,16 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 	if err != nil {
 		switch errors.GetCode(err) {
 		case errors.ECheckpointNotFound:
-			s.writeCheckpointError(w, http.StatusNotFound, requestID, string(errors.ECheckpointNotFound),
+			s.writeErrorWithRequestID(w, http.StatusNotFound, requestID, string(errors.ECheckpointNotFound),
 				err.Error(), "run 'agency agent <invocation_ref> history' to inspect available checkpoints and turn ids")
 		case errors.ERollbackFailed:
-			s.writeCheckpointError(w, http.StatusInternalServerError, requestID, string(errors.ERollbackFailed),
+			s.writeErrorWithRequestID(w, http.StatusInternalServerError, requestID, string(errors.ERollbackFailed),
 				err.Error(), "")
 		case errors.EStoreCorrupt:
-			s.writeCheckpointError(w, http.StatusInternalServerError, requestID, string(errors.EStoreCorrupt),
+			s.writeErrorWithRequestID(w, http.StatusInternalServerError, requestID, string(errors.EStoreCorrupt),
 				err.Error(), "")
 		default:
-			s.writeCheckpointError(w, http.StatusInternalServerError, requestID, string(errors.ECheckpointFailed),
+			s.writeErrorWithRequestID(w, http.StatusInternalServerError, requestID, string(errors.ECheckpointFailed),
 				err.Error(), "")
 		}
 		return

@@ -2,12 +2,6 @@ package daemon
 
 import "net/http"
 
-func (s *Server) writeCheckpointError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	s.writeJSON(w, status, CheckpointApplyResponse{
-		ResponseEnvelope: NewErrorEnvelope(requestID, code, message, hint),
-	})
-}
-
 func (s *Server) writeCheckpointSuccess(w http.ResponseWriter, requestID string, checkpointID int, snapshotCommit, restoredAt string) {
 	s.writeJSON(w, http.StatusOK, CheckpointApplyResponse{
 		ResponseEnvelope: NewSuccessEnvelope(requestID),
@@ -32,12 +26,6 @@ func (s *Server) writeLandSuccess(w http.ResponseWriter, requestID, invocationID
 		IntegrationHeadBefore: headBefore,
 		IntegrationHeadAfter:  headAfter,
 		CommitsLanded:         commitsLanded,
-	})
-}
-
-func (s *Server) writeDiscardError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	s.writeJSON(w, status, DiscardResponse{
-		ResponseEnvelope: NewErrorEnvelope(requestID, code, message, hint),
 	})
 }
 

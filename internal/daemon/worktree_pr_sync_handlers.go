@@ -14,13 +14,13 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 	requestID := prepareRequestID(w, r)
 	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
 	if repoID == "" {
-		s.writeWorktreePRSyncError(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
 		return
 	}
 
 	var req WorktreePRSyncRequest
 	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
-		s.writeWorktreePRSyncError(
+		s.writeErrorWithRequestID(
 			w,
 			http.StatusBadRequest,
 			requestID,
@@ -34,22 +34,22 @@ func (s *Server) handleWorktreePRSync(w http.ResponseWriter, r *http.Request, wo
 	if err != nil {
 		code := errors.CodeOr(err, errors.EInternal)
 		status := httpStatusForCode(code)
-		s.writeWorktreePRSyncError(w, status, requestID, string(code), apiErrorMessage(err), "use 'agency worktree ls' to list worktrees")
+		s.writeErrorWithRequestID(w, status, requestID, string(code), apiErrorMessage(err), "use 'agency worktree ls' to list worktrees")
 		return
 	}
 	if record == nil || record.Broken || record.Meta == nil {
-		s.writeWorktreePRSyncError(w, http.StatusBadRequest, requestID, string(errors.EWorktreeBroken), "integration worktree exists but meta.json is unreadable", "inspect or recreate the worktree")
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EWorktreeBroken), "integration worktree exists but meta.json is unreadable", "inspect or recreate the worktree")
 		return
 	}
 	if record.Meta.State != store.WorktreeStatePresent {
-		s.writeWorktreePRSyncError(w, http.StatusNotFound, requestID, string(errors.EWorktreeNotFound), "integration worktree is archived", "use a present (non-archived) integration worktree")
+		s.writeErrorWithRequestID(w, http.StatusNotFound, requestID, string(errors.EWorktreeNotFound), "integration worktree is archived", "use a present (non-archived) integration worktree")
 		return
 	}
 
 	result, err := s.executeWorktreePRSync(r.Context(), record, req)
 	if err != nil {
 		code := errors.CodeOr(err, errors.EInternal)
-		s.writeWorktreePRSyncError(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), errors.Hint(err))
+		s.writeErrorWithRequestID(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), errors.Hint(err))
 		return
 	}
 	s.writeWorktreePRSyncSuccess(w, requestID, record, result)

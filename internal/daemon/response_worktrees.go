@@ -6,12 +6,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
-func (s *Server) writeWorktreeError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	s.writeJSON(w, status, WorktreeCreateResponse{
-		ResponseEnvelope: NewErrorEnvelope(requestID, code, message, hint),
-	})
-}
-
 func (s *Server) writeWorktreeSuccess(w http.ResponseWriter, requestID, worktreeID, treePath, branch, repoID, executionProfile, checkoutRoot string) {
 	s.writeJSON(w, http.StatusOK, WorktreeCreateResponse{
 		ResponseEnvelope: NewSuccessEnvelope(requestID),
@@ -24,21 +18,9 @@ func (s *Server) writeWorktreeSuccess(w http.ResponseWriter, requestID, worktree
 	})
 }
 
-func (s *Server) writeWorktreeRmError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	s.writeJSON(w, status, WorktreeRmResponse{
-		ResponseEnvelope: NewErrorEnvelope(requestID, code, message, hint),
-	})
-}
-
 func (s *Server) writeWorktreeRmSuccess(w http.ResponseWriter, requestID string) {
 	s.writeJSON(w, http.StatusOK, WorktreeRmResponse{
 		ResponseEnvelope: NewSuccessEnvelope(requestID),
-	})
-}
-
-func (s *Server) writeWorktreeRebaseError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	s.writeJSON(w, status, WorktreeRebaseResponse{
-		ResponseEnvelope: NewErrorEnvelope(requestID, code, message, hint),
 	})
 }
 
@@ -52,12 +34,6 @@ func (s *Server) writeWorktreeRebaseSuccess(w http.ResponseWriter, requestID str
 	})
 }
 
-func (s *Server) writeWorktreePRSyncError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	s.writeJSON(w, status, WorktreePRSyncResponse{
-		ResponseEnvelope: NewErrorEnvelope(requestID, code, message, hint),
-	})
-}
-
 func (s *Server) writeWorktreePRSyncSuccess(w http.ResponseWriter, requestID string, record *store.IntegrationWorktreeRecord, result *prSyncResult) {
 	s.writeJSON(w, http.StatusOK, WorktreePRSyncResponse{
 		ResponseEnvelope:      NewSuccessEnvelope(requestID),
@@ -67,12 +43,6 @@ func (s *Server) writeWorktreePRSyncSuccess(w http.ResponseWriter, requestID str
 		PRNumber:              result.PRNumber,
 		PRURL:                 result.PRURL,
 		PRAction:              result.PRAction,
-	})
-}
-
-func (s *Server) writeWorktreeMergeError(w http.ResponseWriter, status int, requestID, code, message, hint string) {
-	s.writeJSON(w, status, WorktreePRMergeResponse{
-		ResponseEnvelope: NewErrorEnvelope(requestID, code, message, hint),
 	})
 }
 
