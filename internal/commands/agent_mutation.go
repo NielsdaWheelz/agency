@@ -5,7 +5,6 @@ import (
 	stderrors "errors"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
@@ -291,20 +290,14 @@ type AgentRecreateOpts struct {
 // AgentRecreate starts a new tmux session for an existing headed invocation.
 func AgentRecreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentRecreateOpts, stdout, stderr io.Writer) error {
 	fail := commandFail(stdout, opts.JSON)
-	if !opts.JSON && !opts.Detached {
-		isInteractive := opts.IsInteractive
-		if isInteractive == nil {
-			isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) }
-		}
-		if !isInteractive() {
-			return fail(errors.NewWithDetails(
-				errors.ENotInteractive,
-				"headed recreate requires an interactive terminal",
-				map[string]string{
-					"hint": "re-run in an interactive terminal or pass --detached",
-				},
-			))
-		}
+	if !opts.JSON && !opts.Detached && !resolveIsInteractive(opts.IsInteractive, defaultIsInteractiveStdin)() {
+		return fail(errors.NewWithDetails(
+			errors.ENotInteractive,
+			"headed recreate requires an interactive terminal",
+			map[string]string{
+				"hint": "re-run in an interactive terminal or pass --detached",
+			},
+		))
 	}
 
 	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, opts.DataDirOverride, ResolveRepoContextOpts{

@@ -66,14 +66,8 @@ func validateStartMode(opts startModeOptions, defaultMode, noun string) (mode st
 		if strings.TrimSpace(opts.Prompt) != "" || strings.TrimSpace(opts.PromptFile) != "" {
 			return "", false, errors.NewWithDetails(errors.EUsage, "headed "+noun+" does not accept a prompt", map[string]string{"hint": "omit --prompt/--prompt-file or use --mode headless"})
 		}
-		if !opts.Detached {
-			isInteractive := opts.IsInteractive
-			if isInteractive == nil {
-				isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) }
-			}
-			if !isInteractive() {
-				return "", false, errors.NewWithDetails(errors.ENotInteractive, "headed "+noun+" requires an interactive terminal", map[string]string{"hint": "re-run in an interactive terminal or pass --detached"})
-			}
+		if !opts.Detached && !resolveIsInteractive(opts.IsInteractive, defaultIsInteractiveStdin)() {
+			return "", false, errors.NewWithDetails(errors.ENotInteractive, "headed "+noun+" requires an interactive terminal", map[string]string{"hint": "re-run in an interactive terminal or pass --detached"})
 		}
 	default:
 		return "", false, errors.New(errors.EInvalidArgument, "mode must be headless or headed")

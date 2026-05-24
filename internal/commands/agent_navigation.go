@@ -124,10 +124,7 @@ type AgentClientsOpts struct {
 
 // AgentAttach attaches to a live headed invocation via daemon-authored session facts.
 func AgentAttach(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentAttachOpts, stdout, stderr io.Writer) error {
-	isInteractive := opts.IsInteractive
-	if isInteractive == nil {
-		isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) }
-	}
+	isInteractive := resolveIsInteractive(opts.IsInteractive, defaultIsInteractiveStdin)
 	if !isInteractive() {
 		return errors.NewWithDetails(
 			errors.ENotInteractive,
@@ -321,4 +318,32 @@ func attachHeadedSession(ctx context.Context, opts headedAttachOpts) {
 // isTerminal returns true if the given file descriptor is a terminal.
 func isTerminal(fd uintptr) bool {
 	return term.IsTerminal(int(fd))
+}
+
+// defaultIsInteractiveStdin checks that stdin is a TTY (the common interactive
+// requirement for prompts and confirmations driven from the terminal).
+func defaultIsInteractiveStdin() bool {
+	return isTerminal(os.Stdin.Fd())
+}
+
+// defaultIsInteractiveTUI checks that both stdin and stdout are TTYs, which
+// is required to drive a Bubble Tea UI.
+func defaultIsInteractiveTUI() bool {
+	return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stdout.Fd())
+}
+
+// defaultIsInteractivePrompt checks that stdin and stderr are TTYs, used for
+// commands that write prompts on stderr.
+func defaultIsInteractivePrompt() bool {
+	return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stderr.Fd())
+}
+
+// resolveIsInteractive returns opt when non-nil, otherwise fallback. Used at
+// command entry points where IsInteractive is exposed for tests but defaults
+// to a TTY check in production.
+func resolveIsInteractive(opt func() bool, fallback func() bool) func() bool {
+	if opt != nil {
+		return opt
+	}
+	return fallback
 }

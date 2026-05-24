@@ -316,11 +316,7 @@ func RepoRm(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoRmO
 	}
 
 	if !opts.Yes {
-		isInteractive := opts.IsInteractive
-		if isInteractive == nil {
-			isInteractive = func() bool { return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stderr.Fd()) }
-		}
-		if !isInteractive() {
+		if !resolveIsInteractive(opts.IsInteractive, defaultIsInteractivePrompt)() {
 			return fail(errors.NewWithDetails(
 				errors.EConfirmationRequired,
 				"non-interactive repo removal requires explicit confirmation",

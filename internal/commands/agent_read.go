@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -194,12 +193,7 @@ func AgentHistory(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 		return err
 	}
 
-	isInteractive := opts.IsInteractive
-	if isInteractive == nil {
-		isInteractive = func() bool {
-			return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stdout.Fd())
-		}
-	}
+	isInteractive := resolveIsInteractive(opts.IsInteractive, defaultIsInteractiveTUI)
 	if isInteractive() && !opts.JSON && !opts.Last && opts.Cursor == "" && opts.Limit == 50 {
 		return launchWatchWorkspace(ctx, cr, fsys, cwd, stdout, stderr, watchLaunchOptions{
 			initialPage:     watch.InitialPageHistory,

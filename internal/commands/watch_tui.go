@@ -41,12 +41,7 @@ func launchWatchWorkspace(ctx context.Context, cr exec.CommandRunner, fsys fs.FS
 		ctx = context.Background()
 	}
 
-	isInteractive := opts.isInteractive
-	if isInteractive == nil {
-		isInteractive = func() bool {
-			return isTerminal(os.Stdin.Fd()) && isTerminal(os.Stdout.Fd())
-		}
-	}
+	isInteractive := resolveIsInteractive(opts.isInteractive, defaultIsInteractiveTUI)
 	if !isInteractive() {
 		return errors.NewWithDetails(
 			errors.ENotInteractive,
