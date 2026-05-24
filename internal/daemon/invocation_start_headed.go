@@ -327,7 +327,7 @@ func (s *Server) finishHeadedInvocationStart(ctx context.Context, repoRoot, repo
 		return nil, failStart(http.StatusInternalServerError, errors.EInvocationStartFailed, "failed to pipe tmux pane output: "+err.Error(), "ensure tmux pipe-pane is available")
 	}
 
-	if err := s.claimHeadedInvocation(repoID, createResult.InvocationID, taskID, params.runner, sessionName, params.runnerArgs, params.envKeys); err != nil {
+	if _, err := s.claimHeadedInvocation(repoID, createResult.InvocationID, taskID, params.runner, sessionName, params.runnerArgs, params.envKeys); err != nil {
 		_ = s.tmuxClient.KillSession(ctx, sessionName)
 		f := newStartFailure(http.StatusInternalServerError, errors.EInternal, "failed to update invocation meta: "+err.Error(), "")
 		return nil, &f

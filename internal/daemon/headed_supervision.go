@@ -14,35 +14,37 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
-func (s *Server) restoreExistingHeadedSupervision(ctx context.Context, repoID, invocationID string, meta *store.InvocationMeta, sessionName, eventKind string) error {
+// restoreExistingHeadedSupervision reattaches an existing tmux session to a
+// supervised process and returns the post-claim invocation meta.
+func (s *Server) restoreExistingHeadedSupervision(ctx context.Context, repoID, invocationID string, meta *store.InvocationMeta, sessionName, eventKind string) (*store.InvocationMeta, error) {
 	repoRoot, err := s.resolveHeadedSupervisionRepoRoot(repoID)
 	if err != nil {
-		return fmt.Errorf("resolve repo root: %w", err)
+		return nil, fmt.Errorf("resolve repo root: %w", err)
 	}
 	canonicalRunner, err := validateControlPlaneStartRunner(meta.Runner, meta.RunnerArgs, false)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	headedRunnerArgs, err := buildRunnerArgsForHeaded(canonicalRunner, meta.RunnerArgs)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	profileEnv, err := s.executionProfileEnv(meta.ExecutionProfile)
 	if err != nil {
-		return fmt.Errorf("resolve execution profile env: %w", err)
+		return nil, fmt.Errorf("resolve execution profile env: %w", err)
 	}
 	env := prSyncNonInteractiveEnv(profileEnv)
 	if err := s.installHeadedRunnerHooks(ctx, repoID, invocationID, canonicalRunner, headedRunnerArgs, meta.SandboxPath, env); err != nil {
-		return fmt.Errorf("install headed runner hooks: %w", err)
+		return nil, fmt.Errorf("install headed runner hooks: %w", err)
 	}
 
 	terminalLogPath, err := s.prepareWritableInvocationLogPath(repoID, invocationID, InvocationLogKindTerminal)
 	if err != nil {
-		return fmt.Errorf("prepare terminal log: %w", err)
+		return nil, fmt.Errorf("prepare terminal log: %w", err)
 	}
 	terminalFile, err := os.OpenFile(terminalLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return fmt.Errorf("create terminal log: %w", err)
+		return nil, fmt.Errorf("create terminal log: %w", err)
 	}
 	_ = terminalFile.Close()
 
@@ -54,24 +56,25 @@ func (s *Server) restoreExistingHeadedSupervision(ctx context.Context, repoID, i
 	} else if scrollback != "" {
 		f, err := os.OpenFile(terminalLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 		if err != nil {
-			return fmt.Errorf("append initial terminal capture: %w", err)
+			return nil, fmt.Errorf("append initial terminal capture: %w", err)
 		}
 		_, writeErr := f.WriteString(scrollback)
 		closeErr := f.Close()
 		if writeErr != nil {
-			return fmt.Errorf("append initial terminal capture: %w", writeErr)
+			return nil, fmt.Errorf("append initial terminal capture: %w", writeErr)
 		}
 		if closeErr != nil {
-			return fmt.Errorf("close terminal log: %w", closeErr)
+			return nil, fmt.Errorf("close terminal log: %w", closeErr)
 		}
 	}
 	if err := s.tmuxClient.PipePane(ctx, target, terminalLogPath); err != nil {
-		return fmt.Errorf("pipe tmux pane output: %w", err)
+		return nil, fmt.Errorf("pipe tmux pane output: %w", err)
 	}
 
 	runnerArgs := slices.Clone(meta.RunnerArgs)
-	if err := s.claimHeadedInvocation(repoID, invocationID, "", canonicalRunner, sessionName, runnerArgs, slices.Clone(meta.CustomEnvKeys)); err != nil {
-		return fmt.Errorf("update invocation meta: %w", err)
+	updatedMeta, err := s.claimHeadedInvocation(repoID, invocationID, "", canonicalRunner, sessionName, runnerArgs, slices.Clone(meta.CustomEnvKeys))
+	if err != nil {
+		return nil, fmt.Errorf("update invocation meta: %w", err)
 	}
 
 	proc := s.buildSupervisedHeadedProcess(ctx, supervisedHeadedSetup{
@@ -89,10 +92,10 @@ func (s *Server) restoreExistingHeadedSupervision(ctx context.Context, repoID, i
 	if _, err := s.invocationEvents.Append(s.store.InvocationEventsPath(repoID, invocationID), invocationID, eventKind, map[string]any{
 		"tmux_session": sessionName,
 	}, eventlog.AppendOptions{}); err != nil {
-		return fmt.Errorf("append supervision event: %w", err)
+		return nil, fmt.Errorf("append supervision event: %w", err)
 	}
 	s.launchSupervisedHeadedProcess(proc)
-	return nil
+	return updatedMeta, nil
 }
 
 // supervisedHeadedSetup carries the parameters needed to bring a headed

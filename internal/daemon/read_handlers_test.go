@@ -805,10 +805,11 @@ func TestInvocationActivityProjection_ConvergesAcrossListShowAndCheck(t *testing
 
 	sandboxPath := filepath.Join(t.TempDir(), "inv-1-activity-sandbox")
 	require.NoError(t, os.MkdirAll(sandboxPath, 0o700))
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
 		meta.Status = store.InvocationStatusRunning
-	}))
+	})
+	require.NoError(t, err)
 
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
@@ -885,11 +886,12 @@ func TestInvocationAttachCommand_ConvergesAcrossListShowAndCheckForActiveHeaded(
 		Reason:        runnerstatus.ReasonAwaitingApproval,
 		Summary:       "waiting in tmux",
 	})
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusRunning
 		meta.FinishedAt = ""
 		meta.LandingStatus = ""
-	}))
+	})
+	require.NoError(t, err)
 
 	wantAttachCommand := "agency agent inv-2 attach --repo " + env.RepoID
 
@@ -976,10 +978,11 @@ func TestHandleGetInvocation_UsesInvocationOwnedRunnerSummaryAfterSandboxCleanup
 	}
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", status)
 
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
 		meta.Status = store.InvocationStatusRunning
-	}))
+	})
+	require.NoError(t, err)
 	require.NoError(t, os.RemoveAll(sandboxPath))
 
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1?repo_id="+env.RepoID)
@@ -996,10 +999,11 @@ func TestHandleGetInvocationAndCheck_StoppingStatusIsExplicit(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusStopping
 		meta.Flags.NeedsAttention = true
-	}))
+	})
+	require.NoError(t, err)
 
 	showResp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1?repo_id="+env.RepoID))
 	require.True(t, showResp.OK)
@@ -1026,9 +1030,10 @@ func TestHandleCheckpointApply_StoppingInvocationReturnsConflict(t *testing.T) {
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusStopping
-	}))
+	})
+	require.NoError(t, err)
 
 	body := []byte(`{"checkpoint_id":1}`)
 	req := env.newInvocationRequestWithHeaders(t, http.MethodPost, "/invocations/inv-1/checkpoints/apply?repo_id="+env.RepoID, body, nil)
@@ -1049,9 +1054,10 @@ func TestHandleRepoRm_StoppingInvocationReturnsConflict(t *testing.T) {
 	require.NoError(t, env.Store.UpdateIntegrationWorktreeMeta(env.RepoID, "wt-1", func(meta *store.IntegrationWorktreeMeta) {
 		meta.State = store.WorktreeStateArchived
 	}))
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusStopping
-	}))
+	})
+	require.NoError(t, err)
 
 	body := []byte(`{"repo_ref":"` + env.RepoID + `"}`)
 	req := httptest.NewRequest(http.MethodPost, "/repos/rm", bytes.NewReader(body))
@@ -2550,9 +2556,10 @@ func TestHandleGetInvocationTimeline_UnifiedTypedEntries(t *testing.T) {
 
 	promptPath := env.Store.InvocationPromptPath(env.RepoID, "inv-1")
 	require.NoError(t, os.WriteFile(promptPath, []byte("seed prompt: fix flaky test"), 0o600))
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.PromptPath = promptPath
-	}))
+	})
+	require.NoError(t, err)
 
 	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
@@ -2860,9 +2867,10 @@ func TestHandleGetInvocationTimeline_PaginationStableContinuation(t *testing.T) 
 
 	promptPath := env.Store.InvocationPromptPath(env.RepoID, "inv-1")
 	require.NoError(t, os.WriteFile(promptPath, []byte("seed prompt"), 0o600))
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.PromptPath = promptPath
-	}))
+	})
+	require.NoError(t, err)
 
 	logsDir := env.Store.InvocationLogsDir(env.RepoID, "inv-1")
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
@@ -3243,11 +3251,12 @@ func TestHandleControlPlaneFollowUp_IdempotencyConflictDifferentInvocation(t *te
 	t.Parallel()
 	env := setupReadTestEnv(t)
 
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-3", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-3", func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusRunning
 		meta.ExitReason = ""
 		meta.FailureReason = ""
-	}))
+	})
+	require.NoError(t, err)
 
 	body, err := json.Marshal(map[string]any{
 		"client_request_id": "followup-req-target-conflict",

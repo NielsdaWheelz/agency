@@ -2074,12 +2074,13 @@ func TestDaemonHeadedRecreateMissingSession(t *testing.T) {
 	callsBefore := len(fakeTmux.NewSessionCalls)
 	fakeTmux.Mu.Unlock()
 
-	require.NoError(t, env.Store.UpdateInvocationMeta(startResp.RepoID, startResp.InvocationID, func(meta *store.InvocationMeta) {
+	_, err = env.Store.UpdateInvocationMeta(startResp.RepoID, startResp.InvocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusFinished
 		meta.ExitReason = "exited"
 		meta.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 		meta.LifecycleOwner = ""
-	}))
+	})
+	require.NoError(t, err)
 
 	recreateProfileEnv := testutil.GitIdentityEnv()
 	recreateProfileEnv["AGENCY_RECREATE_PROFILE_TOKEN"] = "after-recreate"

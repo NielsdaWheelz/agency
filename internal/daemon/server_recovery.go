@@ -149,7 +149,7 @@ func (s *Server) recoverHeadedInvocation(ctx context.Context, repoID string, r s
 			restoreSupervision = parseErr == nil && nowTime.Sub(startedAt) > 30*time.Second
 		}
 		if restoreSupervision {
-			if err := s.restoreExistingHeadedSupervision(ctx, repoID, r.InvocationID, r.Meta, sessionName, "agency.headed_supervision_recovered"); err != nil {
+			if _, err := s.restoreExistingHeadedSupervision(ctx, repoID, r.InvocationID, r.Meta, sessionName, "agency.headed_supervision_recovered"); err != nil {
 				s.recordInvocationWarning(repoID, r.InvocationID, "recovery_headed_supervision_restore_failed", err.Error(), map[string]any{
 					"session_name": sessionName,
 				})

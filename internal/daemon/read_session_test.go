@@ -19,11 +19,12 @@ func TestHandleGetInvocationSession_LiveHeaded(t *testing.T) {
 	fakeTmux := testutil.NewFakeTmuxClient()
 	env := setupReadTestEnv(t, fakeTmux)
 
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusRunning
 		meta.FinishedAt = ""
 		meta.LandingStatus = ""
-	}))
+	})
+	require.NoError(t, err)
 
 	sessionName := tmux.SessionName("inv-2")
 	fakeTmux.Sessions[sessionName] = testutil.FakeTmuxSession{
@@ -59,12 +60,13 @@ func TestHandleGetInvocationSession_MissingHeaded_RecreateAvailable(t *testing.T
 	env := setupReadTestEnv(t, fakeTmux)
 
 	sandboxDir := t.TempDir()
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusRunning
 		meta.FinishedAt = ""
 		meta.LandingStatus = ""
 		meta.SandboxPath = sandboxDir
-	}))
+	})
+	require.NoError(t, err)
 
 	resp := decodeAPIResponse(t, env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-2/session?repo_id="+env.RepoID))
 	require.True(t, resp.OK)
@@ -115,11 +117,12 @@ func TestHandleGetInvocationSession_TmuxFailure(t *testing.T) {
 	fakeTmux.ListClientsErr = stderrors.New("connection refused")
 	env := setupReadTestEnv(t, fakeTmux)
 
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusRunning
 		meta.FinishedAt = ""
 		meta.LandingStatus = ""
-	}))
+	})
+	require.NoError(t, err)
 
 	sessionName := tmux.SessionName("inv-2")
 	fakeTmux.Sessions[sessionName] = testutil.FakeTmuxSession{Name: sessionName}
@@ -137,12 +140,13 @@ func TestHandleGetInvocationSession_MissingPersistedSessionRejected(t *testing.T
 	t.Parallel()
 	env := setupReadTestEnv(t, testutil.NewFakeTmuxClient())
 
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusRunning
 		meta.FinishedAt = ""
 		meta.LandingStatus = ""
 		meta.TmuxSession = ""
-	}))
+	})
+	require.NoError(t, err)
 
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-2/session?repo_id="+env.RepoID)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)

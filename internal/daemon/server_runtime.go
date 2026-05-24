@@ -18,7 +18,7 @@ func (s *Server) flushLastOutputAt(proc *supervisedProcess) {
 		return
 	}
 
-	_ = s.store.UpdateInvocationMeta(proc.repoID, proc.invocationID, func(meta *store.InvocationMeta) {
+	_, _ = s.store.UpdateInvocationMeta(proc.repoID, proc.invocationID, func(meta *store.InvocationMeta) {
 		meta.LastOutputAt = lastOutput.UTC().Format(time.RFC3339)
 	})
 }

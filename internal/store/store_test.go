@@ -43,10 +43,11 @@ func TestUpdateInvocationMetaConcurrentPreservesIndependentUpdates(t *testing.T)
 		go func() {
 			defer wg.Done()
 			<-start
-			errs <- s.UpdateInvocationMeta(repoID, invocationID, func(m *InvocationMeta) {
+			_, err := s.UpdateInvocationMeta(repoID, invocationID, func(m *InvocationMeta) {
 				time.Sleep(time.Millisecond)
 				m.RunnerArgs = append(m.RunnerArgs, fmt.Sprintf("arg-%02d", i))
 			})
+			errs <- err
 		}()
 	}
 	close(start)
@@ -100,10 +101,11 @@ func TestUpdateInvocationMetaLockCanonicalizesSymlinkedDataDir(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			errs <- st.UpdateInvocationMeta(repoID, invocationID, func(m *InvocationMeta) {
+			_, err := st.UpdateInvocationMeta(repoID, invocationID, func(m *InvocationMeta) {
 				time.Sleep(time.Millisecond)
 				m.RunnerArgs = append(m.RunnerArgs, fmt.Sprintf("arg-%02d", i))
 			})
+			errs <- err
 		}()
 	}
 	close(start)

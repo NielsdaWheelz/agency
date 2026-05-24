@@ -94,20 +94,20 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		_, supervised := s.processes[record.InvocationID]
 		s.mu.RUnlock()
 		if supervised {
-			if err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, "", meta.Runner, sessionName, slices.Clone(meta.RunnerArgs), slices.Clone(meta.CustomEnvKeys)); err != nil {
+			updatedMeta, err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, "", meta.Runner, sessionName, slices.Clone(meta.RunnerArgs), slices.Clone(meta.CustomEnvKeys))
+			if err != nil {
 				s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInternal), "failed to update invocation meta: "+err.Error(), "", "", requestID)
 				return
 			}
-			meta, _ = s.store.ReadInvocationMeta(record.RepoID, record.InvocationID)
-			s.writeHeadedSuccess(w, record.InvocationID, meta, record.RepoID, "", requestID, true)
+			s.writeHeadedSuccess(w, record.InvocationID, updatedMeta, record.RepoID, "", requestID, true)
 			return
 		}
-		if err := s.restoreExistingHeadedSupervision(ctx, record.RepoID, record.InvocationID, meta, sessionName, "agency.headed_recreated"); err != nil {
+		updatedMeta, err := s.restoreExistingHeadedSupervision(ctx, record.RepoID, record.InvocationID, meta, sessionName, "agency.headed_recreated")
+		if err != nil {
 			s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to restore headed supervision: "+err.Error(), "ensure tmux is still available", "", requestID)
 			return
 		}
-		meta, _ = s.store.ReadInvocationMeta(record.RepoID, record.InvocationID)
-		s.writeHeadedSuccess(w, record.InvocationID, meta, record.RepoID, "", requestID, true)
+		s.writeHeadedSuccess(w, record.InvocationID, updatedMeta, record.RepoID, "", requestID, true)
 		return
 	}
 
@@ -222,7 +222,8 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 	}
 
 	runnerArgs := slices.Clone(meta.RunnerArgs)
-	if err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, "", canonicalRunner, sessionName, runnerArgs, slices.Clone(meta.CustomEnvKeys)); err != nil {
+	updatedMeta, err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, "", canonicalRunner, sessionName, runnerArgs, slices.Clone(meta.CustomEnvKeys))
+	if err != nil {
 		_ = s.tmuxClient.KillSession(ctx, sessionName)
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInternal), "failed to update invocation meta: "+err.Error(), "", "", requestID)
 		return
@@ -251,6 +252,5 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 	}
 	s.launchSupervisedHeadedProcess(proc)
 
-	meta, _ = s.store.ReadInvocationMeta(record.RepoID, record.InvocationID)
-	s.writeHeadedSuccess(w, record.InvocationID, meta, record.RepoID, "", requestID, false)
+	s.writeHeadedSuccess(w, record.InvocationID, updatedMeta, record.RepoID, "", requestID, false)
 }

@@ -267,7 +267,7 @@ func (s *Service) Discard(ctx context.Context, opts DiscardOpts) error {
 	}
 
 	now := s.clock().UTC().Format(time.RFC3339)
-	if err := s.store.UpdateInvocationMeta(opts.RepoID, opts.InvocationID, func(m *store.InvocationMeta) {
+	if _, err := s.store.UpdateInvocationMeta(opts.RepoID, opts.InvocationID, func(m *store.InvocationMeta) {
 		m.LandingStatus = store.LandingStatusDiscarded
 		if m.FinishedAt == "" {
 			m.FinishedAt = now

@@ -298,7 +298,7 @@ func (s *Server) stopInvocationForDiscard(ctx context.Context, repoID, invocatio
 		// Update meta if not supervised
 		if !supervised {
 			now := s.clock().UTC().Format(time.RFC3339)
-			if err := s.store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+			if _, err := s.store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
 				m.Status = store.InvocationStatusFailed
 				m.ExitReason = store.ExitReasonDiscarded
 				m.FailureReason = "discarded"

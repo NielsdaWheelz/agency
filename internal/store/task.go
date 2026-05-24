@@ -139,14 +139,19 @@ func (s *Store) WriteTaskMeta(repoID, taskID string, meta *TaskMeta) error {
 	return nil
 }
 
-// UpdateTaskMeta reads, updates, and writes task meta.json atomically.
-func (s *Store) UpdateTaskMeta(repoID, taskID string, updateFn func(*TaskMeta)) error {
+// UpdateTaskMeta reads, updates, and writes task meta.json atomically and
+// returns the post-update meta. Callers that need the latest state should use
+// the returned value rather than re-reading from disk.
+func (s *Store) UpdateTaskMeta(repoID, taskID string, updateFn func(*TaskMeta)) (*TaskMeta, error) {
 	meta, err := s.ReadTaskMeta(repoID, taskID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	updateFn(meta)
-	return s.WriteTaskMeta(repoID, taskID, meta)
+	if err := s.WriteTaskMeta(repoID, taskID, meta); err != nil {
+		return nil, err
+	}
+	return meta, nil
 }
 
 // ReadTaskMeta reads and parses a task meta.json.

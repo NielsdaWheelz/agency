@@ -294,10 +294,11 @@ func TestAgentCheck_Waiting_HumanAndJSONAligned(t *testing.T) {
 	st := store.NewStore(fsys, dataDir, time.Now)
 	sandboxPath := filepath.Join(dataDir, "repos", repoID, "sandboxes", invocationID, "tree")
 
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	_, err := st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusRunning
 		meta.SandboxPath = sandboxPath
-	}))
+	})
+	require.NoError(t, err)
 
 	runnerStatusPath := runnerstatus.StatusPath(st.InvocationDir(repoID, invocationID))
 	require.NoError(t, os.MkdirAll(filepath.Dir(runnerStatusPath), 0o700))
@@ -381,10 +382,11 @@ func TestAgentCheck_Succeeded_HumanAndJSONAligned(t *testing.T) {
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusFinished)
 
 	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	_, err := st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusFinished
 		meta.FinishedAt = "2026-02-05T12:05:00Z"
-	}))
+	})
+	require.NoError(t, err)
 
 	runnerStatusPath := runnerstatus.StatusPath(st.InvocationDir(repoID, invocationID))
 	require.NoError(t, os.MkdirAll(filepath.Dir(runnerStatusPath), 0o700))

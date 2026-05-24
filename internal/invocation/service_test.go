@@ -736,7 +736,7 @@ func TestCreate_DuplicateNameAllowedAfterTerminal(t *testing.T) {
 	require.NoError(t, err, "first invocation creation should succeed")
 
 	// Mark the first invocation as finished (terminal state)
-	err = st.UpdateInvocationMeta(repoID, result.InvocationID, func(meta *store.InvocationMeta) {
+	_, err = st.UpdateInvocationMeta(repoID, result.InvocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusFinished
 	})
 	require.NoError(t, err, "failed to update invocation meta to finished")

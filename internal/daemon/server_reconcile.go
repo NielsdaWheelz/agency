@@ -88,7 +88,7 @@ func (s *Server) reconcileHeadedInvocation(ctx context.Context, repoID string, r
 			restoreSupervision = parseErr == nil && s.clock().Sub(startedAt) > 30*time.Second
 		}
 		if restoreSupervision {
-			if err := s.restoreExistingHeadedSupervision(ctx, repoID, r.InvocationID, r.Meta, sessionName, "agency.headed_supervision_reconciled"); err != nil {
+			if _, err := s.restoreExistingHeadedSupervision(ctx, repoID, r.InvocationID, r.Meta, sessionName, "agency.headed_supervision_reconciled"); err != nil {
 				s.recordInvocationWarning(repoID, r.InvocationID, "reconcile_headed_supervision_restore_failed", err.Error(), map[string]any{
 					"session_name": sessionName,
 				})

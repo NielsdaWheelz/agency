@@ -371,9 +371,10 @@ func TestTaskStartIdempotentStartingReservationRepairsClaimedInvocation(t *testi
 	}
 	fingerprint := taskStartFingerprint(repoRoot, checkoutRoot, req, nil)
 	require.NoError(t, seedStartingTaskReservation(st, "repo-1", repoRoot, checkoutRoot, "task-1", req.ClientRequestID, fingerprint))
-	require.NoError(t, st.UpdateTaskMeta("repo-1", "task-1", func(meta *store.TaskMeta) {
+	_, err := st.UpdateTaskMeta("repo-1", "task-1", func(meta *store.TaskMeta) {
 		meta.WorktreeID = "wt-1"
-	}))
+	})
+	require.NoError(t, err)
 	require.NoError(t, seedClaimedTaskInvocation(st, "repo-1", "task-1", "wt-1", "inv-1", req.ClientRequestID, fingerprint, checkoutRoot))
 
 	beforeLockW := httptest.NewRecorder()
@@ -503,9 +504,10 @@ func TestTaskStartRepairDoesNotDuplicatePrewrittenRunningEvent(t *testing.T) {
 	}
 	fingerprint := taskStartFingerprint(repoRoot, checkoutRoot, req, nil)
 	require.NoError(t, seedStartingTaskReservation(st, "repo-1", repoRoot, checkoutRoot, "task-1", req.ClientRequestID, fingerprint))
-	require.NoError(t, st.UpdateTaskMeta("repo-1", "task-1", func(meta *store.TaskMeta) {
+	_, err := st.UpdateTaskMeta("repo-1", "task-1", func(meta *store.TaskMeta) {
 		meta.WorktreeID = "wt-1"
-	}))
+	})
+	require.NoError(t, err)
 	require.NoError(t, seedClaimedTaskInvocation(st, "repo-1", "task-1", "wt-1", "inv-1", req.ClientRequestID, fingerprint, checkoutRoot))
 	require.NoError(t, srv.appendTaskEventOnceByInvocationID("repo-1", "task-1", "agency.task_running", "inv-1", map[string]any{
 		"invocation_id": "inv-1",
@@ -687,12 +689,13 @@ func TestAbortStartedTaskInvocation_HeadedKillFailureLeavesInvocationInspectable
 	srv := NewServer(st, testutil.NewFakeTmuxCommandRunner(exec.NewRealRunner(), fakeTmux), fs.NewRealFS(), filepath.Join(dataDir, "config"))
 
 	require.NoError(t, seedClaimedTaskInvocation(st, "repo-1", "task-1", "wt-1", "inv-headed", "start-1", "fingerprint-1", t.TempDir()))
-	require.NoError(t, st.UpdateInvocationMeta("repo-1", "inv-headed", func(meta *store.InvocationMeta) {
+	_, err := st.UpdateInvocationMeta("repo-1", "inv-headed", func(meta *store.InvocationMeta) {
 		meta.Mode = store.RunnerModeHeaded
 		meta.TmuxSession = "session-1"
 		meta.PID = nil
 		meta.PGID = nil
-	}))
+	})
+	require.NoError(t, err)
 	meta, err := st.ReadInvocationMeta("repo-1", "inv-headed")
 	require.NoError(t, err)
 
@@ -718,9 +721,10 @@ func TestFindClaimedTaskInvocationSkipsTaskAbortRunningInvocation(t *testing.T) 
 	srv := NewServer(st, exec.NewRealRunner(), fs.NewRealFS(), filepath.Join(dataDir, "config"))
 
 	require.NoError(t, seedClaimedTaskInvocation(st, "repo-1", "task-1", "wt-1", "inv-1", "retry-1", "fingerprint-1", t.TempDir()))
-	require.NoError(t, st.UpdateInvocationMeta("repo-1", "inv-1", func(meta *store.InvocationMeta) {
+	_, err := st.UpdateInvocationMeta("repo-1", "inv-1", func(meta *store.InvocationMeta) {
 		meta.FailureReason = "task_retry_event_failed"
-	}))
+	})
+	require.NoError(t, err)
 
 	meta, ok, err := srv.findClaimedTaskInvocation("repo-1", "task-1", "retry-1", "fingerprint-1")
 	require.NoError(t, err)

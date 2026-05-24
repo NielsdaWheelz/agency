@@ -33,7 +33,7 @@ func (s *Server) handleTaskArchive(w http.ResponseWriter, r *http.Request, taskR
 		return
 	}
 
-	if err := s.store.UpdateTaskMeta(repoID, record.TaskID, func(meta *store.TaskMeta) {
+	if _, err := s.store.UpdateTaskMeta(repoID, record.TaskID, func(meta *store.TaskMeta) {
 		meta.State = store.TaskStateArchived
 		meta.UpdatedAt = s.clock().UTC().Format(time.RFC3339)
 	}); err != nil {
@@ -349,7 +349,7 @@ func (s *Server) repairTaskRetryFromClaimedInvocation(repoID string, meta *store
 }
 
 func (s *Server) reserveTaskRetryRequest(repoID string, meta *store.TaskMeta, clientRequestID, fingerprint string) error {
-	return s.store.UpdateTaskMeta(repoID, meta.TaskID, func(latest *store.TaskMeta) {
+	_, err := s.store.UpdateTaskMeta(repoID, meta.TaskID, func(latest *store.TaskMeta) {
 		now := s.clock().UTC().Format(time.RFC3339)
 		if latest.RetryRequests == nil {
 			latest.RetryRequests = make(map[string]store.TaskRetryRecord)
@@ -362,10 +362,11 @@ func (s *Server) reserveTaskRetryRequest(repoID string, meta *store.TaskMeta, cl
 		}
 		latest.UpdatedAt = now
 	})
+	return err
 }
 
 func (s *Server) markTaskRetryRunning(repoID, taskID, clientRequestID string, invMeta *store.InvocationMeta) error {
-	return s.store.UpdateTaskMeta(repoID, taskID, func(meta *store.TaskMeta) {
+	_, err := s.store.UpdateTaskMeta(repoID, taskID, func(meta *store.TaskMeta) {
 		now := s.clock().UTC().Format(time.RFC3339)
 		meta.State = store.TaskStateRunning
 		meta.PrimaryInvocationID = invMeta.InvocationID
@@ -386,10 +387,11 @@ func (s *Server) markTaskRetryRunning(repoID, taskID, clientRequestID string, in
 		meta.RetryRequests[clientRequestID] = record
 		meta.UpdatedAt = now
 	})
+	return err
 }
 
 func (s *Server) markTaskRetryFailed(repoID, taskID, clientRequestID string, failure startFailure) {
-	if err := s.store.UpdateTaskMeta(repoID, taskID, func(meta *store.TaskMeta) {
+	if _, err := s.store.UpdateTaskMeta(repoID, taskID, func(meta *store.TaskMeta) {
 		record, ok := meta.RetryRequests[clientRequestID]
 		if !ok {
 			return

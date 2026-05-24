@@ -337,33 +337,29 @@ func (s *Store) WriteInvocationMeta(repoID, invocationID string, meta *Invocatio
 	return nil
 }
 
-// UpdateInvocationMeta reads, updates, and writes meta.json atomically.
-func (s *Store) UpdateInvocationMeta(repoID, invocationID string, updateFn func(*InvocationMeta)) error {
+// UpdateInvocationMeta reads, updates, and writes meta.json atomically and
+// returns the post-update meta. Callers that need the latest state should use
+// the returned value rather than re-reading from disk.
+func (s *Store) UpdateInvocationMeta(repoID, invocationID string, updateFn func(*InvocationMeta)) (*InvocationMeta, error) {
 	metaPath := s.InvocationMetaPath(repoID, invocationID)
 	lock := invocationMetaLock(metaPath)
 	lock.Lock()
 	defer lock.Unlock()
 
-	// Read current meta
 	meta, err := s.ReadInvocationMeta(repoID, invocationID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	// Apply update
 	updateFn(meta)
-
-	// Write back atomically
 	if err := fs.WriteJSONAtomic(s.fsys, metaPath, meta, 0o600); err != nil {
-		return errors.WrapWithDetails(
+		return nil, errors.WrapWithDetails(
 			errors.EMetaWriteFailed,
 			"failed to write invocation meta.json atomically",
 			err,
 			map[string]string{"meta_path": metaPath},
 		)
 	}
-
-	return nil
+	return meta, nil
 }
 
 // ReadInvocationMeta reads and parses meta.json for an invocation.

@@ -70,9 +70,10 @@ func TestHandleHeadedHook_CodexStopSynthesizesFinalMessage(t *testing.T) {
 	t.Parallel()
 
 	env := setupReadTestEnv(t)
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
 		meta.Runner = "codex"
-	}))
+	})
+	require.NoError(t, err)
 
 	payload := []byte(`{"hook_event_name":"Stop","session_id":"thread-1","last_assistant_message":"Ready for check from headed Codex."}`)
 	w := env.doInvocationRequestWithBody(t, http.MethodPost,
@@ -102,9 +103,10 @@ func TestHandleHeadedHook_ImportsCodexTranscriptWithoutSemanticStatus(t *testing
 	t.Parallel()
 
 	env := setupReadTestEnv(t)
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-2", func(meta *store.InvocationMeta) {
 		meta.Runner = "codex"
-	}))
+	})
+	require.NoError(t, err)
 
 	transcriptPath := filepath.Join(t.TempDir(), "codex-transcript.jsonl")
 	transcript := strings.Join([]string{

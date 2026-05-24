@@ -408,10 +408,11 @@ func TestHandleGetInvocationCheck_BlockedIncludesReasonsAndNavigation(t *testing
 	}
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", blockedStatus)
 
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
 		meta.Status = store.InvocationStatusRunning
-	}))
+	})
+	require.NoError(t, err)
 
 	require.NoError(t, os.WriteFile(env.Store.InvocationEventsPath(env.RepoID, "inv-1"), []byte(
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:20Z","invocation_id":"inv-1","kind":"agency.followup_prompt","data":{"text":"continue"}}`+"\n",
@@ -523,10 +524,11 @@ func TestHandleGetInvocationCheck_NavigationDiffCommandOmitsTurnWhenLatestTurnNo
 
 	promptPath := env.Store.InvocationPromptPath(env.RepoID, "inv-1")
 	require.NoError(t, os.WriteFile(promptPath, []byte("cursor seed prompt"), 0o600))
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.PromptPath = promptPath
 		meta.Runner = "cursor"
-	}))
+	})
+	require.NoError(t, err)
 
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -567,12 +569,13 @@ func TestHandleGetInvocationCheck_ReadyWhenFinishedAndCheckable(t *testing.T) {
 		meta.TreePath = integrationTree
 	}))
 
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
 		meta.Status = store.InvocationStatusFinished
 		meta.LandingStatus = store.LandingStatusLanded
 		meta.FinishedAt = "2026-02-05T11:59:00Z"
-	}))
+	})
+	require.NoError(t, err)
 
 	require.NoError(t, os.WriteFile(env.Store.InvocationEventsPath(env.RepoID, "inv-1"), []byte(
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:58:20Z","invocation_id":"inv-1","kind":"agency.checkpoint_created","data":{"checkpoint_id":1}}`+"\n",
@@ -612,12 +615,13 @@ func TestHandleGetInvocationCheck_UsesInvocationOwnedRunnerStatusAfterSandboxCle
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", readyStatus)
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", readyStatus)
 
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
 		meta.Status = store.InvocationStatusFinished
 		meta.LandingStatus = store.LandingStatusPending
 		meta.FinishedAt = "2026-02-05T11:59:00Z"
-	}))
+	})
+	require.NoError(t, err)
 	require.NoError(t, os.RemoveAll(sandboxPath))
 
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID)
@@ -657,13 +661,14 @@ func TestHandleGetInvocationCheck_HeadlessDoesNotRequireWorktreeReport(t *testin
 		meta.TreePath = integrationTree
 	}))
 
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
 		meta.Status = store.InvocationStatusFinished
 		meta.LandingStatus = store.LandingStatusLanded
 		meta.FinishedAt = "2026-02-05T11:59:00Z"
 		meta.Mode = store.RunnerModeHeadless
-	}))
+	})
+	require.NoError(t, err)
 
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -699,13 +704,14 @@ func TestHandleGetInvocationCheck_HeadlessOmitsReportMetadata(t *testing.T) {
 		meta.TreePath = integrationTree
 	}))
 
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
 		meta.Status = store.InvocationStatusFinished
 		meta.LandingStatus = store.LandingStatusLanded
 		meta.FinishedAt = "2026-02-05T11:59:00Z"
 		meta.Mode = store.RunnerModeHeadless
-	}))
+	})
+	require.NoError(t, err)
 
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -753,12 +759,13 @@ func TestHandleGetInvocationCheck_InvalidRunnerSchemaFailsState(t *testing.T) {
 	}
 	writeRunnerStatusForInvocation(t, env.Store, env.RepoID, "inv-1", invalidSchema)
 
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+	_, err := env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.SandboxPath = sandboxPath
 		meta.Status = store.InvocationStatusFinished
 		meta.LandingStatus = store.LandingStatusPending
 		meta.FinishedAt = "2026-02-05T11:59:00Z"
-	}))
+	})
+	require.NoError(t, err)
 
 	w := env.doInvocationRequest(t, http.MethodGet, "/invocations/inv-1/check?repo_id="+env.RepoID)
 	require.Equal(t, http.StatusOK, w.Code)

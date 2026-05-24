@@ -1331,12 +1331,13 @@ func TestAgentRecreate_JSONIncludesExecutionContext(t *testing.T) {
 	env.Tmux.Sessions[tmux.SessionName(env.InvocationID)] = testutil.FakeTmuxSession{Name: tmux.SessionName(env.InvocationID)}
 
 	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
-	require.NoError(t, st.UpdateInvocationMeta(env.RepoID, env.InvocationID, func(meta *store.InvocationMeta) {
+	_, err := st.UpdateInvocationMeta(env.RepoID, env.InvocationID, func(meta *store.InvocationMeta) {
 		meta.CustomEnvKeys = []string{"CODEX_HOME", "GH_CONFIG_DIR"}
-	}))
+	})
+	require.NoError(t, err)
 
 	var stdout, stderr bytes.Buffer
-	err := AgentRecreate(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+	err = AgentRecreate(context.Background(), testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 		AgentRecreateOpts{
 			InvocationRef:   env.InvocationID,
 			RepoRef:         env.RepoID,
@@ -1404,9 +1405,10 @@ func TestAgentAttach_UsesStoredTmuxSession(t *testing.T) {
 	env := setupAgentNavEnv(t, "attach-stored", store.RunnerModeHeaded)
 	st := store.NewStore(fs.NewRealFS(), env.DataDir, time.Now)
 	storedSession := "agency_explicit_attach"
-	require.NoError(t, st.UpdateInvocationMeta(env.RepoID, env.InvocationID, func(meta *store.InvocationMeta) {
+	_, err := st.UpdateInvocationMeta(env.RepoID, env.InvocationID, func(meta *store.InvocationMeta) {
 		meta.TmuxSession = storedSession
-	}))
+	})
+	require.NoError(t, err)
 	env.Tmux.Sessions[storedSession] = testutil.FakeTmuxSession{Name: storedSession}
 
 	var attachCalled bool
@@ -1415,7 +1417,7 @@ func TestAgentAttach_UsesStoredTmuxSession(t *testing.T) {
 	attachCtx := context.WithValue(context.Background(), attachContextKey("marker"), "attach-context")
 
 	var stdout, stderr bytes.Buffer
-	err := AgentAttach(attachCtx, testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
+	err = AgentAttach(attachCtx, testutil.NewFakeCommandRunner(), fs.NewRealFS(), "",
 		AgentAttachOpts{
 			InvocationRef:   env.InvocationID,
 			RepoRef:         env.RepoID,
@@ -2012,10 +2014,11 @@ func TestAgentHistory_JSONIncludesTypedEntries(t *testing.T) {
 	st := store.NewStore(fsys, dataDir, time.Now)
 	promptPath := st.InvocationPromptPath(repoID, invocationID)
 	require.NoError(t, os.WriteFile(promptPath, []byte("seed prompt: investigate failure"), 0o600))
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	_, err := st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.PromptPath = promptPath
 		meta.StartedAt = "2026-02-05T11:50:00Z"
-	}))
+	})
+	require.NoError(t, err)
 
 	logsDir := st.InvocationLogsDir(repoID, invocationID)
 	require.NoError(t, os.MkdirAll(logsDir, 0o700))
@@ -2037,7 +2040,7 @@ func TestAgentHistory_JSONIncludesTypedEntries(t *testing.T) {
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+	err = AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
 		InvocationRef:   invocationID,
 		JSON:            true,
 		Limit:           100,
@@ -2073,10 +2076,11 @@ func TestAgentHistory_PaginationStableContinuation(t *testing.T) {
 	st := store.NewStore(fsys, dataDir, time.Now)
 	promptPath := st.InvocationPromptPath(repoID, invocationID)
 	require.NoError(t, os.WriteFile(promptPath, []byte("seed prompt"), 0o600))
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	_, err := st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.PromptPath = promptPath
 		meta.StartedAt = "2026-02-05T11:50:00Z"
-	}))
+	})
+	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
 	require.NoError(t, os.WriteFile(st.InvocationRawLogPath(repoID, invocationID), []byte("raw\n"), 0o644))
 
@@ -2299,9 +2303,10 @@ func TestAgentHistory_LastReturnsOnlyLastEntry(t *testing.T) {
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
 
 	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	_, err := st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.StartedAt = "2026-02-05T11:50:00Z"
-	}))
+	})
+	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
 
 	// Write 5 stream messages.
@@ -2319,7 +2324,7 @@ func TestAgentHistory_LastReturnsOnlyLastEntry(t *testing.T) {
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+	err = AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
 		InvocationRef:   invocationID,
 		JSON:            true,
 		Last:            true,
@@ -2348,9 +2353,10 @@ func TestAgentHistory_LastJSONReturnsAllEntriesFromLatestTurn(t *testing.T) {
 	createTestInvocation(t, dataDir, repoID, worktreeID, invocationID, store.RunnerModeHeadless, store.InvocationStatusRunning)
 
 	st := store.NewStore(fsys, dataDir, time.Now)
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	_, err := st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.StartedAt = "2026-02-05T11:50:00Z"
-	}))
+	})
+	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
 
 	streamLines := []string{
@@ -2366,7 +2372,7 @@ func TestAgentHistory_LastJSONReturnsAllEntriesFromLatestTurn(t *testing.T) {
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+	err = AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
 		InvocationRef:   invocationID,
 		JSON:            true,
 		Last:            true,
@@ -2415,10 +2421,11 @@ func TestAgentHistory_HumanTurnOutput_ConvergesWithRestoreTurnSelection(t *testi
 	promptPath := st.InvocationPromptPath(repoID, invocationID)
 	require.NoError(t, os.WriteFile(promptPath, []byte("investigate restore convergence"), 0o600))
 	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	_, err := st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.PromptPath = promptPath
 		meta.StartedAt = "2026-02-05T11:50:00Z"
-	}))
+	})
+	require.NoError(t, err)
 
 	streamLines := []string{
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"first assistant turn"}}`,
@@ -2501,9 +2508,10 @@ func TestAgentHistory_DefaultHumanIsConciseWhileJSONRetainsFullPayload(t *testin
 
 	st := store.NewStore(fsys, dataDir, time.Now)
 	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	_, err := st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.StartedAt = "2026-02-05T11:50:00Z"
-	}))
+	})
+	require.NoError(t, err)
 
 	payloadMarker := "LARGE_TOOL_PAYLOAD_SHOULD_REMAIN_JSON_ONLY_" + strings.Repeat("x", 256)
 	streamLines := []string{
@@ -2517,7 +2525,7 @@ func TestAgentHistory_DefaultHumanIsConciseWhileJSONRetainsFullPayload(t *testin
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var humanOut, jsonOut, stderr bytes.Buffer
-	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+	err = AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
 		InvocationRef:   invocationID,
 		Limit:           100,
 		DataDirOverride: dataDir,
@@ -2544,9 +2552,10 @@ func TestAgentHistory_InvalidCursorReturnsEInvalidArgument(t *testing.T) {
 
 	st := store.NewStore(fsys, dataDir, time.Now)
 	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	_, err := st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.StartedAt = "2026-02-05T11:50:00Z"
-	}))
+	})
+	require.NoError(t, err)
 
 	streamLines := []string{
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"first"}}`,
@@ -2559,7 +2568,7 @@ func TestAgentHistory_InvalidCursorReturnsEInvalidArgument(t *testing.T) {
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+	err = AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
 		InvocationRef:   invocationID,
 		Cursor:          "missing-turn-id",
 		Limit:           50,
@@ -2577,9 +2586,10 @@ func TestAgentHistory_LastReturnsLatestMeaningfulTurnNotFinalMarker(t *testing.T
 
 	st := store.NewStore(fsys, dataDir, time.Now)
 	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	_, err := st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.StartedAt = "2026-02-05T11:50:00Z"
-	}))
+	})
+	require.NoError(t, err)
 	streamLines := []string{
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"meaningful assistant turn"}}`,
 		`{"schema_version":"1.0","seq":2,"timestamp":"2026-02-05T11:50:11Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"final","data":{"duration_ms":1200}}`,
@@ -2591,7 +2601,7 @@ func TestAgentHistory_LastReturnsLatestMeaningfulTurnNotFinalMarker(t *testing.T
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+	err = AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
 		InvocationRef:   invocationID,
 		JSON:            true,
 		Last:            true,
@@ -2620,9 +2630,10 @@ func TestAgentHistory_HumanIncludesUnknownDiagnosticsWithinTurnProjection(t *tes
 
 	st := store.NewStore(fsys, dataDir, time.Now)
 	require.NoError(t, os.MkdirAll(st.InvocationLogsDir(repoID, invocationID), 0o700))
-	require.NoError(t, st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	_, err := st.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.StartedAt = "2026-02-05T11:50:00Z"
-	}))
+	})
+	require.NoError(t, err)
 
 	streamLines := []string{
 		`{"schema_version":"1.0","seq":1,"timestamp":"2026-02-05T11:50:10Z","invocation_id":"` + invocationID + `","runner":"claude-code","kind":"message","data":{"role":"assistant","text":"working"}}`,
@@ -2636,7 +2647,7 @@ func TestAgentHistory_HumanIncludesUnknownDiagnosticsWithinTurnProjection(t *tes
 	cr2.Responses["git config --get remote.origin.url"] = testutil.FakeResponse{Stdout: "git@github.com:test/agent-repo.git\n"}
 
 	var stdout, stderr bytes.Buffer
-	err := AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
+	err = AgentHistory(context.Background(), cr2, fsys, repoDir, AgentHistoryOpts{
 		InvocationRef:   invocationID,
 		Limit:           100,
 		DataDirOverride: dataDir,

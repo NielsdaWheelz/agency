@@ -411,7 +411,7 @@ func TestReconcile_Idempotence_TerminalUnchanged(t *testing.T) {
 
 	// Set finished_at to verify it doesn't change
 	originalFinishedAt := "2026-02-05T11:59:30Z"
-	err := st.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+	_, err := st.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
 		m.FinishedAt = originalFinishedAt
 		m.ExitReason = "exited"
 	})
@@ -731,7 +731,7 @@ func TestReconcile_LandingStatusPreserved(t *testing.T) {
 	// Setup: Create a running headed invocation with LandingStatus = "pending"
 	ensureRepoDir(t, st, repoID)
 	createTestHeadedInvocationMeta(t, st, repoID, invocationID, store.InvocationStatusRunning, sessionName)
-	err := st.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+	_, err := st.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
 		m.LandingStatus = store.LandingStatusPending
 	})
 	require.NoError(t, err)
@@ -769,7 +769,7 @@ func TestReconcile_Idempotence_FailedUnchanged(t *testing.T) {
 	createTestHeadedInvocationMeta(t, st, repoID, invocationID, store.InvocationStatusFailed, sessionName)
 
 	originalFinishedAt := "2026-02-05T11:58:00Z"
-	err := st.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+	_, err := st.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
 		m.FinishedAt = originalFinishedAt
 		m.ExitReason = "start_failed"
 		m.FailureReason = "tmux_session_missing"
@@ -983,7 +983,7 @@ func TestReconcile_MultipleInvocationsSameRepo(t *testing.T) {
 	inv3 := "20260205120032-mul3"
 	session3 := tmux.SessionName(inv3)
 	createTestHeadedInvocationMeta(t, st, repoID, inv3, store.InvocationStatusFinished, session3)
-	err := st.UpdateInvocationMeta(repoID, inv3, func(m *store.InvocationMeta) {
+	_, err := st.UpdateInvocationMeta(repoID, inv3, func(m *store.InvocationMeta) {
 		m.FinishedAt = "2026-02-05T11:50:00Z"
 		m.ExitReason = "exited"
 	})

@@ -839,15 +839,16 @@ func TestLand_LandedCleanupBranchLookupFailureDoesNotReportAlreadyLanded(t *test
 
 	h := setupHarness(t)
 	require.NoError(t, os.RemoveAll(h.sandboxPath))
-	require.NoError(t, h.store.UpdateInvocationMeta("test-repo", "test-inv", func(meta *store.InvocationMeta) {
+	_, err := h.store.UpdateInvocationMeta("test-repo", "test-inv", func(meta *store.InvocationMeta) {
 		meta.LandingStatus = store.LandingStatusLanded
-	}))
+	})
+	require.NoError(t, err)
 	h.runner.Responses[fmt.Sprintf("git -C %s show-ref --quiet --verify refs/heads/agency/sandbox-test", h.integrationPath)] = testutil.FakeResponse{
 		Stderr:   "fatal: not a git repository",
 		ExitCode: 128,
 	}
 
-	_, err := h.svc.Land(context.Background(), landing.LandOpts{
+	_, err = h.svc.Land(context.Background(), landing.LandOpts{
 		RepoID:       "test-repo",
 		InvocationID: "test-inv",
 		RepoRoot:     h.integrationPath,

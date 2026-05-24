@@ -42,7 +42,7 @@ func (s *Service) ensureLandingBase(opts LandOpts, meta *store.InvocationMeta, h
 
 func (s *Service) finalizeLand(repoID, invocationID, worktreeID string, result *landResult) error {
 	now := s.clock().UTC().Format(time.RFC3339)
-	if err := s.store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
+	if _, err := s.store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
 		m.LandingStatus = store.LandingStatusLanded
 		m.FinishedAt = now
 	}); err != nil {

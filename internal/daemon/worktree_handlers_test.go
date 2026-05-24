@@ -539,9 +539,10 @@ func TestHandleWorktreeRm_MissingTreeArchivesWithoutMarkerDirtyOrGitRemove(t *te
 	meta, err := env.Store.ReadIntegrationWorktreeMeta(env.RepoID, "wt-1")
 	require.NoError(t, err)
 	require.NoError(t, os.RemoveAll(meta.TreePath))
-	require.NoError(t, env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
+	_, err = env.Store.UpdateInvocationMeta(env.RepoID, "inv-1", func(meta *store.InvocationMeta) {
 		meta.LandingStatus = store.LandingStatusLanded
-	}))
+	})
+	require.NoError(t, err)
 
 	w := doWorktreeRequestWithBody(t, env, http.MethodPost, "/worktrees/wt-1/rm?repo_id="+env.RepoID, []byte(`{}`))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())

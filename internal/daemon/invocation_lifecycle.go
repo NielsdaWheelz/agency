@@ -18,7 +18,7 @@ func (s *Server) nowRFC3339() string {
 // silently dropping — a persistence failure. Used by the fire-and-forget
 // lifecycle transitions below, which run with no error channel to a caller.
 func (s *Server) persistInvocationMeta(repoID, invocationID string, mutate func(*store.InvocationMeta)) {
-	if err := s.store.UpdateInvocationMeta(repoID, invocationID, mutate); err != nil {
+	if _, err := s.store.UpdateInvocationMeta(repoID, invocationID, mutate); err != nil {
 		log.Printf("agencyd: persist invocation %s/%s lifecycle state: %v", repoID, invocationID, err)
 	}
 }
@@ -37,7 +37,7 @@ func (s *Server) requestInvocationStop(repoID, invocationID string) {
 func (s *Server) claimHeadlessInvocationStart(repoID, invocationID, taskID, runner string, pid, pgid int, promptPath, promptSHA string, runnerArgs, envKeys []string) error {
 	now := s.nowRFC3339()
 	daemonPID := os.Getpid()
-	return s.store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	_, err := s.store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusRunning
 		meta.Runner = runner
 		meta.PID = &pid
@@ -62,12 +62,13 @@ func (s *Server) claimHeadlessInvocationStart(repoID, invocationID, taskID, runn
 		meta.Flags.NeedsAttention = false
 		meta.Flags.Orphaned = false
 	})
+	return err
 }
 
 func (s *Server) claimHeadlessInvocationResume(repoID, invocationID string, pid, pgid int) error {
 	now := s.nowRFC3339()
 	daemonPID := os.Getpid()
-	return s.store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	_, err := s.store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = store.InvocationStatusRunning
 		meta.PID = &pid
 		meta.PGID = &pgid
@@ -84,9 +85,10 @@ func (s *Server) claimHeadlessInvocationResume(repoID, invocationID string, pid,
 		meta.Flags.NeedsAttention = false
 		meta.Flags.Orphaned = false
 	})
+	return err
 }
 
-func (s *Server) claimHeadedInvocation(repoID, invocationID, taskID, runner, sessionName string, runnerArgs, envKeys []string) error {
+func (s *Server) claimHeadedInvocation(repoID, invocationID, taskID, runner, sessionName string, runnerArgs, envKeys []string) (*store.InvocationMeta, error) {
 	now := s.nowRFC3339()
 	daemonPID := os.Getpid()
 	return s.store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
@@ -202,7 +204,7 @@ func (s *Server) markInvocationOrphaned(repoID, invocationID string) {
 
 func (s *Server) writeInvocationProcessExit(repoID, invocationID string, status store.InvocationStatus, exitReason, failureReason string, exitCode int) error {
 	now := s.nowRFC3339()
-	return s.store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
+	_, err := s.store.UpdateInvocationMeta(repoID, invocationID, func(meta *store.InvocationMeta) {
 		meta.Status = status
 		meta.ExitReason = exitReason
 		meta.FailureReason = failureReason
@@ -212,6 +214,7 @@ func (s *Server) writeInvocationProcessExit(repoID, invocationID string, status 
 		meta.PGID = nil
 		meta.LifecycleOwner = ""
 	})
+	return err
 }
 
 func (s *Server) clearInvocationProcess(invocationID string) {

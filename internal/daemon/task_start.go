@@ -310,13 +310,13 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 		failTaskStart("task_event_running", newStartFailure(http.StatusInternalServerError, errors.EPersistFailed, "failed to append task event: "+err.Error(), ""))
 		return
 	}
-	if err := s.markTaskRunning(repoIdentity.RepoID, taskID, invMeta); err != nil {
+	taskMeta, err = s.markTaskRunning(repoIdentity.RepoID, taskID, invMeta)
+	if err != nil {
 		s.abortStartedTaskInvocation(repoIdentity.RepoID, invMeta, "task_running_update_failed")
 		failTaskStart("task_running_update", startFailureFromError(http.StatusInternalServerError, errors.EMetaWriteFailed, err, ""))
 		return
 	}
 
-	taskMeta, _ = s.store.ReadTaskMeta(repoIdentity.RepoID, taskID)
 	s.writeTaskStartSuccess(w, requestID, req.ClientRequestID, taskMeta, false)
 }
 
@@ -533,10 +533,7 @@ func (s *Server) repairTaskStartFromClaimedInvocation(repoID string, meta *store
 	}); err != nil {
 		return nil, err
 	}
-	if err := s.markTaskRunning(repoID, meta.TaskID, invMeta); err != nil {
-		return nil, err
-	}
-	return s.store.ReadTaskMeta(repoID, meta.TaskID)
+	return s.markTaskRunning(repoID, meta.TaskID, invMeta)
 }
 
 func (s *Server) findClaimedTaskInvocation(repoID, taskID, clientRequestID, fingerprint string) (*store.InvocationMeta, bool, error) {
@@ -599,16 +596,17 @@ func (s *Server) appendTaskEventOnceByInvocationID(repoID, taskID, kind, invocat
 }
 
 func (s *Server) updateTaskWorktree(repoID, taskID string, wtMeta *store.IntegrationWorktreeMeta, wtCreate *integrationworktree.CreateResult) error {
-	return s.store.UpdateTaskMeta(repoID, taskID, func(meta *store.TaskMeta) {
+	_, err := s.store.UpdateTaskMeta(repoID, taskID, func(meta *store.TaskMeta) {
 		meta.WorktreeID = wtCreate.WorktreeID
 		meta.WorktreeName = wtMeta.Name
 		meta.WorktreePath = wtCreate.TreePath
 		meta.Branch = wtCreate.Branch
 		meta.UpdatedAt = s.clock().UTC().Format(time.RFC3339)
 	})
+	return err
 }
 
-func (s *Server) markTaskRunning(repoID, taskID string, invMeta *store.InvocationMeta) error {
+func (s *Server) markTaskRunning(repoID, taskID string, invMeta *store.InvocationMeta) (*store.TaskMeta, error) {
 	return s.store.UpdateTaskMeta(repoID, taskID, func(meta *store.TaskMeta) {
 		meta.State = store.TaskStateRunning
 		meta.PrimaryInvocationID = invMeta.InvocationID
@@ -668,7 +666,7 @@ func (s *Server) abortStartedTaskInvocation(repoID string, invMeta *store.Invoca
 }
 
 func (s *Server) markTaskFailed(repoID, taskID, phase string, failure startFailure) {
-	if err := s.store.UpdateTaskMeta(repoID, taskID, func(meta *store.TaskMeta) {
+	if _, err := s.store.UpdateTaskMeta(repoID, taskID, func(meta *store.TaskMeta) {
 		meta.State = store.TaskStateFailed
 		meta.FailedPhase = phase
 		meta.ErrorCode = string(failure.code)
