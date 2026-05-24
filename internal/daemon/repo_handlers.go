@@ -153,7 +153,15 @@ func (s *Server) handleRepoRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rec, _, _ := s.store.LoadRepoRecord(repoIdentity.RepoID)
+	rec, exists, err := s.store.LoadRepoRecord(repoIdentity.RepoID)
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to load repo record after register: "+err.Error(), "", nil)
+		return
+	}
+	if !exists {
+		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "repo record missing after register", "", nil)
+		return
+	}
 
 	// Find the entry for this repo
 	var entry store.RepoIndexEntry
