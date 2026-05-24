@@ -439,8 +439,10 @@ func agentStartHeadlessJSON(resp *daemon.ControlPlaneStartResponse) agentStartJS
 	}
 }
 
-// worktreeLabel formats a worktree as "name (id)" or just "id" if name is empty.
-func worktreeLabel(name, id string) string {
+// namedLabel formats a (name, id) pair as "name (id)" or just "id" when name
+// is empty. Used for worktree, repo, and other "human label plus stable id"
+// rendering across CLI output.
+func namedLabel(name, id string) string {
 	if strings.TrimSpace(name) == "" {
 		return id
 	}
@@ -460,7 +462,7 @@ func printAgentStartLines(w io.Writer, invocationID, invocationName, runner, mod
 		_, _ = fmt.Fprintf(w, "  runner:         %s\n", runner)
 	}
 	_, _ = fmt.Fprintf(w, "  mode:           %s\n", mode)
-	_, _ = fmt.Fprintf(w, "  worktree:       %s\n", worktreeLabel(worktreeName, worktreeID))
+	_, _ = fmt.Fprintf(w, "  worktree:       %s\n", namedLabel(worktreeName, worktreeID))
 	_, _ = fmt.Fprintf(w, "  profile:        %s\n", executionProfile)
 	_, _ = fmt.Fprintf(w, "  checkout_root:  %s\n", checkoutRoot)
 	_, _ = fmt.Fprintf(w, "  sandbox_path:   %s\n", sandboxPath)

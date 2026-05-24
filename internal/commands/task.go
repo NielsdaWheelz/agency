@@ -206,7 +206,7 @@ func TaskStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 
 	_, _ = fmt.Fprintf(stdout, "Started task %s\n", resp.TaskName)
 	_, _ = fmt.Fprintf(stdout, "  task:       %s\n", resp.TaskID)
-	_, _ = fmt.Fprintf(stdout, "  worktree:   %s (%s)\n", resp.WorktreeName, resp.WorktreeID)
+	_, _ = fmt.Fprintf(stdout, "  worktree:   %s\n", namedLabel(resp.WorktreeName, resp.WorktreeID))
 	_, _ = fmt.Fprintf(stdout, "  branch:     %s\n", resp.Branch)
 	_, _ = fmt.Fprintf(stdout, "  invocation: %s\n", resp.InvocationID)
 	_, _ = fmt.Fprintf(stdout, "  runner:     %s\n", resp.Runner)
@@ -471,7 +471,7 @@ func printTaskDTO(w io.Writer, task daemon.TaskDTO) {
 	_, _ = fmt.Fprintf(w, "  profile:    %s\n", task.ExecutionProfile)
 	_, _ = fmt.Fprintf(w, "  checkout_root: %s\n", task.CheckoutRoot)
 	if task.WorktreeID != "" {
-		_, _ = fmt.Fprintf(w, "  worktree:   %s (%s)\n", task.WorktreeName, task.WorktreeID)
+		_, _ = fmt.Fprintf(w, "  worktree:   %s\n", namedLabel(task.WorktreeName, task.WorktreeID))
 		_, _ = fmt.Fprintf(w, "  branch:     %s\n", task.Branch)
 	}
 	if task.PrimaryInvocationID != "" {

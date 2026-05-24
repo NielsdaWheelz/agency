@@ -141,12 +141,8 @@ func RepoAdd(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoAd
 		})
 	}
 
-	repoLabel := result.Data.RepoID
-	if strings.TrimSpace(result.Data.RepoName) != "" {
-		repoLabel = result.Data.RepoName + " (" + result.Data.RepoID + ")"
-	}
 	_, _ = fmt.Fprintf(stdout, "Registered repo\n")
-	_, _ = fmt.Fprintf(stdout, "  repo:           %s\n", repoLabel)
+	_, _ = fmt.Fprintf(stdout, "  repo:           %s\n", namedLabel(result.Data.RepoName, result.Data.RepoID))
 	_, _ = fmt.Fprintf(stdout, "  repo_key:       %s\n", result.Data.RepoKey)
 	_, _ = fmt.Fprintf(stdout, "  preferred_root: %s\n", result.Data.PreferredRoot)
 	if len(result.Data.Paths) > 1 {
@@ -186,10 +182,7 @@ func RepoLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoLSO
 	}
 
 	for _, r := range result.Data.Repos {
-		repoLabel := r.RepoID
-		if strings.TrimSpace(r.RepoName) != "" {
-			repoLabel = r.RepoName + " (" + r.RepoID + ")"
-		}
+		repoLabel := namedLabel(r.RepoName, r.RepoID)
 		if strings.TrimSpace(r.RepoKey) != "" {
 			_, _ = fmt.Fprintf(stdout, "%s  %s  %s\n", repoLabel, r.RepoKey, r.PreferredRoot)
 			continue
