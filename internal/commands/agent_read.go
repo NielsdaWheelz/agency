@@ -2,7 +2,6 @@ package commands
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -136,9 +135,7 @@ func AgentCheck(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	}
 
 	if opts.JSON {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(result.Data)
+		return writeCommandJSON(stdout, result.Data)
 	}
 	return writeAgentCheckHumanFromDTO(stdout, &result.Data)
 }

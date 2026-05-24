@@ -2,7 +2,6 @@ package commands
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 
@@ -49,9 +48,7 @@ func WorktreeLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 		return fetchErr
 	}
 	if opts.JSON {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(worktrees)
+		return writeCommandJSON(stdout, worktrees)
 	}
 	if len(worktrees) == 0 {
 		_, _ = fmt.Fprintln(stdout, "No integration worktrees found.")
@@ -101,9 +98,7 @@ func WorktreeShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd st
 	}
 
 	if opts.JSON {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(&result.Data)
+		return writeCommandJSON(stdout, &result.Data)
 	}
 
 	wt := &result.Data

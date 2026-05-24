@@ -4,7 +4,6 @@ package commands
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -170,9 +169,7 @@ func RepoLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoLSO
 	}
 
 	if opts.JSON {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(result.Data.Repos)
+		return writeCommandJSON(stdout, result.Data.Repos)
 	}
 
 	if len(result.Data.Repos) == 0 {
@@ -397,16 +394,11 @@ func RepoShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, opts RepoS
 	}
 
 	if opts.JSON {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(result.Data)
+		return writeCommandJSON(stdout, result.Data)
 	}
 
 	r := result.Data
-	repoLabel := r.RepoID
-	if strings.TrimSpace(r.RepoName) != "" {
-		repoLabel = r.RepoName + " (" + r.RepoID + ")"
-	}
+	repoLabel := namedLabel(r.RepoName, r.RepoID)
 	_, _ = fmt.Fprintf(stdout, "repo:           %s\n", repoLabel)
 	_, _ = fmt.Fprintf(stdout, "repo_key:       %s\n", r.RepoKey)
 	_, _ = fmt.Fprintf(stdout, "preferred_root: %s\n", r.PreferredRoot)

@@ -240,19 +240,14 @@ func TaskStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd strin
 }
 
 func TaskShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts TaskShowOpts, stdout, stderr io.Writer) error {
+	fail := commandFail(stdout, opts.JSON)
 	ns, repoID, err := resolveTaskCommandRepo(ctx, cr, fsys, cwd, opts.RepoRef)
 	if err != nil {
-		if opts.JSON {
-			return writeCommandJSONError(stdout, err)
-		}
-		return err
+		return fail(err)
 	}
 	result, err := ns.client.GetTask(ctx, opts.TaskRef, repoID)
 	if err != nil {
-		if opts.JSON {
-			return writeCommandJSONError(stdout, err)
-		}
-		return err
+		return fail(err)
 	}
 	if opts.JSON {
 		return writeCommandJSON(stdout, result.Data)
@@ -262,48 +257,34 @@ func TaskShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string
 }
 
 func TaskLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts TaskLSOpts, stdout, stderr io.Writer) error {
+	fail := commandFail(stdout, opts.JSON)
 	ns, repoID, err := resolveTaskCommandRepo(ctx, cr, fsys, cwd, opts.RepoRef)
 	if err != nil {
 		if !opts.AllRepos {
-			if opts.JSON {
-				return writeCommandJSONError(stdout, err)
-			}
-			return err
+			return fail(err)
 		}
 		ns, err = setupDaemonNav(ctx, fsys, "")
 		if err != nil {
-			if opts.JSON {
-				return writeCommandJSONError(stdout, err)
-			}
-			return err
+			return fail(err)
 		}
 	}
 	var tasks []daemon.TaskDTO
 	if opts.AllRepos {
 		repos, err := ns.client.ListRepos(ctx)
 		if err != nil {
-			if opts.JSON {
-				return writeCommandJSONError(stdout, err)
-			}
-			return err
+			return fail(err)
 		}
 		for _, repo := range repos.Data.Repos {
 			result, err := ns.client.ListTasks(ctx, repo.RepoID, opts.All)
 			if err != nil {
-				if opts.JSON {
-					return writeCommandJSONError(stdout, err)
-				}
-				return err
+				return fail(err)
 			}
 			tasks = append(tasks, result.Data.Tasks...)
 		}
 	} else {
 		result, err := ns.client.ListTasks(ctx, repoID, opts.All)
 		if err != nil {
-			if opts.JSON {
-				return writeCommandJSONError(stdout, err)
-			}
-			return err
+			return fail(err)
 		}
 		tasks = result.Data.Tasks
 	}
@@ -321,19 +302,14 @@ func TaskLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, 
 }
 
 func TaskArchive(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts TaskArchiveOpts, stdout, stderr io.Writer) error {
+	fail := commandFail(stdout, opts.JSON)
 	ns, repoID, err := resolveTaskCommandRepo(ctx, cr, fsys, cwd, opts.RepoRef)
 	if err != nil {
-		if opts.JSON {
-			return writeCommandJSONError(stdout, err)
-		}
-		return err
+		return fail(err)
 	}
 	resp, err := ns.client.ArchiveTask(ctx, opts.TaskRef, repoID)
 	if err != nil {
-		if opts.JSON {
-			return writeCommandJSONError(stdout, err)
-		}
-		return err
+		return fail(err)
 	}
 	if opts.JSON {
 		return writeCommandJSON(stdout, taskStartJSON(resp))

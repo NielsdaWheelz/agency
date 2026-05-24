@@ -3,7 +3,6 @@ package commands
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -222,9 +221,7 @@ func DaemonStatus(ctx context.Context, fsys fs.FS, opts DaemonStatusOpts, stdout
 	}
 
 	if opts.JSON {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(health)
+		return writeCommandJSON(stdout, health)
 	}
 
 	_, _ = fmt.Fprintf(stdout, "Daemon is running\n")
