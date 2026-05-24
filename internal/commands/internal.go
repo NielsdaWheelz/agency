@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/fs"
 )
@@ -38,7 +39,7 @@ func HeadedHook(ctx context.Context, fsys fs.FS, opts HeadedHookOpts) error {
 	if in == nil {
 		in = strings.NewReader("{}")
 	}
-	payload, err := io.ReadAll(in)
+	payload, err := io.ReadAll(io.LimitReader(in, stream.MaxLineSize))
 	if err != nil {
 		warn("failed to read hook payload", err)
 		return nil

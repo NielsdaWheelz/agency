@@ -17,6 +17,12 @@ const (
 	invocationKillRequestedEvent = "agency.invocation_kill_requested"
 )
 
+// stopEscalation timing. SIGINT → wait → SIGTERM → wait → SIGKILL.
+const (
+	stopSigintWait  = 5 * time.Second // SIGINT delivered; allow graceful shutdown.
+	stopSigtermWait = 2 * time.Second // SIGTERM delivered; allow forced cleanup.
+)
+
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID string) {
 	ctx := r.Context()
 	requestID := prepareRequestID(w, r)
@@ -155,10 +161,10 @@ func (s *Server) stopEscalation(repoID, invocationID string, pgid int, supervise
 		select {
 		case <-proc.done:
 			return
-		case <-time.After(5 * time.Second):
+		case <-time.After(stopSigintWait):
 		}
 	} else {
-		time.Sleep(5 * time.Second)
+		time.Sleep(stopSigintWait)
 		if !isProcessGroupAlive(pgid) {
 			s.failInvocationStopped(repoID, invocationID, "stopped")
 			return
@@ -175,10 +181,10 @@ func (s *Server) stopEscalation(repoID, invocationID string, pgid int, supervise
 		select {
 		case <-proc.done:
 			return
-		case <-time.After(2 * time.Second):
+		case <-time.After(stopSigtermWait):
 		}
 	} else {
-		time.Sleep(2 * time.Second)
+		time.Sleep(stopSigtermWait)
 		if !isProcessGroupAlive(pgid) {
 			s.failInvocationStopped(repoID, invocationID, "stopped")
 			return

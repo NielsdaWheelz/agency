@@ -24,6 +24,25 @@ const (
 	mergeConfirmationTyped = "typed"
 )
 
+// PR visibility retry schedules. gh's REST API can lag behind a push by a few
+// hundred milliseconds; mergeRetryDelays gives the PR more time to surface than
+// the post-action read-back schedules.
+var (
+	mergeRetryDelays = []time.Duration{
+		0,
+		250 * time.Millisecond,
+		750 * time.Millisecond,
+		1500 * time.Millisecond,
+		3 * time.Second,
+	}
+	mergeReadbackDelays = []time.Duration{
+		0,
+		250 * time.Millisecond,
+		750 * time.Millisecond,
+		1500 * time.Millisecond,
+	}
+)
+
 type mergeStrategy string
 
 const (
@@ -202,16 +221,8 @@ func mergeListPRsForBranchWithRetry(ctx context.Context, runner exec.CommandRunn
 }
 
 func mergeListPRsByHeadWithRetry(ctx context.Context, runner exec.CommandRunner, workDir, head string, env map[string]string) ([]prSyncPR, error) {
-	delays := []time.Duration{
-		0,
-		250 * time.Millisecond,
-		750 * time.Millisecond,
-		1500 * time.Millisecond,
-		3 * time.Second,
-	}
-
 	var prs []prSyncPR
-	for idx, delay := range delays {
+	for idx, delay := range mergeRetryDelays {
 		if idx > 0 && delay > 0 {
 			timer := time.NewTimer(delay)
 			select {
@@ -269,9 +280,7 @@ func mergeViewPR(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo
 }
 
 func mergeEnsureMergeable(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo string, prNumber int, env map[string]string) error {
-	delays := []time.Duration{0, 250 * time.Millisecond, 750 * time.Millisecond, 1500 * time.Millisecond}
-
-	for idx, delay := range delays {
+	for idx, delay := range mergeReadbackDelays {
 		if idx > 0 && delay > 0 {
 			timer := time.NewTimer(delay)
 			select {
@@ -351,9 +360,7 @@ func (s *Server) resolveMergeGitHubRepo(ctx context.Context, repoID, workDir str
 }
 
 func mergeConfirmPRMerged(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo string, prNumber int, env map[string]string) (bool, error) {
-	delays := []time.Duration{0, 250 * time.Millisecond, 750 * time.Millisecond, 1500 * time.Millisecond}
-
-	for idx, delay := range delays {
+	for idx, delay := range mergeReadbackDelays {
 		if idx > 0 && delay > 0 {
 			timer := time.NewTimer(delay)
 			select {

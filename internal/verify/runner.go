@@ -36,6 +36,10 @@ type RunConfig struct {
 
 	// LogPath is the absolute path to write verify.log.
 	LogPath string
+
+	// Clock returns the current time. Nil falls back to time.Now. Injecting a
+	// clock lets tests pin started_at/finished_at timestamps deterministically.
+	Clock func() time.Time
 }
 
 const gracePeriod = 3 * time.Second
@@ -50,6 +54,12 @@ const gracePeriod = 3 * time.Second
 // Verify failure (non-zero exit, timeout, cancel) is represented in
 // VerifyRecord.OK/ExitCode, NOT as a returned error.
 func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
+	clock := cfg.Clock
+	if clock == nil {
+		clock = time.Now
+	}
+	now := func() time.Time { return clock().UTC() }
+
 	record := store.VerifyRecord{
 		SchemaVersion: store.VerifyRecordSchemaVersion,
 		RepoID:        cfg.RepoID,
@@ -80,7 +90,7 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 	}
 
 	// Record start time
-	startTime := time.Now().UTC()
+	startTime := now()
 	record.StartedAt = startTime.Format(time.RFC3339Nano)
 
 	// Write header to log file (matching setup.log style, best-effort diagnostic output)
@@ -100,8 +110,9 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 		_ = logFile.Close() // Best-effort cleanup; returning open error
 		errStr := fmt.Sprintf("failed to open /dev/null: %v", err)
 		record.Error = &errStr
-		record.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
-		record.DurationMS = time.Since(startTime).Milliseconds()
+		finish := now()
+		record.FinishedAt = finish.Format(time.RFC3339Nano)
+		record.DurationMS = finish.Sub(startTime).Milliseconds()
 		return record, fmt.Errorf("failed to open /dev/null: %w", err)
 	}
 	// Start process in its own process group for clean signal handling.
@@ -118,8 +129,9 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 		_ = logFile.Close()
 		errStr := fmt.Sprintf("failed to start verify script: %v", err)
 		record.Error = &errStr
-		record.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
-		record.DurationMS = time.Since(startTime).Milliseconds()
+		finish := now()
+		record.FinishedAt = finish.Format(time.RFC3339Nano)
+		record.DurationMS = finish.Sub(startTime).Milliseconds()
 		return record, fmt.Errorf("failed to start verify script: %w", err)
 	}
 
@@ -167,7 +179,7 @@ func Run(ctx context.Context, cfg RunConfig) (store.VerifyRecord, error) {
 	_ = logFile.Close()
 
 	// Record finish time and duration
-	finishTime := time.Now().UTC()
+	finishTime := now()
 	record.FinishedAt = finishTime.Format(time.RFC3339Nano)
 	record.DurationMS = finishTime.Sub(startTime).Milliseconds()
 	record.TimedOut = timedOut

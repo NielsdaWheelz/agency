@@ -652,6 +652,7 @@ func (s *Server) runWorktreeMergeVerify(
 		Env:     env,
 		Timeout: agencyJSON.Scripts.Verify.Timeout,
 		LogPath: verifyLogPath,
+		Clock:   s.clock,
 	}
 
 	verifyRecord, runErr := verify.Run(ctx, runCfg)
