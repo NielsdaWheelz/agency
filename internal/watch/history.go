@@ -48,17 +48,8 @@ func (m model) renderHistory() string {
 	lines = append(lines, "")
 	lines = append(lines, m.renderTransientActionPanel(width)...)
 
-	if m.lastActionMessage != "" {
-		actionLine := "action: " + truncateWithEllipsis(m.lastActionMessage, width-10)
-		switch {
-		case m.lastActionError:
-			lines = append(lines, errorStyle.Render(actionLine))
-		case m.actionRunning:
-			lines = append(lines, warningStyle.Render(actionLine))
-		default:
-			lines = append(lines, actionStyle.Render(actionLine))
-		}
-		lines = append(lines, "")
+	if line := m.styledActionLine(width); line != "" {
+		lines = append(lines, line, "")
 	}
 	if m.historyError != "" {
 		lines = append(lines, errorStyle.Render("history error: "+truncateWithEllipsis(m.historyError, width-4)))

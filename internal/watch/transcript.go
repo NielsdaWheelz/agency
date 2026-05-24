@@ -39,17 +39,8 @@ func (m model) renderTranscript() string {
 	}
 
 	lines := m.renderPageHeader("transcript")
-	if m.lastActionMessage != "" {
-		actionLine := "action: " + truncateWithEllipsis(m.lastActionMessage, width-10)
-		switch {
-		case m.lastActionError:
-			lines = append(lines, errorStyle.Render(actionLine))
-		case m.actionRunning:
-			lines = append(lines, warningStyle.Render(actionLine))
-		default:
-			lines = append(lines, actionStyle.Render(actionLine))
-		}
-		lines = append(lines, "")
+	if line := m.styledActionLine(width); line != "" {
+		lines = append(lines, line, "")
 	}
 	if m.transcriptError != "" {
 		lines = append(lines, errorStyle.Render("transcript error: "+truncateWithEllipsis(m.transcriptError, width-4)))

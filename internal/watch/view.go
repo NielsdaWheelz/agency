@@ -47,16 +47,8 @@ func (m model) renderWorkspace() string {
 	}
 
 	messageLines := make([]string, 0, 2)
-	if m.lastActionMessage != "" {
-		actionLine := "action: " + truncateWithEllipsis(m.lastActionMessage, width-10)
-		switch {
-		case m.lastActionError:
-			messageLines = append(messageLines, errorStyle.Render(actionLine))
-		case m.actionRunning:
-			messageLines = append(messageLines, warningStyle.Render(actionLine))
-		default:
-			messageLines = append(messageLines, actionStyle.Render(actionLine))
-		}
+	if line := m.styledActionLine(width); line != "" {
+		messageLines = append(messageLines, line)
 	}
 	if m.workspaceError != "" {
 		messageLines = append(messageLines, errorStyle.Render("refresh error: "+truncateWithEllipsis(m.workspaceError, width-4)+" (auto-retrying)"))
@@ -391,6 +383,24 @@ func (m model) renderPageHeader(title string) []string {
 	lines = append(lines, "")
 	lines = append(lines, m.renderTransientActionPanel(m.width)...)
 	return lines
+}
+
+// styledActionLine returns the styled "action: ..." line for the model's last
+// action message, or "" when no message is set. Callers decide whether to
+// follow it with a blank separator.
+func (m model) styledActionLine(width int) string {
+	if m.lastActionMessage == "" {
+		return ""
+	}
+	actionLine := "action: " + truncateWithEllipsis(m.lastActionMessage, width-10)
+	switch {
+	case m.lastActionError:
+		return errorStyle.Render(actionLine)
+	case m.actionRunning:
+		return warningStyle.Render(actionLine)
+	default:
+		return actionStyle.Render(actionLine)
+	}
 }
 
 // actionMenuEntries lists the actions shown in the expanded action menu in
