@@ -156,14 +156,9 @@ func (m model) historyRepoLabel(repoID string) string {
 		return ""
 	}
 	for _, repo := range m.snapshot.Repos {
-		if repo.RepoID != repoID {
-			continue
+		if repo.RepoID == repoID {
+			return firstNonEmpty(strings.TrimSpace(repo.RepoKey), repo.RepoID)
 		}
-		label := strings.TrimSpace(repo.RepoKey)
-		if label != "" {
-			return label
-		}
-		return repo.RepoID
 	}
 	return repoID
 }
