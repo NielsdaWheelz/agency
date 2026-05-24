@@ -56,10 +56,7 @@ func (m model) visibleRepos() []daemon.RepoDTO {
 	}
 	repos := make([]daemon.RepoDTO, 0, len(m.snapshot.Repos))
 	for _, repo := range m.snapshot.Repos {
-		name := strings.TrimSpace(repo.RepoKey)
-		if name == "" {
-			name = strings.TrimSpace(repo.RepoName)
-		}
+		name := firstNonEmpty(strings.TrimSpace(repo.RepoKey), strings.TrimSpace(repo.RepoName))
 		text := strings.ToLower(name + " " + repo.RepoID)
 		if strings.Contains(text, filter) {
 			repos = append(repos, repo)
