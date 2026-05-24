@@ -381,6 +381,94 @@ type commandJSONBase struct {
 	ClientRequestID string `json:"client_request_id"`
 }
 
+// agentStartJSON is the shared CLI JSON shape for agent start (headed/headless)
+// and agent recreate. Mode-specific fields use omitempty: TmuxSession is set
+// for headed/recreate; PID/PGID are set for headless.
+type agentStartJSON struct {
+	commandJSONBase
+	InvocationID     string           `json:"invocation_id,omitempty"`
+	RepoID           string           `json:"repo_id,omitempty"`
+	RepoName         string           `json:"repo_name,omitempty"`
+	WorktreeID       string           `json:"worktree_id,omitempty"`
+	WorktreeName     string           `json:"worktree_name,omitempty"`
+	SandboxPath      string           `json:"sandbox_path,omitempty"`
+	ExecutionProfile string           `json:"execution_profile,omitempty"`
+	CheckoutRoot     string           `json:"checkout_root,omitempty"`
+	CustomEnvKeys    []string         `json:"custom_env_keys,omitempty"`
+	PID              int              `json:"pid,omitempty"`
+	PGID             int              `json:"pgid,omitempty"`
+	TmuxSession      string           `json:"tmux_session,omitempty"`
+	DaemonInstanceID string           `json:"daemon_instance_id,omitempty"`
+	AlreadyRunning   bool             `json:"already_running,omitempty"`
+	LogPaths         *daemon.LogPaths `json:"log_paths,omitempty"`
+}
+
+func agentStartHeadedJSON(resp *daemon.ControlPlaneStartHeadedResponse) agentStartJSON {
+	return agentStartJSON{
+		commandJSONBase:  newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, resp.ClientRequestID, resp.RequestID),
+		InvocationID:     resp.InvocationID,
+		RepoID:           resp.RepoID,
+		RepoName:         resp.RepoName,
+		WorktreeID:       resp.WorktreeID,
+		WorktreeName:     resp.WorktreeName,
+		SandboxPath:      resp.SandboxPath,
+		ExecutionProfile: resp.ExecutionProfile,
+		CheckoutRoot:     resp.CheckoutRoot,
+		CustomEnvKeys:    slices.Clone(resp.CustomEnvKeys),
+		TmuxSession:      resp.TmuxSession,
+		DaemonInstanceID: resp.DaemonInstanceID,
+		AlreadyRunning:   resp.AlreadyRunning,
+		LogPaths:         resp.LogPaths,
+	}
+}
+
+func agentStartHeadlessJSON(resp *daemon.ControlPlaneStartResponse) agentStartJSON {
+	return agentStartJSON{
+		commandJSONBase:  newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, resp.ClientRequestID, resp.RequestID),
+		InvocationID:     resp.InvocationID,
+		RepoID:           resp.RepoID,
+		RepoName:         resp.RepoName,
+		WorktreeID:       resp.WorktreeID,
+		WorktreeName:     resp.WorktreeName,
+		SandboxPath:      resp.SandboxPath,
+		ExecutionProfile: resp.ExecutionProfile,
+		CheckoutRoot:     resp.CheckoutRoot,
+		CustomEnvKeys:    slices.Clone(resp.CustomEnvKeys),
+		PID:              resp.PID,
+		PGID:             resp.PGID,
+		DaemonInstanceID: resp.DaemonInstanceID,
+		AlreadyRunning:   resp.AlreadyRunning,
+		LogPaths:         resp.LogPaths,
+	}
+}
+
+// worktreeLabel formats a worktree as "name (id)" or just "id" if name is empty.
+func worktreeLabel(name, id string) string {
+	if strings.TrimSpace(name) == "" {
+		return id
+	}
+	return name + " (" + id + ")"
+}
+
+// printAgentStartLines writes the shared body of the agent start/recreate
+// human output: invocation_id, optional name/runner, mode, worktree, profile,
+// checkout_root, sandbox_path. Callers write the heading and the trailing
+// mode-specific fields (tmux_session for headed, pid/logs for headless).
+func printAgentStartLines(w io.Writer, invocationID, invocationName, runner, mode, worktreeName, worktreeID, executionProfile, checkoutRoot, sandboxPath string) {
+	_, _ = fmt.Fprintf(w, "  invocation_id:  %s\n", invocationID)
+	if invocationName != "" {
+		_, _ = fmt.Fprintf(w, "  name:           %s\n", invocationName)
+	}
+	if runner != "" {
+		_, _ = fmt.Fprintf(w, "  runner:         %s\n", runner)
+	}
+	_, _ = fmt.Fprintf(w, "  mode:           %s\n", mode)
+	_, _ = fmt.Fprintf(w, "  worktree:       %s\n", worktreeLabel(worktreeName, worktreeID))
+	_, _ = fmt.Fprintf(w, "  profile:        %s\n", executionProfile)
+	_, _ = fmt.Fprintf(w, "  checkout_root:  %s\n", checkoutRoot)
+	_, _ = fmt.Fprintf(w, "  sandbox_path:   %s\n", sandboxPath)
+}
+
 func newCommandJSONSuccess(apiVersion int, buildVersion, clientRequestID, requestID string) commandJSONBase {
 	if apiVersion <= 0 {
 		apiVersion = daemon.APIVersion

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
@@ -228,55 +227,12 @@ func agentStartHeadedControlPlane(ctx context.Context, repoRootPath string, clie
 	}
 
 	if opts.JSON {
-		return writeCommandJSON(stdout, struct {
-			commandJSONBase
-			InvocationID     string           `json:"invocation_id,omitempty"`
-			RepoID           string           `json:"repo_id,omitempty"`
-			RepoName         string           `json:"repo_name,omitempty"`
-			WorktreeID       string           `json:"worktree_id,omitempty"`
-			WorktreeName     string           `json:"worktree_name,omitempty"`
-			SandboxPath      string           `json:"sandbox_path,omitempty"`
-			ExecutionProfile string           `json:"execution_profile,omitempty"`
-			CheckoutRoot     string           `json:"checkout_root,omitempty"`
-			CustomEnvKeys    []string         `json:"custom_env_keys,omitempty"`
-			TmuxSession      string           `json:"tmux_session,omitempty"`
-			DaemonInstanceID string           `json:"daemon_instance_id,omitempty"`
-			AlreadyRunning   bool             `json:"already_running,omitempty"`
-			LogPaths         *daemon.LogPaths `json:"log_paths,omitempty"`
-		}{
-			commandJSONBase:  newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, resp.ClientRequestID, resp.RequestID),
-			InvocationID:     resp.InvocationID,
-			RepoID:           resp.RepoID,
-			RepoName:         resp.RepoName,
-			WorktreeID:       resp.WorktreeID,
-			WorktreeName:     resp.WorktreeName,
-			SandboxPath:      resp.SandboxPath,
-			ExecutionProfile: resp.ExecutionProfile,
-			CheckoutRoot:     resp.CheckoutRoot,
-			CustomEnvKeys:    slices.Clone(resp.CustomEnvKeys),
-			TmuxSession:      resp.TmuxSession,
-			DaemonInstanceID: resp.DaemonInstanceID,
-			AlreadyRunning:   resp.AlreadyRunning,
-			LogPaths:         resp.LogPaths,
-		})
+		return writeCommandJSON(stdout, agentStartHeadedJSON(resp))
 	}
 
-	// Output result
 	_, _ = fmt.Fprintf(stdout, "Started headed agent invocation\n")
-	_, _ = fmt.Fprintf(stdout, "  invocation_id:  %s\n", resp.InvocationID)
-	if opts.InvocationName != "" {
-		_, _ = fmt.Fprintf(stdout, "  name:           %s\n", opts.InvocationName)
-	}
-	_, _ = fmt.Fprintf(stdout, "  runner:         %s\n", runner)
-	_, _ = fmt.Fprintf(stdout, "  mode:           headed\n")
-	worktree := resp.WorktreeID
-	if strings.TrimSpace(resp.WorktreeName) != "" {
-		worktree = resp.WorktreeName + " (" + resp.WorktreeID + ")"
-	}
-	_, _ = fmt.Fprintf(stdout, "  worktree:       %s\n", worktree)
-	_, _ = fmt.Fprintf(stdout, "  profile:        %s\n", resp.ExecutionProfile)
-	_, _ = fmt.Fprintf(stdout, "  checkout_root:  %s\n", resp.CheckoutRoot)
-	_, _ = fmt.Fprintf(stdout, "  sandbox_path:   %s\n", resp.SandboxPath)
+	printAgentStartLines(stdout, resp.InvocationID, opts.InvocationName, runner, "headed",
+		resp.WorktreeName, resp.WorktreeID, resp.ExecutionProfile, resp.CheckoutRoot, resp.SandboxPath)
 	_, _ = fmt.Fprintf(stdout, "  tmux_session:   %s\n", resp.TmuxSession)
 
 	if resp.AlreadyRunning {
@@ -321,57 +277,12 @@ func agentStartHeadlessControlPlane(ctx context.Context, repoRootPath string, cl
 	}
 
 	if opts.JSON {
-		return writeCommandJSON(stdout, struct {
-			commandJSONBase
-			InvocationID     string           `json:"invocation_id,omitempty"`
-			RepoID           string           `json:"repo_id,omitempty"`
-			RepoName         string           `json:"repo_name,omitempty"`
-			WorktreeID       string           `json:"worktree_id,omitempty"`
-			WorktreeName     string           `json:"worktree_name,omitempty"`
-			SandboxPath      string           `json:"sandbox_path,omitempty"`
-			ExecutionProfile string           `json:"execution_profile,omitempty"`
-			CheckoutRoot     string           `json:"checkout_root,omitempty"`
-			CustomEnvKeys    []string         `json:"custom_env_keys,omitempty"`
-			PID              int              `json:"pid,omitempty"`
-			PGID             int              `json:"pgid,omitempty"`
-			DaemonInstanceID string           `json:"daemon_instance_id,omitempty"`
-			AlreadyRunning   bool             `json:"already_running,omitempty"`
-			LogPaths         *daemon.LogPaths `json:"log_paths,omitempty"`
-		}{
-			commandJSONBase:  newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, resp.ClientRequestID, resp.RequestID),
-			InvocationID:     resp.InvocationID,
-			RepoID:           resp.RepoID,
-			RepoName:         resp.RepoName,
-			WorktreeID:       resp.WorktreeID,
-			WorktreeName:     resp.WorktreeName,
-			SandboxPath:      resp.SandboxPath,
-			ExecutionProfile: resp.ExecutionProfile,
-			CheckoutRoot:     resp.CheckoutRoot,
-			CustomEnvKeys:    slices.Clone(resp.CustomEnvKeys),
-			PID:              resp.PID,
-			PGID:             resp.PGID,
-			DaemonInstanceID: resp.DaemonInstanceID,
-			AlreadyRunning:   resp.AlreadyRunning,
-			LogPaths:         resp.LogPaths,
-		})
+		return writeCommandJSON(stdout, agentStartHeadlessJSON(resp))
 	}
 
-	// Output result
 	_, _ = fmt.Fprintf(stdout, "Started headless agent invocation\n")
-	_, _ = fmt.Fprintf(stdout, "  invocation_id:  %s\n", resp.InvocationID)
-	if opts.InvocationName != "" {
-		_, _ = fmt.Fprintf(stdout, "  name:           %s\n", opts.InvocationName)
-	}
-	_, _ = fmt.Fprintf(stdout, "  runner:         %s\n", runner)
-	_, _ = fmt.Fprintf(stdout, "  mode:           headless\n")
-	worktree := resp.WorktreeID
-	if strings.TrimSpace(resp.WorktreeName) != "" {
-		worktree = resp.WorktreeName + " (" + resp.WorktreeID + ")"
-	}
-	_, _ = fmt.Fprintf(stdout, "  worktree:       %s\n", worktree)
-	_, _ = fmt.Fprintf(stdout, "  profile:        %s\n", resp.ExecutionProfile)
-	_, _ = fmt.Fprintf(stdout, "  checkout_root:  %s\n", resp.CheckoutRoot)
-	_, _ = fmt.Fprintf(stdout, "  sandbox_path:   %s\n", resp.SandboxPath)
+	printAgentStartLines(stdout, resp.InvocationID, opts.InvocationName, runner, "headless",
+		resp.WorktreeName, resp.WorktreeID, resp.ExecutionProfile, resp.CheckoutRoot, resp.SandboxPath)
 	_, _ = fmt.Fprintf(stdout, "  pid:            %d\n", resp.PID)
 
 	if resp.LogPaths != nil {

@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
-	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
@@ -323,50 +321,12 @@ func AgentRecreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd s
 	}
 
 	if opts.JSON {
-		return writeCommandJSON(stdout, struct {
-			commandJSONBase
-			InvocationID     string           `json:"invocation_id,omitempty"`
-			RepoID           string           `json:"repo_id,omitempty"`
-			RepoName         string           `json:"repo_name,omitempty"`
-			WorktreeID       string           `json:"worktree_id,omitempty"`
-			WorktreeName     string           `json:"worktree_name,omitempty"`
-			SandboxPath      string           `json:"sandbox_path,omitempty"`
-			ExecutionProfile string           `json:"execution_profile,omitempty"`
-			CheckoutRoot     string           `json:"checkout_root,omitempty"`
-			CustomEnvKeys    []string         `json:"custom_env_keys,omitempty"`
-			TmuxSession      string           `json:"tmux_session,omitempty"`
-			DaemonInstanceID string           `json:"daemon_instance_id,omitempty"`
-			AlreadyRunning   bool             `json:"already_running,omitempty"`
-			LogPaths         *daemon.LogPaths `json:"log_paths,omitempty"`
-		}{
-			commandJSONBase:  newCommandJSONSuccess(resp.APIVersion, resp.BuildVersion, resp.ClientRequestID, resp.RequestID),
-			InvocationID:     resp.InvocationID,
-			RepoID:           resp.RepoID,
-			RepoName:         resp.RepoName,
-			WorktreeID:       resp.WorktreeID,
-			WorktreeName:     resp.WorktreeName,
-			SandboxPath:      resp.SandboxPath,
-			ExecutionProfile: resp.ExecutionProfile,
-			CheckoutRoot:     resp.CheckoutRoot,
-			CustomEnvKeys:    slices.Clone(resp.CustomEnvKeys),
-			TmuxSession:      resp.TmuxSession,
-			DaemonInstanceID: resp.DaemonInstanceID,
-			AlreadyRunning:   resp.AlreadyRunning,
-			LogPaths:         resp.LogPaths,
-		})
+		return writeCommandJSON(stdout, agentStartHeadedJSON(resp))
 	}
 
 	_, _ = fmt.Fprintln(stdout, "recreated headed agent invocation")
-	_, _ = fmt.Fprintf(stdout, "  invocation_id:  %s\n", resp.InvocationID)
-	_, _ = fmt.Fprintf(stdout, "  mode:           headed\n")
-	worktree := resp.WorktreeID
-	if strings.TrimSpace(resp.WorktreeName) != "" {
-		worktree = resp.WorktreeName + " (" + resp.WorktreeID + ")"
-	}
-	_, _ = fmt.Fprintf(stdout, "  worktree:       %s\n", worktree)
-	_, _ = fmt.Fprintf(stdout, "  profile:        %s\n", resp.ExecutionProfile)
-	_, _ = fmt.Fprintf(stdout, "  checkout_root:  %s\n", resp.CheckoutRoot)
-	_, _ = fmt.Fprintf(stdout, "  sandbox_path:   %s\n", resp.SandboxPath)
+	printAgentStartLines(stdout, resp.InvocationID, "", "", "headed",
+		resp.WorktreeName, resp.WorktreeID, resp.ExecutionProfile, resp.CheckoutRoot, resp.SandboxPath)
 	_, _ = fmt.Fprintf(stdout, "  tmux_session:   %s\n", resp.TmuxSession)
 	if resp.AlreadyRunning {
 		_, _ = fmt.Fprintln(stdout, "\nNote: tmux session already exists; no new session was created.")
