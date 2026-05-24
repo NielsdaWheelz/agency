@@ -468,9 +468,12 @@ func TestModel_WorkspaceStateTogglesReload(t *testing.T) {
 	assert.True(t, nextModel.workspaceLoading)
 }
 
-func TestModel_WorkspaceView_FiltersArchivedWorktreesByDefault(t *testing.T) {
+func TestModel_WorkspaceView_RendersDaemonFilteredWorktrees(t *testing.T) {
 	t.Parallel()
 
+	// Workspace snapshots reflect daemon-side filtering; the UI does not
+	// re-filter by state (see watch.md). With worktreeStateFilter="present",
+	// the snapshot from the loader contains only present worktrees.
 	m := newModel(context.Background(), nil, RunOptions{})
 	m.width = 160
 	m.height = 30
@@ -478,17 +481,20 @@ func TestModel_WorkspaceView_FiltersArchivedWorktreesByDefault(t *testing.T) {
 		Repos: []daemon.RepoDTO{{RepoID: "repo-1", RepoKey: "github.com/acme/repo"}},
 		Worktrees: []daemon.WorktreeDTO{
 			{WorktreeID: "wt-present", WorktreeName: "live-work", RepoID: "repo-1", State: "present"},
-			{WorktreeID: "wt-archived", WorktreeName: "old-work", RepoID: "repo-1", State: "archived"},
 		},
 		Invocations: []daemon.InvocationDTO{{InvocationID: "inv-1", RepoID: "repo-1", WorktreeID: "wt-present"}},
 	}
 
 	content := m.View().Content
 	assert.Contains(t, content, "live-work")
-	assert.NotContains(t, content, "old-work")
 	assert.Contains(t, content, "worktrees:present")
 
+	// Switching to "all" triggers a fresh load; the snapshot then includes
+	// archived worktrees from the daemon.
 	m.worktreeStateFilter = "all"
+	m.snapshot.Worktrees = append(m.snapshot.Worktrees, daemon.WorktreeDTO{
+		WorktreeID: "wt-archived", WorktreeName: "old-work", RepoID: "repo-1", State: "archived",
+	})
 	content = m.View().Content
 	assert.Contains(t, content, "old-work")
 	assert.Contains(t, content, "[archived]")

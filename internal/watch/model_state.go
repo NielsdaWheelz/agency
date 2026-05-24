@@ -70,22 +70,15 @@ func (m model) visibleRepos() []daemon.RepoDTO {
 
 func (m model) visibleWorktrees() []daemon.WorktreeDTO {
 	filter := strings.ToLower(strings.TrimSpace(m.worktreeFilter))
-	state := strings.TrimSpace(m.worktreeStateFilter)
-	if state == "" {
-		state = "present"
+	if filter == "" {
+		return m.snapshot.Worktrees
 	}
 	worktrees := make([]daemon.WorktreeDTO, 0, len(m.snapshot.Worktrees))
 	for _, wt := range m.snapshot.Worktrees {
-		if state != "all" && strings.TrimSpace(wt.State) != "" && strings.TrimSpace(wt.State) != state {
-			continue
+		text := strings.ToLower(wt.WorktreeName + " " + wt.WorktreeID + " " + wt.RepoName + " " + wt.RepoID + " " + wt.State)
+		if strings.Contains(text, filter) {
+			worktrees = append(worktrees, wt)
 		}
-		if filter != "" {
-			text := strings.ToLower(wt.WorktreeName + " " + wt.WorktreeID + " " + wt.RepoName + " " + wt.RepoID + " " + wt.State)
-			if !strings.Contains(text, filter) {
-				continue
-			}
-		}
-		worktrees = append(worktrees, wt)
 	}
 	return worktrees
 }
