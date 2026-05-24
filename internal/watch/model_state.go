@@ -127,9 +127,7 @@ func (m *model) moveWorkspaceSelectionToTop() {
 	case workspacePaneAgents:
 		invocations := m.visibleInvocations()
 		if len(invocations) > 0 {
-			m.selectedIndex = 0
-			m.selectedInvocationID = invocations[0].InvocationID
-			m.selectedRepoID = invocations[0].RepoID
+			m.applyInvocationSelection(0, invocations)
 		}
 	case "":
 		m.workspaceFocus = workspacePaneAgents
@@ -146,9 +144,7 @@ func (m *model) moveWorkspaceSelectionToBottom() {
 	case workspacePaneAgents:
 		invocations := m.visibleInvocations()
 		if len(invocations) > 0 {
-			m.selectedIndex = len(invocations) - 1
-			m.selectedInvocationID = invocations[m.selectedIndex].InvocationID
-			m.selectedRepoID = invocations[m.selectedIndex].RepoID
+			m.applyInvocationSelection(len(invocations)-1, invocations)
 		}
 	case "":
 		m.workspaceFocus = workspacePaneAgents
@@ -157,17 +153,26 @@ func (m *model) moveWorkspaceSelectionToBottom() {
 }
 
 func (m *model) moveSelection(delta int) {
-	invocations := m.visibleInvocations()
+	m.applyInvocationSelection(m.selectedIndex+delta, m.visibleInvocations())
+}
+
+func (m *model) clearInvocationSelection() {
+	m.selectedIndex = 0
+	m.selectedInvocationID = ""
+	m.selectedRepoID = ""
+}
+
+// applyInvocationSelection sets the cursor to invocations[idx], clamped, or
+// clears the cursor when invocations is empty.
+func (m *model) applyInvocationSelection(idx int, invocations []daemon.InvocationDTO) {
 	if len(invocations) == 0 {
-		m.selectedIndex = 0
-		m.selectedInvocationID = ""
-		m.selectedRepoID = ""
+		m.clearInvocationSelection()
 		return
 	}
-	next := clamp(m.selectedIndex+delta, 0, len(invocations)-1)
-	m.selectedIndex = next
-	m.selectedInvocationID = invocations[next].InvocationID
-	m.selectedRepoID = invocations[next].RepoID
+	idx = clamp(idx, 0, len(invocations)-1)
+	m.selectedIndex = idx
+	m.selectedInvocationID = invocations[idx].InvocationID
+	m.selectedRepoID = invocations[idx].RepoID
 }
 
 func (m *model) reconcileSelection() bool {
@@ -212,9 +217,7 @@ func (m *model) reconcileSelection() bool {
 	m.selectedWorktreeIndex = clamp(m.selectedWorktreeIndex, 0, len(worktrees))
 
 	if len(invocations) == 0 {
-		m.selectedIndex = 0
-		m.selectedInvocationID = ""
-		m.selectedRepoID = ""
+		m.clearInvocationSelection()
 		return oldRepoID != m.activeRepoID || oldWorktreeID != m.activeWorktreeID
 	}
 
@@ -256,24 +259,15 @@ func (m *model) reconcileHistorySelection() {
 	m.historySelectedEntryID = m.historyTurns[m.historySelectedIndex].EntryID
 }
 
-func (m *model) moveReviewSelection(delta int) {
-	if len(m.reviewFiles) == 0 {
-		m.reviewSelectedIndex = 0
-		m.reviewSelectedKey = ""
-		m.reviewScroll = 0
-		return
-	}
-	next := clamp(m.reviewSelectedIndex+delta, 0, len(m.reviewFiles)-1)
-	m.reviewSelectedIndex = next
-	m.reviewSelectedKey = m.reviewFiles[next].key
+func (m *model) clearReviewSelection() {
+	m.reviewSelectedIndex = 0
+	m.reviewSelectedKey = ""
 	m.reviewScroll = 0
 }
 
-func (m *model) moveReviewSelectionTo(index int) {
+func (m *model) setReviewSelection(index int) {
 	if len(m.reviewFiles) == 0 {
-		m.reviewSelectedIndex = 0
-		m.reviewSelectedKey = ""
-		m.reviewScroll = 0
+		m.clearReviewSelection()
 		return
 	}
 	next := clamp(index, 0, len(m.reviewFiles)-1)
@@ -282,14 +276,15 @@ func (m *model) moveReviewSelectionTo(index int) {
 	m.reviewScroll = 0
 }
 
+func (m *model) moveReviewSelection(delta int) {
+	m.setReviewSelection(m.reviewSelectedIndex + delta)
+}
+
 func (m *model) reconcileReviewSelection() {
 	if len(m.reviewFiles) == 0 {
-		m.reviewSelectedIndex = 0
-		m.reviewSelectedKey = ""
-		m.reviewScroll = 0
+		m.clearReviewSelection()
 		return
 	}
-
 	if strings.TrimSpace(m.reviewSelectedKey) != "" {
 		for idx, file := range m.reviewFiles {
 			if file.key == m.reviewSelectedKey {
@@ -298,7 +293,6 @@ func (m *model) reconcileReviewSelection() {
 			}
 		}
 	}
-
 	m.reviewSelectedIndex = clamp(m.reviewSelectedIndex, 0, len(m.reviewFiles)-1)
 	m.reviewSelectedKey = m.reviewFiles[m.reviewSelectedIndex].key
 }
@@ -425,9 +419,7 @@ func (m *model) setActionMessage(msg string) {
 // marking workspace as loading so the next tick triggers a fetch.
 func (m *model) resetInvocationSelection() {
 	m.snapshot.Invocations = nil
-	m.selectedIndex = 0
-	m.selectedInvocationID = ""
-	m.selectedRepoID = ""
+	m.clearInvocationSelection()
 	m.workspaceLoading = true
 }
 

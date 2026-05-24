@@ -364,14 +364,14 @@ func (m model) updateReviewKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case isTopKey(msg):
 		if m.reviewFilesFocus {
-			m.moveReviewSelectionTo(0)
+			m.setReviewSelection(0)
 			return m, nil
 		}
 		m.reviewScroll = 0
 		return m, nil
 	case isBottomKey(msg):
 		if m.reviewFilesFocus {
-			m.moveReviewSelectionTo(len(m.reviewFiles) - 1)
+			m.setReviewSelection(len(m.reviewFiles) - 1)
 			return m, nil
 		}
 		m.reviewScroll = m.maxReviewScroll()
