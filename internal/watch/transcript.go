@@ -47,19 +47,12 @@ func (m model) renderTranscript() string {
 
 	transcriptLines := transcriptLines(m.transcriptContent)
 	visible := m.transcriptVisibleLines()
-	start := 0
-	end := len(transcriptLines)
-	if len(transcriptLines) > visible {
-		start = clamp(m.transcriptScroll, 0, max(0, len(transcriptLines)-visible))
-		end = clamp(start+visible, 0, len(transcriptLines))
-	}
-
+	start, end := scrollWindow(len(transcriptLines), m.transcriptScroll, visible)
 	for _, line := range transcriptLines[start:end] {
 		lines = append(lines, truncateWithEllipsis(line, width))
 	}
 	if len(transcriptLines) > visible {
-		lines = append(lines, "")
-		lines = append(lines, warningStyle.Render(
+		lines = append(lines, "", warningStyle.Render(
 			"showing "+truncateWithEllipsis(strconv.Itoa(start+1)+"-"+strconv.Itoa(end)+" of "+strconv.Itoa(len(transcriptLines)), width-12),
 		))
 	}

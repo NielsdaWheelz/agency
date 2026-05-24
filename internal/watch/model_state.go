@@ -315,6 +315,18 @@ func (m model) logVisibleLines() int {
 	return visible
 }
 
+// scrollWindow returns the (start, end) slice indices for a scrollable list of
+// `total` items given a scroll offset and visible viewport size. When total
+// fits in the viewport, the window is the whole slice.
+func scrollWindow(total, scroll, visible int) (start, end int) {
+	if total <= visible {
+		return 0, total
+	}
+	start = clamp(scroll, 0, max(0, total-visible))
+	end = clamp(start+visible, 0, total)
+	return start, end
+}
+
 func windowForSelection(total, selected, size int) (start, end int) {
 	if total <= 0 {
 		return 0, 0

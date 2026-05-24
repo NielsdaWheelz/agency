@@ -49,19 +49,12 @@ func (m model) renderLogs() string {
 
 	logLines := logLines(m.logsContent)
 	visible := m.logVisibleLines()
-	start := 0
-	end := len(logLines)
-	if len(logLines) > visible {
-		start = clamp(m.logsScroll, 0, max(0, len(logLines)-visible))
-		end = clamp(start+visible, 0, len(logLines))
-	}
-
+	start, end := scrollWindow(len(logLines), m.logsScroll, visible)
 	for _, line := range logLines[start:end] {
 		lines = append(lines, truncateWithEllipsis(line, width))
 	}
 	if len(logLines) > visible {
-		lines = append(lines, "")
-		lines = append(lines, warningStyle.Render(
+		lines = append(lines, "", warningStyle.Render(
 			"showing "+truncateWithEllipsis(strconv.Itoa(start+1)+"-"+strconv.Itoa(end)+" of "+strconv.Itoa(len(logLines)), width-12),
 		))
 	}
