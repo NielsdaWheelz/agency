@@ -339,7 +339,7 @@ func (s *Server) resolveMergeGitHubRepo(ctx context.Context, repoID, workDir str
 		originURL = strings.TrimSpace(result.Stdout)
 	}
 
-	owner, repo, ok := identity.ParseGitHubOwnerRepo(originURL)
+	_, owner, repo, ok := identity.ParseGitHubOwnerRepo(originURL)
 	if !ok {
 		return "", "", errors.NewWithDetails(
 			errors.EGHRepoParseFailed,

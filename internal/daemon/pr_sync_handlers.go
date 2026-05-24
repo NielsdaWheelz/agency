@@ -444,7 +444,7 @@ func prSyncResolveGitHubOwner(ctx context.Context, runner exec.CommandRunner, wo
 		return "", errors.New(errors.EGHRepoParseFailed, "failed to determine GitHub repository from origin remote")
 	}
 
-	owner, _, ok := identity.ParseGitHubOwnerRepo(strings.TrimSpace(result.Stdout))
+	_, owner, _, ok := identity.ParseGitHubOwnerRepo(strings.TrimSpace(result.Stdout))
 	if !ok {
 		return "", errors.New(errors.EGHRepoParseFailed, "failed to parse GitHub owner/repo from origin remote")
 	}

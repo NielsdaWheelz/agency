@@ -10,13 +10,17 @@ const repoIDLen = 16
 
 // RepoIdentity holds the derived identity for a repository.
 type RepoIdentity struct {
-	// RepoKey is either "github:owner/repo" or "path:<sha256(abs_repo_root)>"
+	// RepoKey is "github:owner/repo" for github.com, "github:host/owner/repo"
+	// for any other GitHub-compatible host, or "path:<sha256(abs_repo_root)>"
+	// when no GitHub-style origin URL is available.
 	RepoKey string
 
 	// RepoID is sha256(RepoKey) truncated for stable display and lookup.
 	RepoID string
 
-	// GitHubFlowAvailable is true when origin is github.com and owner/repo parsed successfully
+	// GitHubFlowAvailable is true when origin parses as a GitHub-style URL
+	// (github.com or enterprise). gh CLI auto-discovers the host from the
+	// origin remote, so enterprise flows work without additional plumbing.
 	GitHubFlowAvailable bool
 }
 
@@ -24,15 +28,18 @@ type RepoIdentity struct {
 // and origin URL. This is a pure function with no side effects.
 //
 // repo_key rules:
-//   - If originURL matches github.com ssh/https: repo_key = "github:owner/repo"
-//   - Otherwise: repo_key = "path:<sha256(absRepoRoot)>"
+//   - github.com origin: "github:owner/repo"
+//   - other GitHub-compatible host: "github:host/owner/repo"
+//   - no parseable GitHub origin: "path:<sha256(absRepoRoot)>"
 //
 // repo_id is always sha256(repo_key) truncated to repoIDLen hex chars.
 func DeriveRepoIdentity(absRepoRoot string, originURL string) RepoIdentity {
-	// Try to parse as GitHub repo
-	owner, repo, ok := ParseGitHubOwnerRepo(originURL)
+	host, owner, repo, ok := ParseGitHubOwnerRepo(originURL)
 	if ok {
 		repoKey := fmt.Sprintf("github:%s/%s", owner, repo)
+		if host != "github.com" {
+			repoKey = fmt.Sprintf("github:%s/%s/%s", host, owner, repo)
+		}
 		return RepoIdentity{
 			RepoKey:             repoKey,
 			RepoID:              deriveRepoID(repoKey),
@@ -40,7 +47,6 @@ func DeriveRepoIdentity(absRepoRoot string, originURL string) RepoIdentity {
 		}
 	}
 
-	// Use a path-based key when the origin is not a supported GitHub remote.
 	pathHash := sha256Hex(absRepoRoot)
 	repoKey := fmt.Sprintf("path:%s", pathHash)
 	return RepoIdentity{
