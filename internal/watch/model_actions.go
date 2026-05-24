@@ -370,77 +370,47 @@ func (m model) selectedSessionCanRecreate() bool {
 
 func (m model) canStartAction(kind actionKind) bool {
 	selected, ok := m.selectedInvocation()
-
+	if !ok && kind != actionAttach {
+		return false
+	}
 	switch kind {
 	case actionAttach:
+		invocationID := m.selectedInvocationID
+		repoID := m.selectedRepoID
 		if ok {
-			return strings.TrimSpace(selected.Mode) == "headed" &&
-				strings.TrimSpace(selected.InvocationID) != "" &&
-				strings.TrimSpace(selected.RepoID) != "" &&
-				sessionIsLive(m.selectedSession) &&
-				!m.selectedSessionLoading &&
-				strings.TrimSpace(m.selectedSessionError) == ""
+			invocationID = selected.InvocationID
+			repoID = selected.RepoID
+			if strings.TrimSpace(selected.Mode) != "headed" {
+				return false
+			}
 		}
-		return strings.TrimSpace(m.selectedInvocationID) != "" &&
-			strings.TrimSpace(m.selectedRepoID) != "" &&
+		return strings.TrimSpace(invocationID) != "" &&
+			strings.TrimSpace(repoID) != "" &&
 			sessionIsLive(m.selectedSession) &&
 			!m.selectedSessionLoading &&
 			strings.TrimSpace(m.selectedSessionError) == ""
 	case actionOpen:
-		if !ok {
-			return false
-		}
 		return m.open != nil
 	case actionStop:
-		if !ok {
-			return false
-		}
 		return m.stop != nil && selected.FinishedAt == ""
 	case actionKill:
-		if !ok {
-			return false
-		}
 		return m.kill != nil && selected.FinishedAt == ""
 	case actionLand:
-		if !ok {
-			return false
-		}
 		return m.land != nil && selected.LandingStatus != "landed" && selected.LandingStatus != "discarded"
 	case actionDiscard:
-		if !ok {
-			return false
-		}
 		return m.discard != nil && selected.LandingStatus != "landed" && selected.LandingStatus != "discarded"
 	case actionFollowup:
-		if !ok {
-			return false
-		}
 		return m.followup != nil &&
 			selected.Mode == "headless" &&
 			selected.FinishedAt == "" &&
 			(selected.State == "running" || selected.State == "waiting")
 	case actionRecreate:
-		if !ok {
-			return false
-		}
 		return m.recreate != nil && selected.Mode == "headed" && m.selectedSessionCanRecreate()
 	case actionPRSync:
-		if !ok {
-			return false
-		}
-		if m.prSync == nil || strings.TrimSpace(selected.WorktreeID) == "" {
-			return false
-		}
-		return selected.PRSyncEligible
+		return m.prSync != nil && strings.TrimSpace(selected.WorktreeID) != "" && selected.PRSyncEligible
 	case actionPRMerge:
-		if !ok {
-			return false
-		}
 		return m.prMerge != nil && strings.TrimSpace(selected.WorktreeID) != ""
 	case actionRebase:
-		if !ok {
-			return false
-		}
 		return m.rebase != nil && strings.TrimSpace(selected.WorktreeID) != ""
 	default:
 		return false
