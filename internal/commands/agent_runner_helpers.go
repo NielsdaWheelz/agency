@@ -250,9 +250,6 @@ func resolveEffectiveRunnerArgs(runner string, runnerArgs []string, model, effor
 			},
 		)
 	}
-	if !supportsEffort {
-		effort = ""
-	}
 	if canonicalRunner != runners.RunnerClaudeCode && permissionMode != "" {
 		return nil, errors.NewWithDetails(
 			errors.EUsage,
