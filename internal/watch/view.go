@@ -393,6 +393,26 @@ func (m model) renderPageHeader(title string) []string {
 	return lines
 }
 
+// actionMenuEntries lists the actions shown in the expanded action menu in
+// the order they appear. Each entry is only rendered when canStartAction
+// returns true for its kind.
+var actionMenuEntries = []struct {
+	kind actionKind
+	line string
+}{
+	{actionAttach, "  a attach"},
+	{actionOpen, "  o open sandbox"},
+	{actionStop, "  s stop invocation"},
+	{actionKill, "  k kill invocation"},
+	{actionLand, "  n land changes"},
+	{actionDiscard, "  d discard changes"},
+	{actionFollowup, "  f send follow-up"},
+	{actionRecreate, "  c recreate headed session"},
+	{actionPRSync, "  p sync PR"},
+	{actionPRMerge, "  m merge PR"},
+	{actionRebase, "  b rebase worktree"},
+}
+
 func (m model) renderActionPanel(width int) []string {
 	lines := make([]string, 0, 16)
 	switch {
@@ -406,38 +426,10 @@ func (m model) renderActionPanel(width int) []string {
 		lines = append(lines, dimStyle.Render("  y confirm • esc cancel"))
 	case m.actionMenuOpen:
 		lines = append(lines, "Actions:")
-		if m.canStartAction(actionAttach) {
-			lines = append(lines, "  a attach")
-		}
-		if m.canStartAction(actionOpen) {
-			lines = append(lines, "  o open sandbox")
-		}
-		if m.canStartAction(actionStop) {
-			lines = append(lines, "  s stop invocation")
-		}
-		if m.canStartAction(actionKill) {
-			lines = append(lines, "  k kill invocation")
-		}
-		if m.canStartAction(actionLand) {
-			lines = append(lines, "  n land changes")
-		}
-		if m.canStartAction(actionDiscard) {
-			lines = append(lines, "  d discard changes")
-		}
-		if m.canStartAction(actionFollowup) {
-			lines = append(lines, "  f send follow-up")
-		}
-		if m.canStartAction(actionRecreate) {
-			lines = append(lines, "  c recreate headed session")
-		}
-		if m.canStartAction(actionPRSync) {
-			lines = append(lines, "  p sync PR")
-		}
-		if m.canStartAction(actionPRMerge) {
-			lines = append(lines, "  m merge PR")
-		}
-		if m.canStartAction(actionRebase) {
-			lines = append(lines, "  b rebase worktree")
+		for _, entry := range actionMenuEntries {
+			if m.canStartAction(entry.kind) {
+				lines = append(lines, entry.line)
+			}
 		}
 		lines = append(lines, dimStyle.Render("  esc cancel"))
 	default:
