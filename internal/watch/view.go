@@ -360,14 +360,7 @@ func (m model) renderDetailsPanel(width int) string {
 		latest = "no recent activity"
 	}
 
-	agent := strings.TrimSpace(selected.InvocationName)
-	if agent == "" {
-		agent = strings.TrimSpace(selected.InvocationID)
-	} else {
-		agent += " (" + selected.InvocationID + ")"
-	}
-
-	lines = append(lines, "Agent:      "+agent)
+	lines = append(lines, "Agent:      "+displayNamed(selected.InvocationName, selected.InvocationID))
 	lines = append(lines, "Worktree:   "+m.worktreeDisplay(selected.WorktreeName, selected.WorktreeID))
 	lines = append(lines, "Repo:       "+m.repoDisplay(selected.RepoName, selected.RepoID))
 	lines = append(lines, "Runner:     "+selected.Runner+" / "+selected.Mode)
