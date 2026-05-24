@@ -23,6 +23,15 @@ import (
 // worktreeRmGitRemoveTimeout bounds the git worktree removal performed by the worktree rm mutation surface.
 const worktreeRmGitRemoveTimeout = 30 * time.Second
 
+const (
+	worktreeCreateEventStarted   = "agency.worktree_create_started"
+	worktreeCreateEventSucceeded = "agency.worktree_create_succeeded"
+	worktreeCreateEventFailed    = "agency.worktree_create_failed"
+	worktreeRmEventStarted       = "agency.worktree_rm_started"
+	worktreeRmEventSucceeded     = "agency.worktree_rm_succeeded"
+	worktreeRmEventFailed        = "agency.worktree_rm_failed"
+)
+
 // handleWorktreeCreate handles POST /worktrees/create.
 func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -134,6 +143,15 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := s.appendRepoEvent(repoIdentity.RepoID, worktreeCreateEventStarted, map[string]any{
+		"name":        req.Name,
+		"base_branch": req.BaseBranch,
+	}); err != nil {
+		s.writeWorktreeError(w, http.StatusInternalServerError, requestID, string(errors.EPersistFailed),
+			"failed to append worktree_create_started event: "+err.Error(), "")
+		return
+	}
+
 	wtSvc := integrationworktree.NewService(s.store, s.runner, s.fsys, s.clock)
 	createResult, err := wtSvc.Create(ctx, integrationworktree.CreateOpts{
 		Name:               req.Name,
@@ -148,12 +166,32 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		code := errors.CodeOr(err, errors.EInternal)
+		if emitErr := s.appendRepoEvent(repoIdentity.RepoID, worktreeCreateEventFailed, map[string]any{
+			"name":       req.Name,
+			"error_code": string(code),
+			"message":    apiErrorMessage(err),
+		}); emitErr != nil {
+			s.writeWorktreeError(w, http.StatusInternalServerError, requestID, string(errors.EPersistFailed),
+				"failed to append worktree_create_failed event: "+emitErr.Error(), "")
+			return
+		}
 		s.writeWorktreeError(w, http.StatusInternalServerError, requestID, string(code), err.Error(), "")
 		return
 	}
 
 	// Record idempotency entry.
 	s.recordWorktreeIdempotency(repoIdentity.RepoID, req.IdempotencyKey, createResult.WorktreeID, fingerprint)
+
+	if err := s.appendWorktreeEvent(repoIdentity.RepoID, createResult.WorktreeID, worktreeCreateEventSucceeded, map[string]any{
+		"name":        req.Name,
+		"branch":      createResult.Branch,
+		"base_branch": req.BaseBranch,
+		"tree_path":   createResult.TreePath,
+	}); err != nil {
+		s.writeWorktreeError(w, http.StatusInternalServerError, requestID, string(errors.EPersistFailed),
+			"failed to append worktree_create_succeeded event: "+err.Error(), "")
+		return
+	}
 
 	// Return success.
 	s.writeWorktreeSuccess(w, requestID, createResult.WorktreeID, createResult.TreePath, createResult.Branch, repoIdentity.RepoID, execCtx.Profile, execCtx.CheckoutRoot)
@@ -346,13 +384,23 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 		return
 	}
 
+	if err := s.appendWorktreeEvent(repoID, record.WorktreeID, worktreeRmEventStarted, map[string]any{
+		"force":          req.Force,
+		"unresolved":    len(unresolved),
+		"tree_missing":  treeMissing,
+	}); err != nil {
+		s.writeWorktreeRmError(w, http.StatusInternalServerError, requestID, string(errors.EPersistFailed),
+			"failed to append worktree_rm_started event: "+err.Error(), "")
+		return
+	}
+
 	if req.Force && len(unresolved) > 0 {
 		discardSvc := landing.NewService(s.store, s.runner, s.fsys, s.clock, s.invocationEvents)
 		for _, invocation := range unresolved {
 			profileEnv, err := s.executionProfileEnv(invocation.Meta.ExecutionProfile)
 			if err != nil {
 				code := errors.CodeOr(err, errors.EExecutionProfileNotFound)
-				s.writeWorktreeRmError(w, http.StatusBadRequest, requestID, string(code), apiErrorMessage(err), "")
+				s.failWorktreeRm(w, http.StatusBadRequest, requestID, repoID, record.WorktreeID, string(code), apiErrorMessage(err), "")
 				return
 			}
 			if err := discardSvc.Discard(ctx, landing.DiscardOpts{
@@ -363,7 +411,7 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 				StopCallback: s.stopInvocationForDiscard,
 			}); err != nil {
 				code := errors.CodeOr(err, errors.ELandFailed)
-				s.writeWorktreeRmError(w, http.StatusConflict, requestID, string(code), err.Error(), errors.Hint(err))
+				s.failWorktreeRm(w, http.StatusConflict, requestID, repoID, record.WorktreeID, string(code), err.Error(), errors.Hint(err))
 				return
 			}
 		}
@@ -373,18 +421,18 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 		if err := s.store.UpdateIntegrationWorktreeMeta(repoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
 			m.State = store.WorktreeStateArchived
 		}); err != nil {
-			s.writeWorktreeRmError(w, http.StatusInternalServerError, requestID, string(errors.EWorktreeRemoveFailed),
+			s.failWorktreeRm(w, http.StatusInternalServerError, requestID, repoID, record.WorktreeID, string(errors.EWorktreeRemoveFailed),
 				"worktree tree is missing and metadata archive failed: "+err.Error(),
 				"inspect worktree metadata before retrying")
 			return
 		}
-		s.writeWorktreeRmSuccess(w, requestID)
+		s.finishWorktreeRm(w, requestID, repoID, record.WorktreeID, true)
 		return
 	}
 
 	// Verify tree contains INTEGRATION_MARKER
 	if !integrationworktree.HasIntegrationMarker(record.Meta.TreePath) {
-		s.writeWorktreeRmError(w, http.StatusBadRequest, requestID, string(errors.ENotAnIntegrationWorktree),
+		s.failWorktreeRm(w, http.StatusBadRequest, requestID, repoID, record.WorktreeID, string(errors.ENotAnIntegrationWorktree),
 			"tree missing .agency/INTEGRATION_MARKER - not an integration worktree",
 			"this safety check prevents accidentally deleting user-managed worktrees")
 		return
@@ -393,7 +441,7 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 	profileEnv, err := s.executionProfileEnv(record.Meta.ExecutionProfile)
 	if err != nil {
 		code := errors.CodeOr(err, errors.EExecutionProfileNotFound)
-		s.writeWorktreeRmError(w, http.StatusBadRequest, requestID, string(code), apiErrorMessage(err), "")
+		s.failWorktreeRm(w, http.StatusBadRequest, requestID, repoID, record.WorktreeID, string(code), apiErrorMessage(err), "")
 		return
 	}
 	worktreeEnv := prSyncNonInteractiveEnv(profileEnv)
@@ -402,11 +450,11 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 	if !req.Force {
 		clean, err := git.IsClean(ctx, s.runner, record.Meta.TreePath, worktreeEnv)
 		if err != nil {
-			s.writeWorktreeRmError(w, http.StatusInternalServerError, requestID, string(errors.EWorktreeRemoveFailed),
+			s.failWorktreeRm(w, http.StatusInternalServerError, requestID, repoID, record.WorktreeID, string(errors.EWorktreeRemoveFailed),
 				"failed to check worktree cleanliness: "+err.Error(), "")
 			return
 		} else if !clean {
-			s.writeWorktreeRmError(w, http.StatusConflict, requestID, string(errors.EDirtyWorktree),
+			s.failWorktreeRm(w, http.StatusConflict, requestID, repoID, record.WorktreeID, string(errors.EDirtyWorktree),
 				"worktree has uncommitted changes",
 				"commit/stash your changes or use --force")
 			return
@@ -426,11 +474,11 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 	result, runErr := s.runner.Run(removeCtx, "git", args, exec.RunOpts{Env: worktreeEnv})
 	if runErr != nil {
 		if stderrors.Is(runErr, context.DeadlineExceeded) {
-			s.writeWorktreeRmError(w, http.StatusInternalServerError, requestID, string(errors.EWorktreeRemoveFailed),
+			s.failWorktreeRm(w, http.StatusInternalServerError, requestID, repoID, record.WorktreeID, string(errors.EWorktreeRemoveFailed),
 				"git worktree remove timed out", "retry the removal or inspect the worktree for a blocked git process")
 			return
 		}
-		s.writeWorktreeRmError(w, http.StatusInternalServerError, requestID, string(errors.EWorktreeRemoveFailed),
+		s.failWorktreeRm(w, http.StatusInternalServerError, requestID, repoID, record.WorktreeID, string(errors.EWorktreeRemoveFailed),
 			"failed to execute git worktree remove: "+runErr.Error(), "")
 		return
 	}
@@ -439,12 +487,12 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 		stderr := strings.TrimSpace(result.Stderr)
 		// Check for dirty worktree error
 		if !req.Force && (strings.Contains(stderr, "untracked") || strings.Contains(stderr, "modified")) {
-			s.writeWorktreeRmError(w, http.StatusConflict, requestID, string(errors.EDirtyWorktree),
+			s.failWorktreeRm(w, http.StatusConflict, requestID, repoID, record.WorktreeID, string(errors.EDirtyWorktree),
 				"worktree has uncommitted changes",
 				"commit/stash your changes or use --force")
 			return
 		}
-		s.writeWorktreeRmError(w, http.StatusInternalServerError, requestID, string(errors.EWorktreeRemoveFailed),
+		s.failWorktreeRm(w, http.StatusInternalServerError, requestID, repoID, record.WorktreeID, string(errors.EWorktreeRemoveFailed),
 			"git worktree remove failed: "+stderr, "")
 		return
 	}
@@ -454,12 +502,39 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 		m.State = store.WorktreeStateArchived
 	})
 	if err != nil {
-		s.writeWorktreeRmError(w, http.StatusInternalServerError, requestID, string(errors.EWorktreeRemoveFailed),
+		s.failWorktreeRm(w, http.StatusInternalServerError, requestID, repoID, record.WorktreeID, string(errors.EWorktreeRemoveFailed),
 			"failed to archive worktree metadata after git remove: "+err.Error(),
 			"inspect worktree metadata before retrying")
 		return
 	}
 
+	s.finishWorktreeRm(w, requestID, repoID, record.WorktreeID, false)
+}
+
+// failWorktreeRm emits worktree_rm_failed then writes the http error.
+// Use only after worktree_rm_started has been emitted.
+func (s *Server) failWorktreeRm(w http.ResponseWriter, status int, requestID, repoID, worktreeID, code, message, hint string) {
+	if emitErr := s.appendWorktreeEvent(repoID, worktreeID, worktreeRmEventFailed, map[string]any{
+		"error_code": code,
+		"message":    message,
+	}); emitErr != nil {
+		s.writeWorktreeRmError(w, http.StatusInternalServerError, requestID, string(errors.EPersistFailed),
+			"failed to append worktree_rm_failed event: "+emitErr.Error(), "")
+		return
+	}
+	s.writeWorktreeRmError(w, status, requestID, code, message, hint)
+}
+
+// finishWorktreeRm emits worktree_rm_succeeded then writes the success response.
+// Use only after worktree_rm_started has been emitted.
+func (s *Server) finishWorktreeRm(w http.ResponseWriter, requestID, repoID, worktreeID string, treeMissing bool) {
+	if err := s.appendWorktreeEvent(repoID, worktreeID, worktreeRmEventSucceeded, map[string]any{
+		"tree_missing": treeMissing,
+	}); err != nil {
+		s.writeWorktreeRmError(w, http.StatusInternalServerError, requestID, string(errors.EPersistFailed),
+			"failed to append worktree_rm_succeeded event: "+err.Error(), "")
+		return
+	}
 	s.writeWorktreeRmSuccess(w, requestID)
 }
 
