@@ -72,12 +72,6 @@ func WorktreeCreate(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd 
 		return errors.New(errors.EUsage, "pass a worktree name: 'agency worktree create <worktree-name>'")
 	}
 	baseBranch := strings.TrimSpace(opts.BaseBranch)
-	if cr == nil {
-		cr = exec.NewRealRunner()
-	}
-	if fsys == nil {
-		fsys = fs.NewRealFS()
-	}
 
 	ns, err := setupDaemonNav(ctx, fsys, "")
 	if err != nil {

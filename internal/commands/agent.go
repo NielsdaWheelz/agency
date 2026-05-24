@@ -135,12 +135,6 @@ func AgentStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd stri
 	fail := commandFail(stdout, opts.JSON)
 	worktreeRef := strings.TrimSpace(opts.WorktreeRef)
 	repoRef := strings.TrimSpace(opts.RepoRef)
-	if cr == nil {
-		cr = exec.NewRealRunner()
-	}
-	if fsys == nil {
-		fsys = fs.NewRealFS()
-	}
 
 	_, headless, err := validateStartMode(startModeOptions{
 		Mode:          opts.Mode,

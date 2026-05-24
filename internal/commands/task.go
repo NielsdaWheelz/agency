@@ -96,12 +96,6 @@ type TaskWatchOpts struct {
 
 func TaskStart(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts TaskStartOpts, stdout, stderr io.Writer) error {
 	fail := commandFail(stdout, opts.JSON)
-	if cr == nil {
-		cr = exec.NewRealRunner()
-	}
-	if fsys == nil {
-		fsys = fs.NewRealFS()
-	}
 	taskName := strings.TrimSpace(opts.Name)
 	if taskName == "" {
 		return fail(errors.New(errors.EUsage, "use 'agency task start <name>'"))
@@ -268,9 +262,6 @@ func TaskShow(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string
 }
 
 func TaskLS(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts TaskLSOpts, stdout, stderr io.Writer) error {
-	if fsys == nil {
-		fsys = fs.NewRealFS()
-	}
 	ns, repoID, err := resolveTaskCommandRepo(ctx, cr, fsys, cwd, opts.RepoRef)
 	if err != nil {
 		if !opts.AllRepos {
@@ -353,9 +344,6 @@ func TaskArchive(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd str
 
 func TaskRetry(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts TaskRetryOpts, stdout, stderr io.Writer) error {
 	fail := commandFail(stdout, opts.JSON)
-	if fsys == nil {
-		fsys = fs.NewRealFS()
-	}
 	mode, headless, err := validateStartMode(startModeOptions{
 		Mode:          opts.Mode,
 		Prompt:        opts.Prompt,
@@ -464,12 +452,6 @@ func resolveTaskCommandRepo(ctx context.Context, cr exec.CommandRunner, fsys fs.
 }
 
 func resolveTaskCommandRepoData(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd, repoRef string) (*daemonNavSetup, daemon.RepoDTO, error) {
-	if cr == nil {
-		cr = exec.NewRealRunner()
-	}
-	if fsys == nil {
-		fsys = fs.NewRealFS()
-	}
 	ns, err := setupDaemonNav(ctx, fsys, "")
 	if err != nil {
 		return nil, daemon.RepoDTO{}, err

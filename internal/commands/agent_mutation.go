@@ -365,9 +365,6 @@ type AgentRestoreOpts struct {
 // explicitly or by history turn id.
 func AgentRestore(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts AgentRestoreOpts, stdout, stderr io.Writer) error {
 	fail := commandFail(stdout, opts.JSON)
-	if fsys == nil {
-		fsys = fs.NewRealFS()
-	}
 
 	if opts.CheckpointID < 0 {
 		return fail(errors.New(errors.EUsage, "--checkpoint must be a positive integer"))
