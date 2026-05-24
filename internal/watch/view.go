@@ -403,6 +403,24 @@ func (m model) styledActionLine(width int) string {
 	}
 }
 
+// appendPageError appends a styled "<page> error: <msg>" line plus a blank
+// separator when msg is non-empty. Used by history/logs/review/transcript pages.
+func appendPageError(lines []string, page, msg string, width int) []string {
+	if msg == "" {
+		return lines
+	}
+	return append(lines, errorStyle.Render(page+" error: "+truncateWithEllipsis(msg, width-4)), "")
+}
+
+// appendPageLoading appends a styled "loading <page>..." line plus a blank
+// separator when loading is true.
+func appendPageLoading(lines []string, page string, loading bool) []string {
+	if !loading {
+		return lines
+	}
+	return append(lines, warningStyle.Render("loading "+page+"..."), "")
+}
+
 // actionMenuEntries lists the actions shown in the expanded action menu in
 // the order they appear. Each entry is only rendered when canStartAction
 // returns true for its kind.

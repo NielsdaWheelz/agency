@@ -38,14 +38,8 @@ func (m model) renderReview() string {
 	if line := m.styledActionLine(width); line != "" {
 		lines = append(lines, line, "")
 	}
-	if m.reviewError != "" {
-		lines = append(lines, errorStyle.Render("review error: "+truncateWithEllipsis(m.reviewError, width-4)))
-		lines = append(lines, "")
-	}
-	if m.reviewLoading {
-		lines = append(lines, warningStyle.Render("loading review..."))
-		lines = append(lines, "")
-	}
+	lines = appendPageError(lines, "review", m.reviewError, width)
+	lines = appendPageLoading(lines, "review", m.reviewLoading)
 
 	lines = append(lines, m.renderReviewPanels(width))
 	lines = append(lines, "")

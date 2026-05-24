@@ -42,14 +42,8 @@ func (m model) renderTranscript() string {
 	if line := m.styledActionLine(width); line != "" {
 		lines = append(lines, line, "")
 	}
-	if m.transcriptError != "" {
-		lines = append(lines, errorStyle.Render("transcript error: "+truncateWithEllipsis(m.transcriptError, width-4)))
-		lines = append(lines, "")
-	}
-	if m.transcriptLoading {
-		lines = append(lines, warningStyle.Render("loading transcript..."))
-		lines = append(lines, "")
-	}
+	lines = appendPageError(lines, "transcript", m.transcriptError, width)
+	lines = appendPageLoading(lines, "transcript", m.transcriptLoading)
 
 	transcriptLines := transcriptLines(m.transcriptContent)
 	visible := m.transcriptVisibleLines()

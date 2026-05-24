@@ -44,14 +44,8 @@ func (m model) renderLogs() string {
 	if line := m.styledActionLine(width); line != "" {
 		lines = append(lines, line, "")
 	}
-	if m.logsError != "" {
-		lines = append(lines, errorStyle.Render("logs error: "+truncateWithEllipsis(m.logsError, width-4)))
-		lines = append(lines, "")
-	}
-	if m.logsLoading {
-		lines = append(lines, warningStyle.Render("loading logs..."))
-		lines = append(lines, "")
-	}
+	lines = appendPageError(lines, "logs", m.logsError, width)
+	lines = appendPageLoading(lines, "logs", m.logsLoading)
 
 	logLines := logLines(m.logsContent)
 	visible := m.logVisibleLines()

@@ -51,14 +51,8 @@ func (m model) renderHistory() string {
 	if line := m.styledActionLine(width); line != "" {
 		lines = append(lines, line, "")
 	}
-	if m.historyError != "" {
-		lines = append(lines, errorStyle.Render("history error: "+truncateWithEllipsis(m.historyError, width-4)))
-		lines = append(lines, "")
-	}
-	if m.historyLoading {
-		lines = append(lines, warningStyle.Render("loading history..."))
-		lines = append(lines, "")
-	}
+	lines = appendPageError(lines, "history", m.historyError, width)
+	lines = appendPageLoading(lines, "history", m.historyLoading)
 	if len(m.historyTurns) == 0 {
 		lines = append(lines, "no history entries available")
 		lines = append(lines, "")
