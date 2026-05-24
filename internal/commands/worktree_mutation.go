@@ -19,17 +19,6 @@ import (
 
 const worktreeMergePollInterval = 500 * time.Millisecond
 
-// jsonFailFn returns an error-passthrough function that, when emitJSON is true,
-// writes a structured JSON error envelope to stdout for command-failure cases.
-func jsonFailFn(stdout io.Writer, emitJSON bool) func(error) error {
-	return func(err error) error {
-		if err == nil || !emitJSON {
-			return err
-		}
-		return writeCommandJSONError(stdout, err)
-	}
-}
-
 // requireConfirmation gates a destructive action behind interactive typed
 // confirmation: in a non-interactive context it returns EConfirmationRequired,
 // otherwise it prompts on stderr and reads from in (or os.Stdin if in is nil)
@@ -118,7 +107,7 @@ type WorktreePRSyncOpts struct {
 
 // WorktreePRSync performs worktree-scoped branch push + PR create/update via daemon.
 func WorktreePRSync(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreePRSyncOpts, stdout, stderr io.Writer) error {
-	fail := jsonFailFn(stdout, opts.JSON)
+	fail := commandFail(stdout, opts.JSON)
 
 	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, opts.DataDirOverride, ResolveRepoContextOpts{
 		RepoRef: opts.RepoRef,
@@ -185,7 +174,7 @@ type WorktreePRMergeOpts struct {
 
 // WorktreePRMerge performs worktree-scoped verify + merge via daemon.
 func WorktreePRMerge(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreePRMergeOpts, stdout, stderr io.Writer) error {
-	fail := jsonFailFn(stdout, opts.JSON)
+	fail := commandFail(stdout, opts.JSON)
 
 	strategy := opts.Strategy
 	if strategy == "" {
@@ -349,7 +338,7 @@ type WorktreeRebaseOpts struct {
 
 // WorktreeRebase performs worktree-scoped rebase via daemon.
 func WorktreeRebase(ctx context.Context, cr exec.CommandRunner, fsys fs.FS, cwd string, opts WorktreeRebaseOpts, stdout, stderr io.Writer) error {
-	fail := jsonFailFn(stdout, opts.JSON)
+	fail := commandFail(stdout, opts.JSON)
 
 	ns, repoCtx, err := setupDaemonNavAndRepo(ctx, cr, fsys, cwd, opts.DataDirOverride, ResolveRepoContextOpts{
 		RepoRef: opts.RepoRef,
