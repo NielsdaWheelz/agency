@@ -12,6 +12,11 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
+const (
+	invocationStopRequestedEvent = "agency.invocation_stop_requested"
+	invocationKillRequestedEvent = "agency.invocation_kill_requested"
+)
+
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID string) {
 	ctx := r.Context()
 	requestID := prepareRequestID(w, r)
@@ -46,6 +51,14 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 	}
 	if meta.Status == store.InvocationStatusFinished || meta.Status == store.InvocationStatusFailed {
 		s.writeInvocationActionSuccess(w, requestID, record.InvocationID)
+		return
+	}
+
+	if err := s.appendInvocationEvent(record.RepoID, record.InvocationID, invocationStopRequestedEvent, map[string]any{
+		"mode":   string(meta.Mode),
+		"status": string(meta.Status),
+	}); err != nil {
+		s.writeErrorWithRequestID(w, http.StatusInternalServerError, requestID, string(errors.EPersistFailed), err.Error(), "")
 		return
 	}
 
@@ -294,6 +307,14 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 			return
 		}
 		writeKillError(http.StatusInternalServerError, string(errors.EInternal), "failed to read invocation meta: "+err.Error(), "")
+		return
+	}
+
+	if err := s.appendInvocationEvent(record.RepoID, record.InvocationID, invocationKillRequestedEvent, map[string]any{
+		"mode":   string(meta.Mode),
+		"status": string(meta.Status),
+	}); err != nil {
+		writeKillError(http.StatusInternalServerError, string(errors.EPersistFailed), err.Error(), "")
 		return
 	}
 
