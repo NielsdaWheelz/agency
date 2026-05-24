@@ -50,7 +50,7 @@ func BuildVerifyEnv(baseEnv []string, input VerifyEnvInput) []string {
 		"AGENCY_RUNNER":         input.Runner,
 		"AGENCY_PR_URL":         input.PRURL,
 		"AGENCY_PR_NUMBER":      "",
-		"AGENCY_DOTAGENCY_DIR":  filepath.Join(input.WorkspaceRoot, ".agency"),
+		"AGENCY_DOT_AGENCY_DIR": filepath.Join(input.WorkspaceRoot, ".agency"),
 		"AGENCY_OUTPUT_DIR":     filepath.Join(input.WorkspaceRoot, ".agency", "out"),
 		"AGENCY_LOG_DIR":        filepath.Join(input.InvocationDir, "logs"),
 		"AGENCY_NONINTERACTIVE": "1",
