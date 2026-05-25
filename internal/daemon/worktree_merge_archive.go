@@ -63,59 +63,8 @@ func (s *Server) runWorktreeArchive(
 		return archiveLogPath, nil
 	}
 
-	worktreeDir := s.store.IntegrationWorktreeDir(record.RepoID, record.WorktreeID)
-	envList := buildWorktreeMergeScriptEnv(record, repoRoot, worktreeDir, pr, profileEnv)
-	env := make(map[string]string, len(envList))
-	for _, entry := range envList {
-		key, val, ok := strings.Cut(entry, "=")
-		if ok && key != "" {
-			env[key] = val
-		}
-	}
-
-	archiveCmd := agencyJSON.Scripts.Archive.Path
-	runCtx, cancel := context.WithTimeout(ctx, agencyJSON.Scripts.Archive.Timeout)
-	defer cancel()
-	result, runErr := s.runner.Run(runCtx, archiveCmd, nil, exec.RunOpts{
-		Dir: wtMeta.TreePath,
-		Env: env,
-	})
-	if err := mergeflow.WriteMergeLog(s.fsys, archiveLogPath, archiveCmd, result, runErr); err != nil {
-		return "", errors.WrapWithDetails(
-			errors.EPersistFailed,
-			"failed to persist archive log",
-			err,
-			map[string]string{
-				"archive_log_path": archiveLogPath,
-				"hint":             "inspect archive cleanup state and retry if needed",
-			},
-		)
-	}
-	if runErr != nil {
-		if ctx.Err() != nil {
-			return "", errors.Wrap(errors.EWorktreeMergeInterrupted, "merge interrupted while running archive script", ctx.Err())
-		}
-		return "", errors.WrapWithDetails(
-			errors.EArchiveFailed,
-			"archive script failed to start",
-			runErr,
-			map[string]string{
-				"archive_log_path": archiveLogPath,
-				"command":          archiveCmd,
-			},
-		)
-	}
-	if result.ExitCode != 0 {
-		return "", errors.NewWithDetails(
-			errors.EArchiveFailed,
-			fmt.Sprintf("archive script exited %d", result.ExitCode),
-			map[string]string{
-				"archive_log_path": archiveLogPath,
-				"command":          archiveCmd,
-				"exit_code":        fmt.Sprintf("%d", result.ExitCode),
-				"hint":             "inspect archive.log, fix the archive step, and rerun worktree pr merge",
-			},
-		)
+	if err := s.runArchiveScript(ctx, record, pr, repoRoot, agencyJSON, profileEnv, archiveLogPath); err != nil {
+		return "", err
 	}
 
 	removeArgs := []string{"-C", repoRoot, "worktree", "remove", "--force", wtMeta.TreePath}
@@ -182,6 +131,68 @@ func (s *Server) runWorktreeArchive(
 	}
 
 	return archiveLogPath, nil
+}
+
+// runArchiveScript invokes the repo's configured archive script in the
+// integration worktree, persists the run to archive.log, and translates
+// failures into EArchiveFailed (or EWorktreeMergeInterrupted if ctx is
+// cancelled mid-run).
+func (s *Server) runArchiveScript(ctx context.Context, record *store.IntegrationWorktreeRecord, pr *mergePRView, repoRoot string, agencyJSON config.AgencyConfig, profileEnv map[string]string, archiveLogPath string) error {
+	worktreeDir := s.store.IntegrationWorktreeDir(record.RepoID, record.WorktreeID)
+	envList := buildWorktreeMergeScriptEnv(record, repoRoot, worktreeDir, pr, profileEnv)
+	env := make(map[string]string, len(envList))
+	for _, entry := range envList {
+		key, val, ok := strings.Cut(entry, "=")
+		if ok && key != "" {
+			env[key] = val
+		}
+	}
+
+	archiveCmd := agencyJSON.Scripts.Archive.Path
+	runCtx, cancel := context.WithTimeout(ctx, agencyJSON.Scripts.Archive.Timeout)
+	defer cancel()
+	result, runErr := s.runner.Run(runCtx, archiveCmd, nil, exec.RunOpts{
+		Dir: record.Meta.TreePath,
+		Env: env,
+	})
+	if err := mergeflow.WriteMergeLog(s.fsys, archiveLogPath, archiveCmd, result, runErr); err != nil {
+		return errors.WrapWithDetails(
+			errors.EPersistFailed,
+			"failed to persist archive log",
+			err,
+			map[string]string{
+				"archive_log_path": archiveLogPath,
+				"hint":             "inspect archive cleanup state and retry if needed",
+			},
+		)
+	}
+	if runErr != nil {
+		if ctx.Err() != nil {
+			return errors.Wrap(errors.EWorktreeMergeInterrupted, "merge interrupted while running archive script", ctx.Err())
+		}
+		return errors.WrapWithDetails(
+			errors.EArchiveFailed,
+			"archive script failed to start",
+			runErr,
+			map[string]string{
+				"archive_log_path": archiveLogPath,
+				"command":          archiveCmd,
+			},
+		)
+	}
+	if result.ExitCode != 0 {
+		return errors.NewWithDetails(
+			errors.EArchiveFailed,
+			fmt.Sprintf("archive script exited %d", result.ExitCode),
+			map[string]string{
+				"archive_log_path": archiveLogPath,
+				"command":          archiveCmd,
+				"exit_code":        fmt.Sprintf("%d", result.ExitCode),
+				"hint":             "inspect archive.log, fix the archive step, and rerun worktree pr merge",
+			},
+		)
+	}
+	return nil
 }
 
 // appendArchiveLogSection appends a delimited "=== title ===" block plus
