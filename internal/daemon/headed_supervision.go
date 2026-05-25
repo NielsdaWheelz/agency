@@ -33,7 +33,7 @@ func (s *Server) restoreExistingHeadedSupervision(ctx context.Context, repoID, i
 	if err != nil {
 		return nil, fmt.Errorf("resolve execution profile env: %w", err)
 	}
-	env := prSyncNonInteractiveEnv(profileEnv)
+	env := withNonInteractiveEnv(profileEnv)
 	if err := s.installHeadedRunnerHooks(ctx, repoID, invocationID, canonicalRunner, headedRunnerArgs, meta.SandboxPath, env); err != nil {
 		return nil, fmt.Errorf("install headed runner hooks: %w", err)
 	}

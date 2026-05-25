@@ -40,7 +40,7 @@ func (s *Server) runWorktreeMerge(
 	if err != nil {
 		return nil, err
 	}
-	env := prSyncNonInteractiveEnv(profileEnv)
+	env := withNonInteractiveEnv(profileEnv)
 
 	if err := prSyncCheckGHAuth(ctx, s.runner, repoRoot, env); err != nil {
 		return nil, err

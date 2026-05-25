@@ -60,7 +60,7 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 	}
 	req.ExecutionProfile = execCtx.Profile
 	req.CheckoutRoot = execCtx.CheckoutRoot
-	gitEnv := prSyncNonInteractiveEnv(execCtx.ProfileEnv)
+	gitEnv := withNonInteractiveEnv(execCtx.ProfileEnv)
 	req.Env = envForLaunch(execCtx.ProfileEnv, requestEnv)
 
 	fingerprint := taskStartFingerprint(repoRoot, execCtx.CheckoutRoot, req, requestEnv)

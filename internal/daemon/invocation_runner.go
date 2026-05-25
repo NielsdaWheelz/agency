@@ -93,7 +93,7 @@ func (s *Server) startRunnerResumeTurn(ctx context.Context, proc *supervisedProc
 	return s.startRunnerWithArgs(ctx, proc.repoID, &invocation.CreateResult{
 		InvocationID: proc.invocationID,
 		SandboxPath:  proc.sandboxPath,
-	}, proc.repoRoot, proc.integrationWorktreeID, req, args, resumeSessionID, prSyncNonInteractiveEnv(profileEnv), func(pid, pgid int) error {
+	}, proc.repoRoot, proc.integrationWorktreeID, req, args, resumeSessionID, withNonInteractiveEnv(profileEnv), func(pid, pgid int) error {
 		return s.claimHeadlessInvocationResume(proc.repoID, proc.invocationID, pid, pgid)
 	})
 }
@@ -118,7 +118,7 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 	stderrFile := logFiles.StderrFile
 	streamFile := logFiles.StreamFile
 
-	envOverlay := prSyncNonInteractiveEnv(req.Env)
+	envOverlay := withNonInteractiveEnv(req.Env)
 
 	var stdinReader *os.File
 	var followUpRelay relay.FollowUpRelay

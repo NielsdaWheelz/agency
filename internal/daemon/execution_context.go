@@ -6,6 +6,7 @@ import (
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/errors"
+	"github.com/NielsdaWheelz/agency/internal/exec"
 )
 
 type executionContext struct {
@@ -66,4 +67,18 @@ func (s *Server) executionProfileEnv(profile string) (map[string]string, error) 
 		return nil, err
 	}
 	return config.ExecutionProfileEnv(userCfg, profile)
+}
+
+// withNonInteractiveEnv returns base overlaid with the non-interactive env
+// vars (git/gh prompt suppression, etc.). Used wherever the daemon spawns a
+// background process that must never block on a tty.
+func withNonInteractiveEnv(base map[string]string) map[string]string {
+	env := copyStringMap(base)
+	if env == nil {
+		env = map[string]string{}
+	}
+	for k, v := range exec.NonInteractiveEnv() {
+		env[k] = v
+	}
+	return env
 }

@@ -60,7 +60,7 @@ func (s *Server) executeWorktreeRm(
 		return &rmFailure{http.StatusBadRequest, errors.CodeOr(err, errors.EExecutionProfileNotFound),
 			apiErrorMessage(err), ""}
 	}
-	worktreeEnv := prSyncNonInteractiveEnv(profileEnv)
+	worktreeEnv := withNonInteractiveEnv(profileEnv)
 
 	if !req.Force {
 		if fail := s.ensureCleanWorktreeTree(ctx, record.Meta.TreePath, worktreeEnv); fail != nil {
@@ -92,7 +92,7 @@ func (s *Server) discardUnresolvedInvocations(ctx context.Context, repoRoot, rep
 			RepoID:       repoID,
 			InvocationID: inv.InvocationID,
 			RepoRoot:     repoRoot,
-			Env:          prSyncNonInteractiveEnv(profileEnv),
+			Env:          withNonInteractiveEnv(profileEnv),
 			StopCallback: s.stopInvocationForDiscard,
 		}); err != nil {
 			return &rmFailure{http.StatusConflict, errors.CodeOr(err, errors.ELandFailed),

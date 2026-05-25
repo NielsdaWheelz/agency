@@ -107,7 +107,7 @@ func (s *Server) performWorktreeRebase(ctx context.Context, record *store.Integr
 	if err != nil {
 		return err
 	}
-	env := prSyncNonInteractiveEnv(profileEnv)
+	env := withNonInteractiveEnv(profileEnv)
 
 	clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.runner, wtMeta.TreePath, env)
 	if err != nil {

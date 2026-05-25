@@ -125,7 +125,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		return
 	}
 	req.ExecutionProfile = execCtx.Profile
-	gitEnv := prSyncNonInteractiveEnv(execCtx.ProfileEnv)
+	gitEnv := withNonInteractiveEnv(execCtx.ProfileEnv)
 	req.Env = envForLaunch(execCtx.ProfileEnv, requestEnv)
 
 	prep, ok := s.prepareControlPlaneStart(ctx, repoRoot, req.WorktreeRef, "control_plane_start_headless", func(status int, code, message, hint string) {

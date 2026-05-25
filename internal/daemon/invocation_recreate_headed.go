@@ -170,7 +170,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ERunnerNotFound), "failed to resolve runner command: "+err.Error(), "ensure runner is installed and configured", "", requestID)
 		return
 	}
-	if err := s.installHeadedRunnerHooks(ctx, record.RepoID, record.InvocationID, canonicalRunner, headedRunnerArgs, meta.SandboxPath, prSyncNonInteractiveEnv(launchEnv)); err != nil {
+	if err := s.installHeadedRunnerHooks(ctx, record.RepoID, record.InvocationID, canonicalRunner, headedRunnerArgs, meta.SandboxPath, withNonInteractiveEnv(launchEnv)); err != nil {
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to install headed runner hooks: "+err.Error(), "ensure sandbox hook files can be written", "", requestID)
 		return
 	}
@@ -240,7 +240,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		runnerArgs:            runnerArgs,
 		launchEnv:             launchEnv,
 		includeUntracked:      meta.CheckpointIncludeUntracked,
-		gitEnv:                prSyncNonInteractiveEnv(launchEnv),
+		gitEnv:                withNonInteractiveEnv(launchEnv),
 	})
 	if _, err := s.invocationEvents.Append(s.store.InvocationEventsPath(record.RepoID, record.InvocationID), record.InvocationID, "agency.headed_recreated", map[string]any{
 		"tmux_session": sessionName,

@@ -105,7 +105,7 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 		s.invocationEvents,
 	)
 
-	cp, err := applier.ApplyWithOptions(r.Context(), req.CheckpointID, checkpoint.ApplyOptions{Env: prSyncNonInteractiveEnv(profileEnv)})
+	cp, err := applier.ApplyWithOptions(r.Context(), req.CheckpointID, checkpoint.ApplyOptions{Env: withNonInteractiveEnv(profileEnv)})
 	if err != nil {
 		switch errors.GetCode(err) {
 		case errors.ECheckpointNotFound:

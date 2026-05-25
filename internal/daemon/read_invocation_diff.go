@@ -77,7 +77,7 @@ func (s *Server) buildInvocationDiff(ctx context.Context, record *resolvedInvoca
 	if err != nil {
 		return nil, err
 	}
-	gitEnv := prSyncNonInteractiveEnv(profileEnv)
+	gitEnv := withNonInteractiveEnv(profileEnv)
 
 	tipResult, err := s.runner.Run(ctx, "git", []string{"-C", sandboxPath, "rev-parse", "HEAD"}, exec.RunOpts{Env: gitEnv})
 	if err != nil {

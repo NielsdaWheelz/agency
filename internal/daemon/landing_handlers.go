@@ -197,7 +197,7 @@ func (s *Server) prepareLandingMutation(w http.ResponseWriter, r *http.Request, 
 		return nil, false
 	}
 
-	landEnv := prSyncNonInteractiveEnv(profileEnv)
+	landEnv := withNonInteractiveEnv(profileEnv)
 	discardEnv := landEnv
 	if record.Meta.ExecutionProfile != wtMeta.ExecutionProfile {
 		invocationProfileEnv, err := s.executionProfileEnv(record.Meta.ExecutionProfile)
@@ -206,7 +206,7 @@ func (s *Server) prepareLandingMutation(w http.ResponseWriter, r *http.Request, 
 			writeError(w, http.StatusBadRequest, requestID, string(code), apiErrorMessage(err), "")
 			return nil, false
 		}
-		discardEnv = prSyncNonInteractiveEnv(invocationProfileEnv)
+		discardEnv = withNonInteractiveEnv(invocationProfileEnv)
 	}
 
 	repoRoot, err := git.GetRepoRoot(r.Context(), s.runner, wtMeta.TreePath, landEnv)

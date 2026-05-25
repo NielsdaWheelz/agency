@@ -142,7 +142,7 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 	}
 	req.ExecutionProfile = execCtx.Profile
 	req.CheckoutRoot = execCtx.CheckoutRoot
-	gitEnv := prSyncNonInteractiveEnv(execCtx.ProfileEnv)
+	gitEnv := withNonInteractiveEnv(execCtx.ProfileEnv)
 	req.Env = envForLaunch(execCtx.ProfileEnv, requestEnv)
 	retryFingerprint := taskRetryFingerprint(meta, mode, runner, req, requestEnv)
 	if s.writeTaskRetryIdempotencyResult(w, requestID, meta, req.ClientRequestID, retryFingerprint, false) {

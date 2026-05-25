@@ -26,7 +26,7 @@ func TestPRSyncDirtyStatusIgnoresAgencyDirectory(t *testing.T) {
 		ExitCode: 0,
 	}
 
-	clean, status, err := prSyncDirtyStatus(context.Background(), fakeRunner, "/repo", prSyncNonInteractiveEnv(nil))
+	clean, status, err := prSyncDirtyStatus(context.Background(), fakeRunner, "/repo", withNonInteractiveEnv(nil))
 	require.NoError(t, err)
 	assert.False(t, clean)
 	assert.Equal(t, " M README.md", status)
@@ -36,7 +36,7 @@ func TestPRSyncDirtyStatusIgnoresAgencyDirectory(t *testing.T) {
 		ExitCode: 0,
 	}
 
-	clean, status, err = prSyncDirtyStatus(context.Background(), fakeRunner, "/repo", prSyncNonInteractiveEnv(nil))
+	clean, status, err = prSyncDirtyStatus(context.Background(), fakeRunner, "/repo", withNonInteractiveEnv(nil))
 	require.NoError(t, err)
 	assert.True(t, clean)
 	assert.Empty(t, status)

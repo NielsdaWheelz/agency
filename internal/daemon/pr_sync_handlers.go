@@ -45,7 +45,7 @@ func (s *Server) runPRSync(
 	if err != nil {
 		return nil, err
 	}
-	env := prSyncNonInteractiveEnv(profileEnv)
+	env := withNonInteractiveEnv(profileEnv)
 
 	clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.runner, wtMeta.TreePath, env)
 	if err != nil {
@@ -563,13 +563,3 @@ func prSyncPrepareBody(
 	return bodyPath, nil
 }
 
-func prSyncNonInteractiveEnv(profileEnv map[string]string) map[string]string {
-	env := copyStringMap(profileEnv)
-	if env == nil {
-		env = map[string]string{}
-	}
-	for k, v := range exec.NonInteractiveEnv() {
-		env[k] = v
-	}
-	return env
-}

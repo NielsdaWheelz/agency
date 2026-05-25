@@ -124,7 +124,7 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 		BaseBranch:         req.BaseBranch,
 		CheckoutRoot:       execCtx.CheckoutRoot,
 		ExecutionProfile:   execCtx.Profile,
-		Env:                prSyncNonInteractiveEnv(execCtx.ProfileEnv),
+		Env:                withNonInteractiveEnv(execCtx.ProfileEnv),
 		IdempotencyKey:     req.IdempotencyKey,
 		RequestFingerprint: fingerprint,
 	})

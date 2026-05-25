@@ -122,7 +122,7 @@ func (s *Server) runWorktreeArchive(
 	removeCtx, cancel := context.WithTimeout(ctx, worktreeMergeArchiveRemoveTimeout)
 	defer cancel()
 
-	removeResult, removeRunErr := s.runner.Run(removeCtx, "git", removeArgs, exec.RunOpts{Env: prSyncNonInteractiveEnv(profileEnv)})
+	removeResult, removeRunErr := s.runner.Run(removeCtx, "git", removeArgs, exec.RunOpts{Env: withNonInteractiveEnv(profileEnv)})
 	removeCmd := "git " + strings.Join(removeArgs, " ")
 	appendArchiveSection := func(title string, result exec.CmdResult, runErr error) {
 		logFile, err := os.OpenFile(archiveLogPath, os.O_WRONLY|os.O_APPEND, 0o600)
