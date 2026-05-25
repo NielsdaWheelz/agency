@@ -43,7 +43,6 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 		writeErr(fail.status, fail.code, fail.msg, fail.hint, req.ClientRequestID)
 		return
 	}
-	headless := req.Mode == string(store.RunnerModeHeadless)
 
 	repoRoot, repoIdentity, ok := s.resolveControlPlaneRepoRoot(ctx, req.RepoRoot, func(status int, code, message, hint string) {
 		writeErr(status, errors.Code(code), message, hint, req.ClientRequestID)
@@ -151,90 +150,18 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	failTaskStart := func(phase string, fail startFailure) {
-		s.markTaskFailed(repoIdentity.RepoID, taskID, phase, fail)
+	finalMeta, phase, fail := s.executeTaskStartAfterCreated(ctx, req, repoRoot, repoIdentity.RepoID, taskID, fingerprint, execCtx, gitEnv, requestEnv)
+	if fail != nil {
+		s.markTaskFailed(repoIdentity.RepoID, taskID, phase, *fail)
 		latestMeta := taskMeta
 		if latest, err := s.store.ReadTaskMeta(repoIdentity.RepoID, taskID); err == nil {
 			latestMeta = latest
 		}
 		s.writeTaskStartError(w, fail.status, requestID, fail.code, fail.msg, fail.hint, req.ClientRequestID, latestMeta)
-	}
-
-	wtSvc := integrationworktree.NewService(s.store, s.runner, s.fsys, s.clock)
-	wtCreate, err := wtSvc.Create(ctx, integrationworktree.CreateOpts{
-		Name:             req.Name,
-		RepoRoot:         repoRoot,
-		RepoID:           repoIdentity.RepoID,
-		BaseBranch:       req.BaseBranch,
-		CheckoutRoot:     execCtx.CheckoutRoot,
-		ExecutionProfile: execCtx.Profile,
-		Env:              gitEnv,
-	})
-	if err != nil {
-		failTaskStart("worktree_create", startFailureFromError(http.StatusInternalServerError, errors.EWorktreeCreateFailed, err, ""))
-		return
-	}
-	wtMeta, err := s.store.ReadIntegrationWorktreeMeta(repoIdentity.RepoID, wtCreate.WorktreeID)
-	if err != nil {
-		failTaskStart("worktree_read", startFailureFromError(http.StatusInternalServerError, errors.EWorktreeBroken, err, ""))
-		return
-	}
-	if err := s.store.UpdateIntegrationWorktreeMeta(repoIdentity.RepoID, wtCreate.WorktreeID, func(meta *store.IntegrationWorktreeMeta) {
-		meta.TaskID = taskID
-	}); err != nil {
-		failTaskStart("worktree_task_link", startFailureFromError(http.StatusInternalServerError, errors.EMetaWriteFailed, err, ""))
-		return
-	}
-	if err := s.updateTaskWorktree(repoIdentity.RepoID, taskID, wtMeta, wtCreate); err != nil {
-		failTaskStart("task_worktree_update", startFailureFromError(http.StatusInternalServerError, errors.EMetaWriteFailed, err, ""))
-		return
-	}
-	if err := s.appendTaskEvent(repoIdentity.RepoID, taskID, "agency.task_worktree_created", map[string]any{
-		"worktree_id":   wtCreate.WorktreeID,
-		"worktree_name": req.Name,
-		"branch":        wtCreate.Branch,
-		"tree_path":     wtCreate.TreePath,
-	}); err != nil {
-		failTaskStart("task_event_worktree_created", newStartFailure(http.StatusInternalServerError, errors.EPersistFailed, "failed to append task event: "+err.Error(), ""))
 		return
 	}
 
-	wtRecord := &store.IntegrationWorktreeRecord{
-		WorktreeID:  wtCreate.WorktreeID,
-		RepoID:      repoIdentity.RepoID,
-		Name:        req.Name,
-		Meta:        wtMeta,
-		WorktreeDir: s.store.IntegrationWorktreeDir(repoIdentity.RepoID, wtCreate.WorktreeID),
-	}
-
-	var invMeta *store.InvocationMeta
-	envKeys := sortedEnvKeys(requestEnv)
-	if headless {
-		invMeta, err = s.startTaskHeadlessInvocation(ctx, repoRoot, repoIdentity.RepoID, taskID, fingerprint, wtRecord, req, envKeys, gitEnv)
-	} else {
-		invMeta, err = s.startTaskHeadedInvocation(ctx, repoRoot, repoIdentity.RepoID, taskID, fingerprint, wtRecord, req, envKeys, gitEnv)
-	}
-	if err != nil {
-		failTaskStart("invocation_start", asStartFailure(err))
-		return
-	}
-
-	if err := s.appendTaskEvent(repoIdentity.RepoID, taskID, "agency.task_running", map[string]any{
-		"invocation_id": invMeta.InvocationID,
-		"worktree_id":   wtCreate.WorktreeID,
-	}); err != nil {
-		s.abortStartedTaskInvocation(repoIdentity.RepoID, invMeta, "task_event_running_failed")
-		failTaskStart("task_event_running", newStartFailure(http.StatusInternalServerError, errors.EPersistFailed, "failed to append task event: "+err.Error(), ""))
-		return
-	}
-	taskMeta, err = s.markTaskRunning(repoIdentity.RepoID, taskID, invMeta)
-	if err != nil {
-		s.abortStartedTaskInvocation(repoIdentity.RepoID, invMeta, "task_running_update_failed")
-		failTaskStart("task_running_update", startFailureFromError(http.StatusInternalServerError, errors.EMetaWriteFailed, err, ""))
-		return
-	}
-
-	s.writeTaskStartSuccess(w, requestID, req.ClientRequestID, taskMeta, false)
+	s.writeTaskStartSuccess(w, requestID, req.ClientRequestID, finalMeta, false)
 }
 
 func normalizeAndValidateTaskStartRequest(req *TaskStartRequest) *startFailure {
