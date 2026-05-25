@@ -73,177 +73,102 @@ func loadAgencyConfigPath(filesystem fs.FS, path string) (AgencyConfig, error) {
 // This catches type mismatches that Go's json.Unmarshal would silently accept or default.
 func parseWithStrictTypes(raw map[string]json.RawMessage) (AgencyConfig, error) {
 	var cfg AgencyConfig
-	allowedKeys := map[string]bool{
-		"version":         true,
-		"scripts":         true,
-		"runner_defaults": true,
-		"execution":       true,
-	}
-	for key := range raw {
-		if !allowedKeys[key] {
-			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "unknown field: "+key)
-		}
+	const code = errors.EInvalidAgencyJSON
+	if err := rejectUnknownKeys(raw, "", code, map[string]bool{
+		"version": true, "scripts": true, "runner_defaults": true, "execution": true,
+	}); err != nil {
+		return AgencyConfig{}, err
 	}
 
-	// Parse version - required, must be integer
-	if rawVersion, ok := raw["version"]; ok {
-		if isJSONNull(rawVersion) {
-			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "version must be an integer")
-		}
-		var version int
-		if err := json.Unmarshal(rawVersion, &version); err != nil {
-			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "version must be an integer")
-		}
-		cfg.Version = version
+	if err := parseStrictInt(raw, "version", "version", code, &cfg.Version); err != nil {
+		return AgencyConfig{}, err
 	}
 
-	// Parse scripts - required, must be object
 	if rawScripts, ok := raw["scripts"]; ok {
-		// First check if it's an object
-		var scriptsMap map[string]json.RawMessage
-		if err := json.Unmarshal(rawScripts, &scriptsMap); err != nil {
-			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "scripts must be an object")
+		scriptsMap, err := parseStrictObject(rawScripts, "scripts", code)
+		if err != nil {
+			return AgencyConfig{}, err
 		}
-		if scriptsMap == nil {
-			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "scripts must be an object")
+		if err := rejectUnknownKeys(scriptsMap, "scripts", code, map[string]bool{
+			"setup": true, "verify": true, "archive": true,
+		}); err != nil {
+			return AgencyConfig{}, err
 		}
-		allowedScriptKeys := map[string]bool{
-			"setup":   true,
-			"verify":  true,
-			"archive": true,
+		if err := parseScriptInto(scriptsMap, "setup", "scripts.setup", DefaultSetupTimeout, &cfg.Scripts.Setup); err != nil {
+			return AgencyConfig{}, err
 		}
-		for key := range scriptsMap {
-			if !allowedScriptKeys[key] {
-				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "scripts contains unknown field: "+key)
-			}
+		if err := parseScriptInto(scriptsMap, "verify", "scripts.verify", DefaultVerifyTimeout, &cfg.Scripts.Verify); err != nil {
+			return AgencyConfig{}, err
 		}
-
-		// Parse scripts.setup
-		if rawSetup, ok := scriptsMap["setup"]; ok {
-			scriptCfg, err := parseScriptConfig(rawSetup, "scripts.setup", DefaultSetupTimeout)
-			if err != nil {
-				return AgencyConfig{}, err
-			}
-			cfg.Scripts.Setup = scriptCfg
-		}
-
-		// Parse scripts.verify
-		if rawVerify, ok := scriptsMap["verify"]; ok {
-			scriptCfg, err := parseScriptConfig(rawVerify, "scripts.verify", DefaultVerifyTimeout)
-			if err != nil {
-				return AgencyConfig{}, err
-			}
-			cfg.Scripts.Verify = scriptCfg
-		}
-
-		// Parse scripts.archive
-		if rawArchive, ok := scriptsMap["archive"]; ok {
-			scriptCfg, err := parseScriptConfig(rawArchive, "scripts.archive", DefaultArchiveTimeout)
-			if err != nil {
-				return AgencyConfig{}, err
-			}
-			cfg.Scripts.Archive = scriptCfg
+		if err := parseScriptInto(scriptsMap, "archive", "scripts.archive", DefaultArchiveTimeout, &cfg.Scripts.Archive); err != nil {
+			return AgencyConfig{}, err
 		}
 	}
 
 	if rawRunnerDefaults, ok := raw["runner_defaults"]; ok {
-		var defaultsMap map[string]json.RawMessage
-		if err := json.Unmarshal(rawRunnerDefaults, &defaultsMap); err != nil {
-			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults must be an object")
+		defaultsMap, err := parseStrictObject(rawRunnerDefaults, "runner_defaults", code)
+		if err != nil {
+			return AgencyConfig{}, err
 		}
-		if defaultsMap == nil {
-			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults must be an object")
-		}
-
 		cfg.RunnerDefaults = make(map[string]RunnerDefaults, len(defaultsMap))
 		for runnerName, rawRunnerDefaults := range defaultsMap {
-			var runnerDefaultsMap map[string]json.RawMessage
-			if err := json.Unmarshal(rawRunnerDefaults, &runnerDefaultsMap); err != nil {
-				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+" must be an object")
+			path := "runner_defaults." + runnerName
+			runnerMap, err := parseStrictObject(rawRunnerDefaults, path, code)
+			if err != nil {
+				return AgencyConfig{}, err
 			}
-			if runnerDefaultsMap == nil {
-				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+" must be an object")
+			if _, hasPermissionMode := runnerMap["permission_mode"]; hasPermissionMode {
+				return AgencyConfig{}, errors.New(code, path+".permission_mode is not supported in agency.json")
 			}
-
-			allowedRunnerDefaultsKeys := map[string]bool{
-				"model":  true,
-				"effort": true,
+			if err := rejectUnknownKeys(runnerMap, path, code, map[string]bool{
+				"model": true, "effort": true,
+			}); err != nil {
+				return AgencyConfig{}, err
 			}
-			for key := range runnerDefaultsMap {
-				if key == "permission_mode" {
-					return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+".permission_mode is not supported in agency.json")
-				}
-				if !allowedRunnerDefaultsKeys[key] {
-					return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+" contains unknown field: "+key)
-				}
+			var rd RunnerDefaults
+			if err := parseStrictString(runnerMap, "model", path+".model", code, &rd.Model); err != nil {
+				return AgencyConfig{}, err
 			}
-
-			var runnerDefaults RunnerDefaults
-			if rawModel, ok := runnerDefaultsMap["model"]; ok {
-				if isJSONNull(rawModel) {
-					return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+".model must be a string")
-				}
-				var model string
-				if err := json.Unmarshal(rawModel, &model); err != nil {
-					return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+".model must be a string")
-				}
-				runnerDefaults.Model = model
+			if err := parseStrictString(runnerMap, "effort", path+".effort", code, &rd.Effort); err != nil {
+				return AgencyConfig{}, err
 			}
-			if rawEffort, ok := runnerDefaultsMap["effort"]; ok {
-				if isJSONNull(rawEffort) {
-					return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+".effort must be a string")
-				}
-				var effort string
-				if err := json.Unmarshal(rawEffort, &effort); err != nil {
-					return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "runner_defaults."+runnerName+".effort must be a string")
-				}
-				runnerDefaults.Effort = effort
-			}
-
-			cfg.RunnerDefaults[runnerName] = runnerDefaults
+			cfg.RunnerDefaults[runnerName] = rd
 		}
 	}
 
 	if rawExecution, ok := raw["execution"]; ok {
-		var executionMap map[string]json.RawMessage
-		if err := json.Unmarshal(rawExecution, &executionMap); err != nil {
-			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "execution must be an object")
+		executionMap, err := parseStrictObject(rawExecution, "execution", code)
+		if err != nil {
+			return AgencyConfig{}, err
 		}
-		if executionMap == nil {
-			return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "execution must be an object")
+		if err := rejectUnknownKeys(executionMap, "execution", code, map[string]bool{
+			"profile": true, "checkout_root": true,
+		}); err != nil {
+			return AgencyConfig{}, err
 		}
-		allowedExecutionKeys := map[string]bool{
-			"profile":       true,
-			"checkout_root": true,
+		if err := parseStrictString(executionMap, "profile", "execution.profile", code, &cfg.Execution.Profile); err != nil {
+			return AgencyConfig{}, err
 		}
-		for key := range executionMap {
-			if !allowedExecutionKeys[key] {
-				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "execution contains unknown field: "+key)
-			}
-		}
-		if rawProfile, ok := executionMap["profile"]; ok {
-			if isJSONNull(rawProfile) {
-				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "execution.profile must be a string")
-			}
-			var profile string
-			if err := json.Unmarshal(rawProfile, &profile); err != nil {
-				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "execution.profile must be a string")
-			}
-			cfg.Execution.Profile = profile
-		}
-		if rawCheckoutRoot, ok := executionMap["checkout_root"]; ok {
-			if isJSONNull(rawCheckoutRoot) {
-				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "execution.checkout_root must be a string")
-			}
-			var checkoutRoot string
-			if err := json.Unmarshal(rawCheckoutRoot, &checkoutRoot); err != nil {
-				return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "execution.checkout_root must be a string")
-			}
-			cfg.Execution.CheckoutRoot = checkoutRoot
+		if err := parseStrictString(executionMap, "checkout_root", "execution.checkout_root", code, &cfg.Execution.CheckoutRoot); err != nil {
+			return AgencyConfig{}, err
 		}
 	}
 
 	return cfg, nil
+}
+
+// parseScriptInto reads a script entry from raw[key] and stores the result in dst.
+func parseScriptInto(raw map[string]json.RawMessage, key, fieldPath string, defaultTimeout time.Duration, dst *ScriptConfig) error {
+	rawVal, ok := raw[key]
+	if !ok {
+		return nil
+	}
+	cfg, err := parseScriptConfig(rawVal, fieldPath, defaultTimeout)
+	if err != nil {
+		return err
+	}
+	*dst = cfg
+	return nil
 }
 
 func isJSONNull(raw json.RawMessage) bool {

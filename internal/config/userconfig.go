@@ -88,249 +88,103 @@ func LoadUserConfig(filesystem fs.FS, configDir string) (UserConfig, error) {
 
 func parseUserConfigStrict(raw map[string]json.RawMessage) (UserConfig, error) {
 	var cfg UserConfig
-	allowedKeys := map[string]bool{
-		"version":            true,
-		"defaults":           true,
-		"runner_defaults":    true,
-		"runners":            true,
-		"editors":            true,
-		"execution_profiles": true,
-	}
-	for key := range raw {
-		if !allowedKeys[key] {
-			return UserConfig{}, errors.New(errors.EInvalidUserConfig, "unknown field: "+key)
-		}
+	const code = errors.EInvalidUserConfig
+	if err := rejectUnknownKeys(raw, "", code, map[string]bool{
+		"version": true, "defaults": true, "runner_defaults": true,
+		"runners": true, "editors": true, "execution_profiles": true,
+	}); err != nil {
+		return UserConfig{}, err
 	}
 
-	// Parse version
-	if rawVersion, ok := raw["version"]; ok {
-		if isJSONNull(rawVersion) {
-			return UserConfig{}, errors.New(errors.EInvalidUserConfig, "version must be an integer")
-		}
-		var version int
-		if err := json.Unmarshal(rawVersion, &version); err != nil {
-			return UserConfig{}, errors.New(errors.EInvalidUserConfig, "version must be an integer")
-		}
-		cfg.Version = version
+	if err := parseStrictInt(raw, "version", "version", code, &cfg.Version); err != nil {
+		return UserConfig{}, err
 	}
 
-	// Parse defaults
 	if rawDefaults, ok := raw["defaults"]; ok {
-		var defaultsMap map[string]json.RawMessage
-		if err := json.Unmarshal(rawDefaults, &defaultsMap); err != nil {
-			return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults must be an object")
+		defaultsMap, err := parseStrictObject(rawDefaults, "defaults", code)
+		if err != nil {
+			return UserConfig{}, err
 		}
-		if defaultsMap == nil {
-			return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults must be an object")
+		if err := rejectUnknownKeys(defaultsMap, "defaults", code, map[string]bool{
+			"runner": true, "editor": true, "base_branch": true, "execution_profile": true,
+		}); err != nil {
+			return UserConfig{}, err
 		}
-		allowedDefaultKeys := map[string]bool{
-			"runner":            true,
-			"editor":            true,
-			"base_branch":       true,
-			"execution_profile": true,
+		if err := parseStrictString(defaultsMap, "runner", "defaults.runner", code, &cfg.Defaults.Runner); err != nil {
+			return UserConfig{}, err
 		}
-		for key := range defaultsMap {
-			if !allowedDefaultKeys[key] {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults contains unknown field: "+key)
-			}
+		if err := parseStrictString(defaultsMap, "editor", "defaults.editor", code, &cfg.Defaults.Editor); err != nil {
+			return UserConfig{}, err
 		}
-		if rawRunner, ok := defaultsMap["runner"]; ok {
-			if isJSONNull(rawRunner) {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults.runner must be a string")
-			}
-			var runner string
-			if err := json.Unmarshal(rawRunner, &runner); err != nil {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults.runner must be a string")
-			}
-			cfg.Defaults.Runner = runner
+		if err := parseStrictString(defaultsMap, "base_branch", "defaults.base_branch", code, &cfg.Defaults.BaseBranch); err != nil {
+			return UserConfig{}, err
 		}
-		if rawEditor, ok := defaultsMap["editor"]; ok {
-			if isJSONNull(rawEditor) {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults.editor must be a string")
-			}
-			var editor string
-			if err := json.Unmarshal(rawEditor, &editor); err != nil {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults.editor must be a string")
-			}
-			cfg.Defaults.Editor = editor
-		}
-		if rawBaseBranch, ok := defaultsMap["base_branch"]; ok {
-			if isJSONNull(rawBaseBranch) {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults.base_branch must be a string")
-			}
-			var baseBranch string
-			if err := json.Unmarshal(rawBaseBranch, &baseBranch); err != nil {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults.base_branch must be a string")
-			}
-			cfg.Defaults.BaseBranch = baseBranch
-		}
-		if rawExecutionProfile, ok := defaultsMap["execution_profile"]; ok {
-			if isJSONNull(rawExecutionProfile) {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults.execution_profile must be a string")
-			}
-			var executionProfile string
-			if err := json.Unmarshal(rawExecutionProfile, &executionProfile); err != nil {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "defaults.execution_profile must be a string")
-			}
-			cfg.Defaults.ExecutionProfile = executionProfile
+		if err := parseStrictString(defaultsMap, "execution_profile", "defaults.execution_profile", code, &cfg.Defaults.ExecutionProfile); err != nil {
+			return UserConfig{}, err
 		}
 	}
 
 	if rawRunnerDefaults, ok := raw["runner_defaults"]; ok {
-		var defaultsMap map[string]json.RawMessage
-		if err := json.Unmarshal(rawRunnerDefaults, &defaultsMap); err != nil {
-			return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runner_defaults must be an object")
+		defaultsMap, err := parseStrictObject(rawRunnerDefaults, "runner_defaults", code)
+		if err != nil {
+			return UserConfig{}, err
 		}
-		if defaultsMap == nil {
-			return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runner_defaults must be an object")
-		}
-
 		cfg.RunnerDefaults = make(map[string]RunnerDefaults, len(defaultsMap))
 		for runnerName, rawRunnerDefaults := range defaultsMap {
-			var runnerDefaultsMap map[string]json.RawMessage
-			if err := json.Unmarshal(rawRunnerDefaults, &runnerDefaultsMap); err != nil {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runner_defaults."+runnerName+" must be an object")
+			path := "runner_defaults." + runnerName
+			runnerMap, err := parseStrictObject(rawRunnerDefaults, path, code)
+			if err != nil {
+				return UserConfig{}, err
 			}
-			if runnerDefaultsMap == nil {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runner_defaults."+runnerName+" must be an object")
+			if err := rejectUnknownKeys(runnerMap, path, code, map[string]bool{
+				"model": true, "effort": true, "permission_mode": true,
+			}); err != nil {
+				return UserConfig{}, err
 			}
-
-			allowedRunnerDefaultsKeys := map[string]bool{
-				"model":           true,
-				"effort":          true,
-				"permission_mode": true,
+			var rd RunnerDefaults
+			if err := parseStrictString(runnerMap, "model", path+".model", code, &rd.Model); err != nil {
+				return UserConfig{}, err
 			}
-			for key := range runnerDefaultsMap {
-				if !allowedRunnerDefaultsKeys[key] {
-					return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runner_defaults."+runnerName+" contains unknown field: "+key)
-				}
+			if err := parseStrictString(runnerMap, "effort", path+".effort", code, &rd.Effort); err != nil {
+				return UserConfig{}, err
 			}
-
-			var runnerDefaults RunnerDefaults
-			if rawModel, ok := runnerDefaultsMap["model"]; ok {
-				if isJSONNull(rawModel) {
-					return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runner_defaults."+runnerName+".model must be a string")
-				}
-				var model string
-				if err := json.Unmarshal(rawModel, &model); err != nil {
-					return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runner_defaults."+runnerName+".model must be a string")
-				}
-				runnerDefaults.Model = model
+			if err := parseStrictString(runnerMap, "permission_mode", path+".permission_mode", code, &rd.PermissionMode); err != nil {
+				return UserConfig{}, err
 			}
-			if rawEffort, ok := runnerDefaultsMap["effort"]; ok {
-				if isJSONNull(rawEffort) {
-					return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runner_defaults."+runnerName+".effort must be a string")
-				}
-				var effort string
-				if err := json.Unmarshal(rawEffort, &effort); err != nil {
-					return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runner_defaults."+runnerName+".effort must be a string")
-				}
-				runnerDefaults.Effort = effort
-			}
-			if rawPermissionMode, ok := runnerDefaultsMap["permission_mode"]; ok {
-				if isJSONNull(rawPermissionMode) {
-					return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runner_defaults."+runnerName+".permission_mode must be a string")
-				}
-				var permissionMode string
-				if err := json.Unmarshal(rawPermissionMode, &permissionMode); err != nil {
-					return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runner_defaults."+runnerName+".permission_mode must be a string")
-				}
-				runnerDefaults.PermissionMode = permissionMode
-			}
-
-			cfg.RunnerDefaults[runnerName] = runnerDefaults
+			cfg.RunnerDefaults[runnerName] = rd
 		}
 	}
 
-	// Parse runners
-	if rawRunners, ok := raw["runners"]; ok {
-		var runnersMap map[string]json.RawMessage
-		if err := json.Unmarshal(rawRunners, &runnersMap); err != nil {
-			return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runners must be an object")
-		}
-		if runnersMap == nil {
-			return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runners must be an object")
-		}
-		cfg.Runners = make(map[string]string)
-		for key, rawVal := range runnersMap {
-			if isJSONNull(rawVal) {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runners."+key+" must be a string")
-			}
-			var val string
-			if err := json.Unmarshal(rawVal, &val); err != nil {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "runners."+key+" must be a string")
-			}
-			cfg.Runners[key] = val
-		}
+	if err := parseStrictStringMap(raw, "runners", "runners", code, &cfg.Runners); err != nil {
+		return UserConfig{}, err
 	}
-
-	// Parse editors
-	if rawEditors, ok := raw["editors"]; ok {
-		var editorsMap map[string]json.RawMessage
-		if err := json.Unmarshal(rawEditors, &editorsMap); err != nil {
-			return UserConfig{}, errors.New(errors.EInvalidUserConfig, "editors must be an object")
-		}
-		if editorsMap == nil {
-			return UserConfig{}, errors.New(errors.EInvalidUserConfig, "editors must be an object")
-		}
-		cfg.Editors = make(map[string]string)
-		for key, rawVal := range editorsMap {
-			if isJSONNull(rawVal) {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "editors."+key+" must be a string")
-			}
-			var val string
-			if err := json.Unmarshal(rawVal, &val); err != nil {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "editors."+key+" must be a string")
-			}
-			cfg.Editors[key] = val
-		}
+	if err := parseStrictStringMap(raw, "editors", "editors", code, &cfg.Editors); err != nil {
+		return UserConfig{}, err
 	}
 
 	if rawProfiles, ok := raw["execution_profiles"]; ok {
-		var profilesMap map[string]json.RawMessage
-		if err := json.Unmarshal(rawProfiles, &profilesMap); err != nil {
-			return UserConfig{}, errors.New(errors.EInvalidUserConfig, "execution_profiles must be an object")
-		}
-		if profilesMap == nil {
-			return UserConfig{}, errors.New(errors.EInvalidUserConfig, "execution_profiles must be an object")
+		profilesMap, err := parseStrictObject(rawProfiles, "execution_profiles", code)
+		if err != nil {
+			return UserConfig{}, err
 		}
 		cfg.ExecutionProfiles = make(map[string]ExecutionProfile, len(profilesMap))
 		for name, rawProfile := range profilesMap {
-			var profileMap map[string]json.RawMessage
-			if err := json.Unmarshal(rawProfile, &profileMap); err != nil {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "execution_profiles."+name+" must be an object")
+			path := "execution_profiles." + name
+			profileMap, err := parseStrictObject(rawProfile, path, code)
+			if err != nil {
+				return UserConfig{}, err
 			}
-			if profileMap == nil {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "execution_profiles."+name+" must be an object")
+			if err := rejectUnknownKeys(profileMap, path, code, map[string]bool{"env": true}); err != nil {
+				return UserConfig{}, err
 			}
-			for key := range profileMap {
-				if key != "env" {
-					return UserConfig{}, errors.New(errors.EInvalidUserConfig, "execution_profiles."+name+" contains unknown field: "+key)
-				}
+			if _, ok := profileMap["env"]; !ok {
+				return UserConfig{}, errors.New(code, path+".env is required")
 			}
-			rawEnv, ok := profileMap["env"]
-			if !ok {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "execution_profiles."+name+".env is required")
+			var env map[string]string
+			if err := parseStrictStringMap(profileMap, "env", path+".env", code, &env); err != nil {
+				return UserConfig{}, err
 			}
-			var envMap map[string]json.RawMessage
-			if err := json.Unmarshal(rawEnv, &envMap); err != nil {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "execution_profiles."+name+".env must be an object")
-			}
-			if envMap == nil {
-				return UserConfig{}, errors.New(errors.EInvalidUserConfig, "execution_profiles."+name+".env must be an object")
-			}
-			profile := ExecutionProfile{Env: make(map[string]string, len(envMap))}
-			for key, rawValue := range envMap {
-				if isJSONNull(rawValue) {
-					return UserConfig{}, errors.New(errors.EInvalidUserConfig, "execution_profiles."+name+".env."+key+" must be a string")
-				}
-				var value string
-				if err := json.Unmarshal(rawValue, &value); err != nil {
-					return UserConfig{}, errors.New(errors.EInvalidUserConfig, "execution_profiles."+name+".env."+key+" must be a string")
-				}
-				profile.Env[key] = value
-			}
-			cfg.ExecutionProfiles[name] = profile
+			cfg.ExecutionProfiles[name] = ExecutionProfile{Env: env}
 		}
 	}
 
