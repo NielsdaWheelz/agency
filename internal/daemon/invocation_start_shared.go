@@ -78,6 +78,37 @@ func asStartFailure(err error) startFailure {
 	return startFailureFromError(http.StatusInternalServerError, errors.EInternal, err, "")
 }
 
+// evaluateIdempotentStartRecord inspects an existing invocation meta found by
+// a client_request_id lookup. It returns nil if the record represents a valid
+// completed or post-claim state suitable for idempotent reuse, or a typed
+// startFailure describing why the record cannot be reused.
+func evaluateIdempotentStartRecord(meta *store.InvocationMeta) *startFailure {
+	switch meta.Status {
+	case store.InvocationStatusRunning, store.InvocationStatusStopping, store.InvocationStatusFinished:
+		return nil
+	case store.InvocationStatusStarting:
+		f := newStartFailure(http.StatusConflict, errors.EInvocationStartFailed,
+			"client_request_id was already accepted but invocation start has not reached running state",
+			"inspect invocation state before retrying")
+		return &f
+	case store.InvocationStatusFailed:
+		if !directStartFailedBeforeClaim(meta) {
+			return nil
+		}
+		message := strings.TrimSpace(meta.FailureReason)
+		if message == "" {
+			message = "invocation start previously failed"
+		}
+		f := newStartFailure(http.StatusConflict, errors.EInvocationStartFailed, message, "inspect invocation state before retrying")
+		return &f
+	default:
+		f := newStartFailure(http.StatusConflict, errors.EStoreCorrupt,
+			"client_request_id record has unsupported invocation status",
+			"inspect invocation state before retrying")
+		return &f
+	}
+}
+
 func safeIntPtr(p *int) int {
 	if p == nil {
 		return 0

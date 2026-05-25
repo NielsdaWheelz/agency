@@ -95,22 +95,8 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 			writeErr(http.StatusConflict, string(errors.EIdempotencyConflict), "client_request_id was already used for a different headless invocation start request", "retry with the original request or choose a new client_request_id", req.ClientRequestID)
 			return
 		}
-		switch record.Meta.Status {
-		case store.InvocationStatusRunning, store.InvocationStatusStopping, store.InvocationStatusFinished:
-		case store.InvocationStatusStarting:
-			writeErr(http.StatusConflict, string(errors.EInvocationStartFailed), "client_request_id was already accepted but invocation start has not reached running state", "inspect invocation state before retrying", req.ClientRequestID)
-			return
-		case store.InvocationStatusFailed:
-			if directStartFailedBeforeClaim(record.Meta) {
-				message := strings.TrimSpace(record.Meta.FailureReason)
-				if message == "" {
-					message = "invocation start previously failed"
-				}
-				writeErr(http.StatusConflict, string(errors.EInvocationStartFailed), message, "inspect invocation state before retrying", req.ClientRequestID)
-				return
-			}
-		default:
-			writeErr(http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id record has unsupported invocation status", "inspect invocation state before retrying", req.ClientRequestID)
+		if fail := evaluateIdempotentStartRecord(record.Meta); fail != nil {
+			writeErr(fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID)
 			return
 		}
 		s.recordIdempotency(repoIdentity.RepoID, req.ClientRequestID, record.InvocationID, record.Meta.RequestFingerprint)
@@ -143,23 +129,15 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 			return
 		}
 		meta, err := s.store.ReadInvocationMeta(repoIdentity.RepoID, entry.invocationID)
-		if err == nil {
-			if meta.Status == store.InvocationStatusStarting {
-				writeErr(http.StatusConflict, string(errors.EInvocationStartFailed), "client_request_id was already accepted but invocation start has not reached running state", "inspect invocation state before retrying", req.ClientRequestID)
-				return
-			}
-			if meta.Status == store.InvocationStatusFailed && directStartFailedBeforeClaim(meta) {
-				message := strings.TrimSpace(meta.FailureReason)
-				if message == "" {
-					message = "invocation start previously failed"
-				}
-				writeErr(http.StatusConflict, string(errors.EInvocationStartFailed), message, "inspect invocation state before retrying", req.ClientRequestID)
-				return
-			}
-			s.writeControlPlaneSuccess(w, entry.invocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
+		if err != nil {
+			writeErr(http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id was already accepted but invocation metadata is unreadable: "+err.Error(), "inspect invocation state before retrying", req.ClientRequestID)
 			return
 		}
-		writeErr(http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id was already accepted but invocation metadata is unreadable: "+err.Error(), "inspect invocation state before retrying", req.ClientRequestID)
+		if fail := evaluateIdempotentStartRecord(meta); fail != nil {
+			writeErr(fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID)
+			return
+		}
+		s.writeControlPlaneSuccess(w, entry.invocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
 		return
 	}
 	if record, exists, conflict, err := s.findInvocationByClientRequestID(repoIdentity.RepoID, req.ClientRequestID, fingerprint); err != nil {
@@ -174,22 +152,8 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 			writeErr(http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id record exists but invocation metadata is unreadable", "inspect invocation state before retrying", req.ClientRequestID)
 			return
 		}
-		switch record.Meta.Status {
-		case store.InvocationStatusRunning, store.InvocationStatusStopping, store.InvocationStatusFinished:
-		case store.InvocationStatusStarting:
-			writeErr(http.StatusConflict, string(errors.EInvocationStartFailed), "client_request_id was already accepted but invocation start has not reached running state", "inspect invocation state before retrying", req.ClientRequestID)
-			return
-		case store.InvocationStatusFailed:
-			if directStartFailedBeforeClaim(record.Meta) {
-				message := strings.TrimSpace(record.Meta.FailureReason)
-				if message == "" {
-					message = "invocation start previously failed"
-				}
-				writeErr(http.StatusConflict, string(errors.EInvocationStartFailed), message, "inspect invocation state before retrying", req.ClientRequestID)
-				return
-			}
-		default:
-			writeErr(http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id record has unsupported invocation status", "inspect invocation state before retrying", req.ClientRequestID)
+		if fail := evaluateIdempotentStartRecord(record.Meta); fail != nil {
+			writeErr(fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID)
 			return
 		}
 		s.recordIdempotency(repoIdentity.RepoID, req.ClientRequestID, record.InvocationID, fingerprint)
