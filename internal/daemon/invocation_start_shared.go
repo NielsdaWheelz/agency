@@ -78,6 +78,69 @@ func asStartFailure(err error) startFailure {
 	return startFailureFromError(http.StatusInternalServerError, errors.EInternal, err, "")
 }
 
+// validateControlPlaneStartCommon performs the shared field validation for
+// headed and headless invocation start requests. On success, req.Runner is
+// canonicalised, req.ExecutionProfile and req.AgencyConfigPath are trimmed, and
+// for headed requests headedRunnerArgs is returned. On any validation failure,
+// a typed startFailure is returned.
+func validateControlPlaneStartCommon(req *ControlPlaneStartRequest, headless bool) ([]string, *startFailure) {
+	if req.ClientRequestID == "" {
+		f := newStartFailure(http.StatusBadRequest, errors.EInvalidRequest, "client_request_id is required", "provide a UUID for idempotency")
+		return nil, &f
+	}
+	if req.RepoRoot == "" {
+		f := newStartFailure(http.StatusBadRequest, errors.EInvalidRequest, "repo_root is required", "")
+		return nil, &f
+	}
+	if req.WorktreeRef == "" {
+		f := newStartFailure(http.StatusBadRequest, errors.EInvalidRequest, "worktree_ref is required", "")
+		return nil, &f
+	}
+	if req.Runner == "" {
+		f := newStartFailure(http.StatusBadRequest, errors.EInvalidRequest, "runner is required", "")
+		return nil, &f
+	}
+	if headless {
+		if req.Prompt == "" {
+			f := newStartFailure(http.StatusBadRequest, errors.EPromptRequired, "prompt is required for headless invocation", "")
+			return nil, &f
+		}
+		if len(req.Prompt) > MaxPromptSize {
+			f := newStartFailure(http.StatusBadRequest, errors.EPromptTooLarge, fmt.Sprintf("prompt exceeds maximum size of %d bytes (got %d)", MaxPromptSize, len(req.Prompt)), "reduce prompt size or split into smaller chunks")
+			return nil, &f
+		}
+	}
+
+	canonicalRunner, err := validateControlPlaneStartRunner(req.Runner, req.RunnerArgs, headless)
+	if err != nil {
+		return nil, runnerValidationFailure(err)
+	}
+	req.Runner = canonicalRunner
+	req.ExecutionProfile = strings.TrimSpace(req.ExecutionProfile)
+	req.AgencyConfigPath = strings.TrimSpace(req.AgencyConfigPath)
+	if req.AgencyConfigPath != "" && !filepath.IsAbs(req.AgencyConfigPath) {
+		f := newStartFailure(http.StatusBadRequest, errors.EInvalidArgument, "agency_config_path must be absolute", "")
+		return nil, &f
+	}
+
+	var headedRunnerArgs []string
+	if !headless {
+		args, err := buildRunnerArgsForHeaded(req.Runner, req.RunnerArgs)
+		if err != nil {
+			return nil, headedRunnerArgsFailure(err)
+		}
+		headedRunnerArgs = args
+	}
+
+	if req.InvocationName != "" {
+		if err := validateControlPlaneStartInvocationName(req.InvocationName); err != nil {
+			f := newStartFailure(http.StatusBadRequest, errors.EInvalidName, "invalid invocation name: "+err.Error(), "names must be 2-40 chars, lowercase alphanumeric + hyphens")
+			return nil, &f
+		}
+	}
+	return headedRunnerArgs, nil
+}
+
 // runnerValidationFailure converts an error from validateControlPlaneStartRunner
 // into a typed startFailure with the appropriate HTTP status and hint.
 func runnerValidationFailure(err error) *startFailure {

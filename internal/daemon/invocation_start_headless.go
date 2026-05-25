@@ -4,15 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"net/http"
-	"path/filepath"
 	"slices"
-	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/invocation"
-	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
@@ -28,50 +24,8 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "", "")
 		return
 	}
-	if req.ClientRequestID == "" {
-		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "client_request_id is required", "provide a UUID for idempotency", "")
-		return
-	}
-	if req.RepoRoot == "" {
-		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "repo_root is required", "", req.ClientRequestID)
-		return
-	}
-	if req.WorktreeRef == "" {
-		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "worktree_ref is required", "", req.ClientRequestID)
-		return
-	}
-	if req.Runner == "" {
-		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "runner is required", "", req.ClientRequestID)
-		return
-	}
-	if req.Prompt == "" {
-		writeErr(http.StatusBadRequest, string(errors.EPromptRequired), "prompt is required for headless invocation", "", req.ClientRequestID)
-		return
-	}
-	if len(req.Prompt) > MaxPromptSize {
-		writeErr(http.StatusBadRequest, string(errors.EPromptTooLarge), fmt.Sprintf("prompt exceeds maximum size of %d bytes (got %d)", MaxPromptSize, len(req.Prompt)), "reduce prompt size or split into smaller chunks", req.ClientRequestID)
-		return
-	}
-
-	canonicalRunner, err := validateControlPlaneStartRunner(req.Runner, req.RunnerArgs, true)
-	if err != nil {
-		code := errors.CodeOr(err, errors.ERunnerArgConflict)
-		hint := "remove reserved flags from runner_args"
-		if code == errors.ERunnerNotFound {
-			hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
-		}
-		writeErr(http.StatusBadRequest, string(code), err.Error(), hint, req.ClientRequestID)
-		return
-	}
-	req.Runner = canonicalRunner
-	req.ExecutionProfile = strings.TrimSpace(req.ExecutionProfile)
-	req.AgencyConfigPath = strings.TrimSpace(req.AgencyConfigPath)
-	if req.AgencyConfigPath != "" && !filepath.IsAbs(req.AgencyConfigPath) {
-		writeErr(http.StatusBadRequest, string(errors.EInvalidArgument), "agency_config_path must be absolute", "", req.ClientRequestID)
-		return
-	}
-	if err := validateControlPlaneStartInvocationName(req.InvocationName); err != nil {
-		writeErr(http.StatusBadRequest, string(errors.EInvalidName), "invalid invocation name: "+err.Error(), "names must be 2-40 chars, lowercase alphanumeric + hyphens", req.ClientRequestID)
+	if _, fail := validateControlPlaneStartCommon(&req, true); fail != nil {
+		writeErr(fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID)
 		return
 	}
 

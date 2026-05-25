@@ -4,9 +4,7 @@ import (
 	"context"
 	"net/http"
 	"os"
-	"path/filepath"
 	"slices"
-	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -27,49 +25,10 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "")
 		return
 	}
-	if req.ClientRequestID == "" {
-		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "client_request_id is required", "provide a UUID for idempotency")
-		return
-	}
-	if req.RepoRoot == "" {
-		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "repo_root is required", "")
-		return
-	}
-	if req.WorktreeRef == "" {
-		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "worktree_ref is required", "")
-		return
-	}
-	if req.Runner == "" {
-		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "runner is required", "")
-		return
-	}
-
-	canonicalRunner, err := validateControlPlaneStartRunner(req.Runner, req.RunnerArgs, false)
-	if err != nil {
-		fail := runnerValidationFailure(err)
+	headedRunnerArgs, fail := validateControlPlaneStartCommon(&req, false)
+	if fail != nil {
 		writeErr(fail.status, string(fail.code), fail.msg, fail.hint)
 		return
-	}
-	req.Runner = canonicalRunner
-	req.ExecutionProfile = strings.TrimSpace(req.ExecutionProfile)
-	req.AgencyConfigPath = strings.TrimSpace(req.AgencyConfigPath)
-	if req.AgencyConfigPath != "" && !filepath.IsAbs(req.AgencyConfigPath) {
-		writeErr(http.StatusBadRequest, string(errors.EInvalidArgument), "agency_config_path must be absolute", "")
-		return
-	}
-
-	headedRunnerArgs, err := buildRunnerArgsForHeaded(req.Runner, req.RunnerArgs)
-	if err != nil {
-		fail := headedRunnerArgsFailure(err)
-		writeErr(fail.status, string(fail.code), fail.msg, fail.hint)
-		return
-	}
-
-	if req.InvocationName != "" {
-		if err := validateControlPlaneStartInvocationName(req.InvocationName); err != nil {
-			writeErr(http.StatusBadRequest, string(errors.EInvalidName), "invalid invocation name: "+err.Error(), "names must be 2-40 chars, lowercase alphanumeric + hyphens")
-			return
-		}
 	}
 
 	repoRoot, repoIdentity, ok := s.resolveControlPlaneRepoRoot(ctx, req.RepoRoot, func(status int, code, message, hint string) {
