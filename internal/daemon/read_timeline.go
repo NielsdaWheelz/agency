@@ -51,29 +51,9 @@ func (s *Server) handleGetInvocationTimeline(w http.ResponseWriter, r *http.Requ
 	requestID := getOrCreateRequestID(r)
 
 	repoID := r.URL.Query().Get("repo_id")
-	params, invalidLimit, invalidOrder := parseGetTimelineParams(r)
-	if invalidLimit != "" {
-		s.writeAPIError(
-			w,
-			http.StatusBadRequest,
-			requestID,
-			string(errors.EInvalidArgument),
-			fmt.Sprintf("invalid value for parameter 'limit': %q", invalidLimit),
-			"provide limit in [1, 500]",
-			nil,
-		)
-		return
-	}
-	if invalidOrder != "" {
-		s.writeAPIError(
-			w,
-			http.StatusBadRequest,
-			requestID,
-			string(errors.EInvalidArgument),
-			fmt.Sprintf("invalid value for parameter 'order': %q", invalidOrder),
-			"use 'asc' or 'desc'",
-			nil,
-		)
+	params, paramErr := parseGetTimelineParams(r)
+	if paramErr != nil {
+		s.writeAPIError(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), paramErr.Error(), paramErr.hint, nil)
 		return
 	}
 	if params.Order == "desc" && params.Cursor != "" {
@@ -123,31 +103,38 @@ func (s *Server) writeInvocationTimelineReadError(w http.ResponseWriter, request
 	s.writeAPIError(w, http.StatusInternalServerError, requestID, string(code), message, "", nil)
 }
 
-func parseGetTimelineParams(r *http.Request) (GetTimelineParams, string, string) {
-	params := GetTimelineParams{
-		Limit: 100,
-		Order: "asc",
-	}
+type timelineParamError struct {
+	msg  string
+	hint string
+}
+
+func (e *timelineParamError) Error() string { return e.msg }
+
+func parseGetTimelineParams(r *http.Request) (GetTimelineParams, *timelineParamError) {
+	params := GetTimelineParams{Limit: 100, Order: "asc"}
 	if limit := r.URL.Query().Get("limit"); limit != "" {
 		parsed, err := strconv.Atoi(limit)
 		if err != nil || parsed < 1 || parsed > 500 {
-			return params, limit, ""
+			return params, &timelineParamError{fmt.Sprintf("invalid value for parameter 'limit': %q", limit), "provide limit in [1, 500]"}
 		}
 		params.Limit = parsed
 	}
 	if order := r.URL.Query().Get("order"); order != "" {
 		if order != "asc" && order != "desc" {
-			return params, "", order
+			return params, &timelineParamError{fmt.Sprintf("invalid value for parameter 'order': %q", order), "use 'asc' or 'desc'"}
 		}
 		params.Order = order
 	}
 	params.Cursor = r.URL.Query().Get("cursor")
-	return params, "", ""
+	return params, nil
 }
 
 func (s *Server) collectTimelineEntries(record *resolvedInvocation) ([]timelineSortableEntry, error) {
 	result := make([]timelineSortableEntry, 0)
-	baseTimestamp := timelineBaseTimestamp(record)
+	baseTimestamp := ""
+	if record.Meta != nil {
+		baseTimestamp = cmp.Or(record.Meta.StartedAt, record.Meta.LastOutputAt, record.Meta.FinishedAt)
+	}
 
 	// Prompt seed context entry (if prompt content is available).
 	if promptPath := record.Meta.PromptPath; promptPath != "" {
@@ -269,11 +256,14 @@ func readTimelineJSONL(
 	return entries, nil
 }
 
-func buildStreamTimelineEntry(lineNumber int, event timelineJSONLEnvelope, defaultTimestamp string) timelineSortableEntry {
+// validateTimelineEnvelope returns a parse-error entry (with ok=false) when the
+// envelope fails shared schema/kind checks. ok=true means the envelope is valid
+// and the caller may apply source-specific normalization.
+func validateTimelineEnvelope(event timelineJSONLEnvelope, source string, sourceRank, lineNumber int, defaultTimestamp string) (timelineSortableEntry, string, bool) {
 	if event.SchemaVersion != expectedTimelineSchema {
 		return newParseErrorTimelineEntry(parseErrorEntry{
-			source:           "stream",
-			sourceRank:       timelineSourceRankStream,
+			source:           source,
+			sourceRank:       sourceRank,
 			lineNumber:       lineNumber,
 			seq:              event.Seq,
 			timestamp:        event.Timestamp,
@@ -285,38 +275,42 @@ func buildStreamTimelineEntry(lineNumber int, event timelineJSONLEnvelope, defau
 				"actual_schema_version":   cmp.Or(strings.TrimSpace(event.SchemaVersion), "<empty>"),
 				"event_kind":              strings.TrimSpace(event.Kind),
 			},
-		})
+		}), "", false
 	}
-	normalizedKind := strings.TrimSpace(event.Kind)
-	if normalizedKind == "" {
+	kind := strings.TrimSpace(event.Kind)
+	if kind == "" {
 		return newParseErrorTimelineEntry(parseErrorEntry{
-			source:           "stream",
-			sourceRank:       timelineSourceRankStream,
+			source:           source,
+			sourceRank:       sourceRank,
 			lineNumber:       lineNumber,
 			seq:              event.Seq,
 			timestamp:        event.Timestamp,
 			defaultTimestamp: defaultTimestamp,
 			idPrefix:         "missing_event_kind",
 			reason:           "missing_event_kind",
-		})
+		}), "", false
 	}
-	kind := normalizedKind
-	switch normalizedKind {
-	case "message":
-		kind = "message"
+	return timelineSortableEntry{}, kind, true
+}
+
+func buildStreamTimelineEntry(lineNumber int, event timelineJSONLEnvelope, defaultTimestamp string) timelineSortableEntry {
+	errEntry, kind, ok := validateTimelineEnvelope(event, "stream", timelineSourceRankStream, lineNumber, defaultTimestamp)
+	if !ok {
+		return errEntry
+	}
+	switch kind {
 	case "tool_start":
-		kind = "tool_use"
 		if event.Data == nil {
 			event.Data = map[string]interface{}{}
 		}
 		event.Data["in_progress"] = true
+		kind = "tool_use"
 	case "tool_end":
 		kind = "tool_use"
 	}
-	entryID := "stream:" + strconv.FormatUint(event.Seq, 10)
 	return newTimelineEntry(
 		TimelineEntryDTO{
-			EntryID:   entryID,
+			EntryID:   "stream:" + strconv.FormatUint(event.Seq, 10),
 			Kind:      kind,
 			Source:    "stream",
 			Timestamp: cmp.Or(event.Timestamp, defaultTimestamp),
@@ -328,25 +322,7 @@ func buildStreamTimelineEntry(lineNumber int, event timelineJSONLEnvelope, defau
 }
 
 func buildInvocationEventTimelineEntry(lineNumber int, event timelineJSONLEnvelope, defaultTimestamp string) timelineSortableEntry {
-	if event.SchemaVersion != expectedTimelineSchema {
-		return newParseErrorTimelineEntry(parseErrorEntry{
-			source:           "invocation_event",
-			sourceRank:       timelineSourceRankEvent,
-			lineNumber:       lineNumber,
-			seq:              event.Seq,
-			timestamp:        event.Timestamp,
-			defaultTimestamp: defaultTimestamp,
-			idPrefix:         "schema_mismatch",
-			reason:           "unsupported_schema_version",
-			extras: map[string]any{
-				"expected_schema_version": expectedTimelineSchema,
-				"actual_schema_version":   cmp.Or(strings.TrimSpace(event.SchemaVersion), "<empty>"),
-				"event_kind":              strings.TrimSpace(event.Kind),
-			},
-		})
-	}
-
-	if event.Seq == 0 {
+	if event.SchemaVersion == expectedTimelineSchema && event.Seq == 0 {
 		return newParseErrorTimelineEntry(parseErrorEntry{
 			source:           "invocation_event",
 			sourceRank:       timelineSourceRankEvent,
@@ -355,24 +331,12 @@ func buildInvocationEventTimelineEntry(lineNumber int, event timelineJSONLEnvelo
 			defaultTimestamp: defaultTimestamp,
 			idPrefix:         "invalid_event_seq",
 			reason:           "invalid_event_seq",
-			extras: map[string]any{
-				"event_kind": strings.TrimSpace(event.Kind),
-			},
+			extras:           map[string]any{"event_kind": strings.TrimSpace(event.Kind)},
 		})
 	}
-
-	kind := strings.TrimSpace(event.Kind)
-	if kind == "" {
-		return newParseErrorTimelineEntry(parseErrorEntry{
-			source:           "invocation_event",
-			sourceRank:       timelineSourceRankEvent,
-			lineNumber:       lineNumber,
-			seq:              event.Seq,
-			timestamp:        event.Timestamp,
-			defaultTimestamp: defaultTimestamp,
-			idPrefix:         "missing_event_kind",
-			reason:           "missing_event_kind",
-		})
+	errEntry, kind, ok := validateTimelineEnvelope(event, "invocation_event", timelineSourceRankEvent, lineNumber, defaultTimestamp)
+	if !ok {
+		return errEntry
 	}
 	entryKind := "invocation_event"
 	if strings.HasPrefix(kind, "agency.checkpoint_") {
@@ -380,13 +344,11 @@ func buildInvocationEventTimelineEntry(lineNumber int, event timelineJSONLEnvelo
 	} else if kind == followUpPromptEventKind {
 		entryKind = "followup_prompt"
 	}
-
 	payload := event.Data
 	if payload == nil {
 		payload = map[string]interface{}{}
 	}
 	payload["event_kind"] = kind
-
 	return newTimelineEntry(
 		TimelineEntryDTO{
 			EntryID:   "inv_event:" + strconv.FormatUint(event.Seq, 10) + ":" + kind,
@@ -440,19 +402,6 @@ func newParseErrorTimelineEntry(p parseErrorEntry) timelineSortableEntry {
 		},
 		p.sourceRank,
 	)
-}
-
-func timelineBaseTimestamp(record *resolvedInvocation) string {
-	if record.Meta == nil {
-		return ""
-	}
-	if record.Meta.StartedAt != "" {
-		return record.Meta.StartedAt
-	}
-	if record.Meta.LastOutputAt != "" {
-		return record.Meta.LastOutputAt
-	}
-	return record.Meta.FinishedAt
 }
 
 func newTimelineEntry(dto TimelineEntryDTO, sourceRank int) timelineSortableEntry {
