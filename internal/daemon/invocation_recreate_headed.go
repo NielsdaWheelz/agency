@@ -14,6 +14,26 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
+// resolveAccessibleRegisteredRepoRoot resolves a registered repo's root and
+// verifies it points at an accessible directory.
+func (s *Server) resolveAccessibleRegisteredRepoRoot(repoID string) (string, *startFailure) {
+	repoRoot, err := s.resolveRegisteredRepoRoot(repoID)
+	if err != nil {
+		f := newStartFailure(http.StatusInternalServerError, errors.ERepoNotFound, "failed to resolve repo root: "+err.Error(), "run 'agency repo add <path>' to refresh the repo registry")
+		return "", &f
+	}
+	info, err := os.Stat(repoRoot)
+	if err != nil {
+		f := newStartFailure(http.StatusConflict, errors.ERepoRootInaccessible, "repo root is not accessible: "+err.Error(), "run 'agency repo add <path>' to refresh the repo registry")
+		return "", &f
+	}
+	if !info.IsDir() {
+		f := newStartFailure(http.StatusConflict, errors.ERepoRootInaccessible, "repo root is not a directory", "run 'agency repo add <path>' to refresh the repo registry")
+		return "", &f
+	}
+	return repoRoot, nil
+}
+
 // loadRecreatableHeadedMeta reads the invocation meta and confirms it can be
 // recreated: headed mode, not landed/discarded, sandbox directory exists.
 func (s *Server) loadRecreatableHeadedMeta(repoID, invocationID string) (*store.InvocationMeta, *startFailure) {
@@ -190,18 +210,9 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		respondErr(fail.status, string(fail.code), fail.msg, fail.hint)
 		return
 	}
-	repoRoot, err := s.resolveRegisteredRepoRoot(record.RepoID)
-	if err != nil {
-		respondErr(http.StatusInternalServerError, string(errors.ERepoNotFound), "failed to resolve repo root: "+err.Error(), "run 'agency repo add <path>' to refresh the repo registry")
-		return
-	}
-	repoInfo, err := os.Stat(repoRoot)
-	if err != nil {
-		respondErr(http.StatusConflict, string(errors.ERepoRootInaccessible), "repo root is not accessible: "+err.Error(), "run 'agency repo add <path>' to refresh the repo registry")
-		return
-	}
-	if !repoInfo.IsDir() {
-		respondErr(http.StatusConflict, string(errors.ERepoRootInaccessible), "repo root is not a directory", "run 'agency repo add <path>' to refresh the repo registry")
+	repoRoot, fail := s.resolveAccessibleRegisteredRepoRoot(record.RepoID)
+	if fail != nil {
+		respondErr(fail.status, string(fail.code), fail.msg, fail.hint)
 		return
 	}
 
