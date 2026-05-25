@@ -15,29 +15,32 @@ import (
 func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, invocationRef string) {
 	ctx := r.Context()
 	requestID := prepareRequestID(w, r)
+	respondErr := func(status int, code, message, hint string) {
+		s.writeHeadedError(w, status, code, message, hint, "", requestID)
+	}
 
 	var req struct{}
 	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
-		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "", "", requestID)
+		respondErr(http.StatusBadRequest, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "")
 		return
 	}
 
 	repoID := r.URL.Query().Get("repo_id")
 	if repoID == "" {
-		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EInvalidRequest), "repo_id query parameter is required", "", "", requestID)
+		respondErr(http.StatusBadRequest, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
 		return
 	}
 
 	record, resolveErr := s.resolveInvocationRef(invocationRef, repoID)
 	if resolveErr != nil {
 		status, code := invocationResolveStatus(resolveErr)
-		s.writeHeadedError(w, status, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations", "", requestID)
+		respondErr(status, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
 		return
 	}
 
 	unlock, fail := s.lockRepoOrFailure(record.RepoID, "recreate_headed")
 	if fail != nil {
-		s.writeHeadedError(w, fail.status, string(fail.code), fail.msg, fail.hint, "", requestID)
+		respondErr(fail.status, string(fail.code), fail.msg, fail.hint)
 		return
 	}
 	defer func() { _ = unlock() }()
@@ -45,46 +48,46 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 	meta, err := s.store.ReadInvocationMeta(record.RepoID, record.InvocationID)
 	if err != nil {
 		if errors.GetCode(err) == errors.EInvocationNotFound {
-			s.writeHeadedError(w, http.StatusNotFound, string(errors.EInvocationNotFound), "invocation not found", "", "", requestID)
+			respondErr(http.StatusNotFound, string(errors.EInvocationNotFound), "invocation not found", "")
 			return
 		}
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInternal), "failed to read invocation meta: "+err.Error(), "", "", requestID)
+		respondErr(http.StatusInternalServerError, string(errors.EInternal), "failed to read invocation meta: "+err.Error(), "")
 		return
 	}
 	if meta.Mode != store.RunnerModeHeaded {
-		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EInvocationInvalidMode), "recreate is only supported for headed invocations", "use 'agency agent <invocation-ref> history' to inspect or 'agency agent <invocation-ref> restore' to roll back a headless invocation", "", requestID)
+		respondErr(http.StatusBadRequest, string(errors.EInvocationInvalidMode), "recreate is only supported for headed invocations", "use 'agency agent <invocation-ref> history' to inspect or 'agency agent <invocation-ref> restore' to roll back a headless invocation")
 		return
 	}
 	if meta.LandingStatus == store.LandingStatusLanded {
-		s.writeHeadedError(w, http.StatusConflict, string(errors.ELandAlreadyLanded), "invocation has already been landed", "start a new invocation from an active integration worktree", "", requestID)
+		respondErr(http.StatusConflict, string(errors.ELandAlreadyLanded), "invocation has already been landed", "start a new invocation from an active integration worktree")
 		return
 	}
 	if meta.LandingStatus == store.LandingStatusDiscarded {
-		s.writeHeadedError(w, http.StatusConflict, string(errors.ELandAlreadyDiscarded), "invocation has already been discarded", "start a new invocation from an active integration worktree", "", requestID)
+		respondErr(http.StatusConflict, string(errors.ELandAlreadyDiscarded), "invocation has already been discarded", "start a new invocation from an active integration worktree")
 		return
 	}
 	info, err := os.Stat(meta.SandboxPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			s.writeHeadedError(w, http.StatusNotFound, string(errors.ESandboxMissing), "sandbox no longer exists", "sandbox was removed after landing or discarding", "", requestID)
+			respondErr(http.StatusNotFound, string(errors.ESandboxMissing), "sandbox no longer exists", "sandbox was removed after landing or discarding")
 			return
 		}
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ESandboxMissing), "failed to inspect sandbox: "+err.Error(), "", "", requestID)
+		respondErr(http.StatusInternalServerError, string(errors.ESandboxMissing), "failed to inspect sandbox: "+err.Error(), "")
 		return
 	}
 	if !info.IsDir() {
-		s.writeHeadedError(w, http.StatusNotFound, string(errors.ESandboxMissing), "sandbox path is not a directory", "", "", requestID)
+		respondErr(http.StatusNotFound, string(errors.ESandboxMissing), "sandbox path is not a directory", "")
 		return
 	}
 
 	sessionName, ok := headedInvocationSessionName(meta)
 	if !ok {
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ETmuxSessionMissing), "headed invocation is missing tmux_session", "inspect invocation metadata before recreating", "", requestID)
+		respondErr(http.StatusInternalServerError, string(errors.ETmuxSessionMissing), "headed invocation is missing tmux_session", "inspect invocation metadata before recreating")
 		return
 	}
 	exists, err := s.tmuxClient.HasSession(ctx, sessionName)
 	if err != nil && !tmux.IsNoSessionErr(err) {
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ETmuxFailed), "failed to check tmux session: "+err.Error(), "", "", requestID)
+		respondErr(http.StatusInternalServerError, string(errors.ETmuxFailed), "failed to check tmux session: "+err.Error(), "")
 		return
 	}
 	if exists {
@@ -94,7 +97,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		if supervised {
 			updatedMeta, err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, "", meta.Runner, sessionName, slices.Clone(meta.RunnerArgs), slices.Clone(meta.CustomEnvKeys))
 			if err != nil {
-				s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInternal), "failed to update invocation meta: "+err.Error(), "", "", requestID)
+				respondErr(http.StatusInternalServerError, string(errors.EInternal), "failed to update invocation meta: "+err.Error(), "")
 				return
 			}
 			s.writeHeadedSuccess(w, record.InvocationID, updatedMeta, record.RepoID, "", requestID, true)
@@ -102,7 +105,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		}
 		updatedMeta, err := s.restoreExistingHeadedSupervision(ctx, record.RepoID, record.InvocationID, meta, sessionName, "agency.headed_recreated")
 		if err != nil {
-			s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to restore headed supervision: "+err.Error(), "ensure tmux is still available", "", requestID)
+			respondErr(http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to restore headed supervision: "+err.Error(), "ensure tmux is still available")
 			return
 		}
 		s.writeHeadedSuccess(w, record.InvocationID, updatedMeta, record.RepoID, "", requestID, true)
@@ -112,66 +115,66 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 	canonicalRunner, err := validateControlPlaneStartRunner(meta.Runner, meta.RunnerArgs, false)
 	if err != nil {
 		fail := runnerValidationFailure(err)
-		s.writeHeadedError(w, fail.status, string(fail.code), fail.msg, fail.hint, "", requestID)
+		respondErr(fail.status, string(fail.code), fail.msg, fail.hint)
 		return
 	}
 	headedRunnerArgs, err := buildRunnerArgsForHeaded(canonicalRunner, meta.RunnerArgs)
 	if err != nil {
 		fail := headedRunnerArgsFailure(err)
-		s.writeHeadedError(w, fail.status, string(fail.code), fail.msg, fail.hint, "", requestID)
+		respondErr(fail.status, string(fail.code), fail.msg, fail.hint)
 		return
 	}
 	repoRoot, err := s.resolveRegisteredRepoRoot(record.RepoID)
 	if err != nil {
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ERepoNotFound), "failed to resolve repo root: "+err.Error(), "run 'agency repo add <path>' to refresh the repo registry", "", requestID)
+		respondErr(http.StatusInternalServerError, string(errors.ERepoNotFound), "failed to resolve repo root: "+err.Error(), "run 'agency repo add <path>' to refresh the repo registry")
 		return
 	}
 	repoInfo, err := os.Stat(repoRoot)
 	if err != nil {
-		s.writeHeadedError(w, http.StatusConflict, string(errors.ERepoRootInaccessible), "repo root is not accessible: "+err.Error(), "run 'agency repo add <path>' to refresh the repo registry", "", requestID)
+		respondErr(http.StatusConflict, string(errors.ERepoRootInaccessible), "repo root is not accessible: "+err.Error(), "run 'agency repo add <path>' to refresh the repo registry")
 		return
 	}
 	if !repoInfo.IsDir() {
-		s.writeHeadedError(w, http.StatusConflict, string(errors.ERepoRootInaccessible), "repo root is not a directory", "run 'agency repo add <path>' to refresh the repo registry", "", requestID)
+		respondErr(http.StatusConflict, string(errors.ERepoRootInaccessible), "repo root is not a directory", "run 'agency repo add <path>' to refresh the repo registry")
 		return
 	}
 
 	userCfg, err := s.LoadUserConfig()
 	if err != nil {
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvalidUserConfig), "failed to load user config: "+err.Error(), "run `agency config init`", "", requestID)
+		respondErr(http.StatusInternalServerError, string(errors.EInvalidUserConfig), "failed to load user config: "+err.Error(), "run `agency config init`")
 		return
 	}
 	profileEnv, err := config.ExecutionProfileEnv(userCfg, meta.ExecutionProfile)
 	if err != nil {
 		code := errors.CodeOr(err, errors.EExecutionProfileNotFound)
-		s.writeHeadedError(w, http.StatusBadRequest, string(code), apiErrorMessage(err), "", "", requestID)
+		respondErr(http.StatusBadRequest, string(code), apiErrorMessage(err), "")
 		return
 	}
 	launchEnv := copyStringMap(profileEnv)
 	runnerCmd, err := config.ResolveRunnerCmd(s.runner, s.fsys, s.configDir, userCfg, canonicalRunner)
 	if err != nil {
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ERunnerNotFound), "failed to resolve runner command: "+err.Error(), "ensure runner is installed and configured", "", requestID)
+		respondErr(http.StatusInternalServerError, string(errors.ERunnerNotFound), "failed to resolve runner command: "+err.Error(), "ensure runner is installed and configured")
 		return
 	}
 	if err := s.installHeadedRunnerHooks(ctx, record.RepoID, record.InvocationID, canonicalRunner, headedRunnerArgs, meta.SandboxPath, withNonInteractiveEnv(launchEnv)); err != nil {
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to install headed runner hooks: "+err.Error(), "ensure sandbox hook files can be written", "", requestID)
+		respondErr(http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to install headed runner hooks: "+err.Error(), "ensure sandbox hook files can be written")
 		return
 	}
 
 	terminalLogPath, err := s.prepareWritableInvocationLogPath(record.RepoID, record.InvocationID, InvocationLogKindTerminal)
 	if err != nil {
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to prepare terminal log: "+err.Error(), "", "", requestID)
+		respondErr(http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to prepare terminal log: "+err.Error(), "")
 		return
 	}
 	terminalFile, err := os.OpenFile(terminalLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to create terminal log: "+err.Error(), "", "", requestID)
+		respondErr(http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to create terminal log: "+err.Error(), "")
 		return
 	}
 	_ = terminalFile.Close()
 
 	if err := s.tmuxClient.NewSession(ctx, sessionName, meta.SandboxPath, append([]string{runnerCmd}, headedRunnerArgs...), launchEnv); err != nil {
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to create tmux session: "+err.Error(), "ensure tmux is installed and working", "", requestID)
+		respondErr(http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to create tmux session: "+err.Error(), "ensure tmux is installed and working")
 		return
 	}
 	target := sessionName + ":0.0"
@@ -183,7 +186,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		f, err := os.OpenFile(terminalLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 		if err != nil {
 			_ = s.tmuxClient.KillSession(ctx, sessionName)
-			s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to append initial terminal capture: "+err.Error(), "", "", requestID)
+			respondErr(http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to append initial terminal capture: "+err.Error(), "")
 			return
 		}
 		_, writeErr := f.WriteString(scrollback)
@@ -191,16 +194,16 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		if writeErr != nil || closeErr != nil {
 			_ = s.tmuxClient.KillSession(ctx, sessionName)
 			if writeErr != nil {
-				s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to append initial terminal capture: "+writeErr.Error(), "", "", requestID)
+				respondErr(http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to append initial terminal capture: "+writeErr.Error(), "")
 				return
 			}
-			s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to close terminal log: "+closeErr.Error(), "", "", requestID)
+			respondErr(http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to close terminal log: "+closeErr.Error(), "")
 			return
 		}
 	}
 	if err := s.tmuxClient.PipePane(ctx, target, terminalLogPath); err != nil {
 		_ = s.tmuxClient.KillSession(ctx, sessionName)
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to pipe tmux pane output: "+err.Error(), "ensure tmux pipe-pane is available", "", requestID)
+		respondErr(http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to pipe tmux pane output: "+err.Error(), "ensure tmux pipe-pane is available")
 		return
 	}
 
@@ -208,7 +211,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 	updatedMeta, err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, "", canonicalRunner, sessionName, runnerArgs, slices.Clone(meta.CustomEnvKeys))
 	if err != nil {
 		_ = s.tmuxClient.KillSession(ctx, sessionName)
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInternal), "failed to update invocation meta: "+err.Error(), "", "", requestID)
+		respondErr(http.StatusInternalServerError, string(errors.EInternal), "failed to update invocation meta: "+err.Error(), "")
 		return
 	}
 
@@ -230,7 +233,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 	}, eventlog.AppendOptions{}); err != nil {
 		_ = s.tmuxClient.KillSession(ctx, sessionName)
 		s.failInvocationStart(record.RepoID, record.InvocationID, "event_append_failed", true)
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInternal), "failed to append recreate event: "+err.Error(), "", "", requestID)
+		respondErr(http.StatusInternalServerError, string(errors.EInternal), "failed to append recreate event: "+err.Error(), "")
 		return
 	}
 	s.launchSupervisedHeadedProcess(proc)

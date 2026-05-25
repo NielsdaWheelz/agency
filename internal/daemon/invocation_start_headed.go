@@ -19,57 +19,61 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	requestID := prepareRequestID(w, r)
 
 	var req ControlPlaneStartRequest
+	writeErr := func(status int, code, message, hint string) {
+		s.writeHeadedError(w, status, code, message, hint, req.ClientRequestID, requestID)
+	}
+
 	if err := decodeStrictJSON(r.Body, &req); err != nil {
-		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "", "", requestID)
+		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "")
 		return
 	}
 	if req.ClientRequestID == "" {
-		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EInvalidRequest), "client_request_id is required", "provide a UUID for idempotency", "", requestID)
+		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "client_request_id is required", "provide a UUID for idempotency")
 		return
 	}
 	if req.RepoRoot == "" {
-		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EInvalidRequest), "repo_root is required", "", req.ClientRequestID, requestID)
+		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "repo_root is required", "")
 		return
 	}
 	if req.WorktreeRef == "" {
-		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EInvalidRequest), "worktree_ref is required", "", req.ClientRequestID, requestID)
+		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "worktree_ref is required", "")
 		return
 	}
 	if req.Runner == "" {
-		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EInvalidRequest), "runner is required", "", req.ClientRequestID, requestID)
+		writeErr(http.StatusBadRequest, string(errors.EInvalidRequest), "runner is required", "")
 		return
 	}
 
 	canonicalRunner, err := validateControlPlaneStartRunner(req.Runner, req.RunnerArgs, false)
 	if err != nil {
 		fail := runnerValidationFailure(err)
-		s.writeHeadedError(w, fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID, requestID)
+		writeErr(fail.status, string(fail.code), fail.msg, fail.hint)
 		return
 	}
 	req.Runner = canonicalRunner
 	req.ExecutionProfile = strings.TrimSpace(req.ExecutionProfile)
 	req.AgencyConfigPath = strings.TrimSpace(req.AgencyConfigPath)
 	if req.AgencyConfigPath != "" && !filepath.IsAbs(req.AgencyConfigPath) {
-		s.writeHeadedError(w, http.StatusBadRequest, string(errors.EInvalidArgument), "agency_config_path must be absolute", "", req.ClientRequestID, requestID)
+		writeErr(http.StatusBadRequest, string(errors.EInvalidArgument), "agency_config_path must be absolute", "")
 		return
 	}
 
 	headedRunnerArgs, err := buildRunnerArgsForHeaded(req.Runner, req.RunnerArgs)
 	if err != nil {
 		fail := headedRunnerArgsFailure(err)
-		s.writeHeadedError(w, fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID, requestID)
+		writeErr(fail.status, string(fail.code), fail.msg, fail.hint)
 		return
 	}
 
 	if req.InvocationName != "" {
 		if err := validateControlPlaneStartInvocationName(req.InvocationName); err != nil {
-			s.writeHeadedError(w, http.StatusBadRequest, string(errors.EInvalidName), "invalid invocation name: "+err.Error(), "names must be 2-40 chars, lowercase alphanumeric + hyphens", req.ClientRequestID, requestID)
+			writeErr(http.StatusBadRequest, string(errors.EInvalidName), "invalid invocation name: "+err.Error(), "names must be 2-40 chars, lowercase alphanumeric + hyphens")
 			return
 		}
 	}
 
 	repoRoot, repoIdentity, ok := s.resolveControlPlaneRepoRoot(ctx, req.RepoRoot, func(status int, code, message, hint string) {
-		s.writeHeadedError(w, status, code, message, hint, req.ClientRequestID, requestID)
+		writeErr(status, code, message, hint)
 	})
 	if !ok {
 		return
@@ -77,19 +81,19 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 
 	requestEnv := req.Env
 	if record, exists, err := s.findInvocationRecordByClientRequestID(repoIdentity.RepoID, req.ClientRequestID); err != nil {
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInternal), "failed to scan invocations for idempotency: "+err.Error(), "", req.ClientRequestID, requestID)
+		writeErr(http.StatusInternalServerError, string(errors.EInternal), "failed to scan invocations for idempotency: "+err.Error(), "")
 		return
 	} else if exists {
 		if record.Meta == nil || record.Broken {
-			s.writeHeadedError(w, http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id record exists but invocation metadata is unreadable", "inspect invocation state before retrying", req.ClientRequestID, requestID)
+			writeErr(http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id record exists but invocation metadata is unreadable", "inspect invocation state before retrying")
 			return
 		}
 		if s.directStartRequestConflictsWithRecord(repoIdentity.RepoID, repoRoot, store.RunnerModeHeaded, req, requestEnv, record.Meta) {
-			s.writeHeadedError(w, http.StatusConflict, string(errors.EIdempotencyConflict), "client_request_id was already used for a different headed invocation start request", "retry with the original request or choose a new client_request_id", req.ClientRequestID, requestID)
+			writeErr(http.StatusConflict, string(errors.EIdempotencyConflict), "client_request_id was already used for a different headed invocation start request", "retry with the original request or choose a new client_request_id")
 			return
 		}
 		if fail := evaluateIdempotentStartRecord(record.Meta); fail != nil {
-			s.writeHeadedError(w, fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID, requestID)
+			writeErr(fail.status, string(fail.code), fail.msg, fail.hint)
 			return
 		}
 		s.recordHeadedIdempotency(repoIdentity.RepoID, req.ClientRequestID, record.InvocationID, record.Meta.RequestFingerprint)
@@ -100,7 +104,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	execCtx, err := s.resolveExecutionContext(repoRoot, repoIdentity.RepoID, req.AgencyConfigPath, req.ExecutionProfile)
 	if err != nil {
 		code := errors.CodeOr(err, errors.EInternal)
-		s.writeHeadedError(w, http.StatusBadRequest, string(code), apiErrorMessage(err), "", req.ClientRequestID, requestID)
+		writeErr(http.StatusBadRequest, string(code), apiErrorMessage(err), "")
 		return
 	}
 	req.ExecutionProfile = execCtx.Profile
@@ -108,7 +112,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	req.Env = envForLaunch(execCtx.ProfileEnv, requestEnv)
 
 	prep, ok := s.prepareControlPlaneStart(ctx, repoRoot, req.WorktreeRef, "control_plane_start_headed", func(status int, code, message, hint string) {
-		s.writeHeadedError(w, status, code, message, hint, req.ClientRequestID, requestID)
+		writeErr(status, code, message, hint)
 	}, repoIdentity)
 	if !ok {
 		return
@@ -118,35 +122,35 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	fingerprint := controlPlaneStartFingerprint(repoRoot, prep.wtRecord.WorktreeID, execCtx.CheckoutRoot, store.RunnerModeHeaded, req, requestEnv)
 	if entry, isDuplicate, conflict := s.checkHeadedIdempotency(repoIdentity.RepoID, req.ClientRequestID, fingerprint); isDuplicate {
 		if conflict {
-			s.writeHeadedError(w, http.StatusConflict, string(errors.EIdempotencyConflict), "client_request_id was already used for a different headed invocation start request", "retry with the original request or choose a new client_request_id", req.ClientRequestID, requestID)
+			writeErr(http.StatusConflict, string(errors.EIdempotencyConflict), "client_request_id was already used for a different headed invocation start request", "retry with the original request or choose a new client_request_id")
 			return
 		}
 		meta, err := s.store.ReadInvocationMeta(repoIdentity.RepoID, entry.invocationID)
 		if err != nil {
-			s.writeHeadedError(w, http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id was already accepted but invocation metadata is unreadable: "+err.Error(), "inspect invocation state before retrying", req.ClientRequestID, requestID)
+			writeErr(http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id was already accepted but invocation metadata is unreadable: "+err.Error(), "inspect invocation state before retrying")
 			return
 		}
 		if fail := evaluateIdempotentStartRecord(meta); fail != nil {
-			s.writeHeadedError(w, fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID, requestID)
+			writeErr(fail.status, string(fail.code), fail.msg, fail.hint)
 			return
 		}
 		s.writeHeadedSuccess(w, entry.invocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
 		return
 	}
 	if record, exists, conflict, err := s.findInvocationByClientRequestID(repoIdentity.RepoID, req.ClientRequestID, fingerprint); err != nil {
-		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.EInternal), "failed to scan invocations for idempotency: "+err.Error(), "", req.ClientRequestID, requestID)
+		writeErr(http.StatusInternalServerError, string(errors.EInternal), "failed to scan invocations for idempotency: "+err.Error(), "")
 		return
 	} else if exists {
 		if conflict {
-			s.writeHeadedError(w, http.StatusConflict, string(errors.EIdempotencyConflict), "client_request_id was already used for a different headed invocation start request", "retry with the original request or choose a new client_request_id", req.ClientRequestID, requestID)
+			writeErr(http.StatusConflict, string(errors.EIdempotencyConflict), "client_request_id was already used for a different headed invocation start request", "retry with the original request or choose a new client_request_id")
 			return
 		}
 		if record.Meta == nil || record.Broken {
-			s.writeHeadedError(w, http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id record exists but invocation metadata is unreadable", "inspect invocation state before retrying", req.ClientRequestID, requestID)
+			writeErr(http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id record exists but invocation metadata is unreadable", "inspect invocation state before retrying")
 			return
 		}
 		if fail := evaluateIdempotentStartRecord(record.Meta); fail != nil {
-			s.writeHeadedError(w, fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID, requestID)
+			writeErr(fail.status, string(fail.code), fail.msg, fail.hint)
 			return
 		}
 		s.recordHeadedIdempotency(repoIdentity.RepoID, req.ClientRequestID, record.InvocationID, fingerprint)
@@ -156,7 +160,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 
 	if req.InvocationName != "" {
 		if err := s.checkInvocationNameUniqueness(repoIdentity.RepoID, req.InvocationName); err != nil {
-			s.writeHeadedError(w, http.StatusConflict, string(errors.EInvocationNameExists), err.Error(), "use a different name or wait for the existing invocation to complete", req.ClientRequestID, requestID)
+			writeErr(http.StatusConflict, string(errors.EInvocationNameExists), err.Error(), "use a different name or wait for the existing invocation to complete")
 			return
 		}
 	}
@@ -179,7 +183,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	})
 	if err != nil {
 		code := errors.CodeOr(err, errors.EInternal)
-		s.writeHeadedError(w, http.StatusInternalServerError, string(code), err.Error(), "", req.ClientRequestID, requestID)
+		writeErr(http.StatusInternalServerError, string(code), err.Error(), "")
 		return
 	}
 
@@ -193,7 +197,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		noIncludeUntracked: req.NoIncludeUntracked,
 	})
 	if fail != nil {
-		s.writeHeadedError(w, fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID, requestID)
+		writeErr(fail.status, string(fail.code), fail.msg, fail.hint)
 		return
 	}
 
