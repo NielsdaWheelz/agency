@@ -10,6 +10,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
 	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
+	"github.com/NielsdaWheelz/agency/internal/errors"
 	agencyfs "github.com/NielsdaWheelz/agency/internal/fs"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
@@ -17,7 +18,7 @@ import (
 // restoreExistingHeadedSupervision reattaches an existing tmux session to a
 // supervised process and returns the post-claim invocation meta.
 func (s *Server) restoreExistingHeadedSupervision(ctx context.Context, repoID, invocationID string, meta *store.InvocationMeta, sessionName, eventKind string) (*store.InvocationMeta, error) {
-	repoRoot, err := s.resolveHeadedSupervisionRepoRoot(repoID)
+	repoRoot, err := s.resolveRegisteredRepoRoot(repoID)
 	if err != nil {
 		return nil, fmt.Errorf("resolve repo root: %w", err)
 	}
@@ -175,20 +176,24 @@ func (s *Server) launchSupervisedHeadedProcess(proc *supervisedProcess) {
 	go s.runCheckpointLoop(proc)
 }
 
-func (s *Server) resolveHeadedSupervisionRepoRoot(repoID string) (string, error) {
+// resolveRegisteredRepoRoot loads a registered repo and returns its first
+// accessible root (preferred, then last-seen). Returns ERepoNotFound when the
+// repo has no record and ERepoRootInaccessible when both stored roots are
+// missing or non-directories.
+func (s *Server) resolveRegisteredRepoRoot(repoID string) (string, error) {
 	rec, exists, err := s.store.LoadRepoRecord(repoID)
 	if err != nil {
 		return "", err
 	}
-	if exists {
-		for _, root := range []string{rec.PreferredRoot, rec.RepoRootLastSeen} {
-			if resolved, ok := canonicalAccessibleDir(root); ok {
-				return resolved, nil
-			}
-		}
-		return "", fmt.Errorf("repo %s stored roots are not accessible", repoID)
+	if !exists {
+		return "", errors.New(errors.ERepoNotFound, "repo "+repoID+" not found")
 	}
-	return "", fmt.Errorf("repo %s not found", repoID)
+	for _, root := range []string{rec.PreferredRoot, rec.RepoRootLastSeen} {
+		if resolved, ok := canonicalAccessibleDir(root); ok {
+			return resolved, nil
+		}
+	}
+	return "", errors.New(errors.ERepoRootInaccessible, "repo "+repoID+" stored roots are not accessible")
 }
 
 func canonicalAccessibleDir(path string) (string, bool) {

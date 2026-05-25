@@ -138,7 +138,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		s.writeHeadedError(w, status, string(code), err.Error(), hint, "", requestID)
 		return
 	}
-	repoRoot, err := s.resolveHeadedSupervisionRepoRoot(record.RepoID)
+	repoRoot, err := s.resolveRegisteredRepoRoot(record.RepoID)
 	if err != nil {
 		s.writeHeadedError(w, http.StatusInternalServerError, string(errors.ERepoNotFound), "failed to resolve repo root: "+err.Error(), "run 'agency repo add <path>' to refresh the repo registry", "", requestID)
 		return

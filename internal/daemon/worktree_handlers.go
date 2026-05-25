@@ -1,17 +1,13 @@
 package daemon
 
 import (
-	"context"
 	stderrors "errors"
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
-	"github.com/NielsdaWheelz/agency/internal/daemon/landing"
 	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
@@ -264,29 +260,14 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 		return
 	}
 
-	// Load repo record to get repo_root
-	repoRecord, exists, err := s.store.LoadRepoRecord(repoID)
+	repoRoot, err := s.resolveRegisteredRepoRoot(repoID)
 	if err != nil {
-		s.writeErrorWithRequestID(w, http.StatusInternalServerError, requestID, string(errors.EInternal),
-			"failed to load repo record: "+err.Error(), "")
-		return
-	}
-	if !exists {
-		s.writeErrorWithRequestID(w, http.StatusNotFound, requestID, string(errors.ERepoNotFound),
-			"repo not found", "")
-		return
-	}
-
-	repoRoot := ""
-	for _, root := range []string{repoRecord.PreferredRoot, repoRecord.RepoRootLastSeen} {
-		if resolved, ok := canonicalAccessibleDir(root); ok {
-			repoRoot = resolved
-			break
+		code := errors.CodeOr(err, errors.EInternal)
+		status := http.StatusInternalServerError
+		if code == errors.ERepoNotFound {
+			status = http.StatusNotFound
 		}
-	}
-	if repoRoot == "" {
-		s.writeErrorWithRequestID(w, http.StatusInternalServerError, requestID, string(errors.EInternal),
-			"repo root is not accessible from repo.json", "")
+		s.writeErrorWithRequestID(w, status, requestID, string(code), err.Error(), "")
 		return
 	}
 
@@ -362,121 +343,11 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 		return
 	}
 
-	if req.Force && len(unresolved) > 0 {
-		discardSvc := landing.NewService(s.store, s.runner, s.fsys, s.clock, s.invocationEvents)
-		for _, invocation := range unresolved {
-			profileEnv, err := s.executionProfileEnv(invocation.Meta.ExecutionProfile)
-			if err != nil {
-				code := errors.CodeOr(err, errors.EExecutionProfileNotFound)
-				s.failWorktreeRm(w, http.StatusBadRequest, requestID, repoID, record.WorktreeID, string(code), apiErrorMessage(err), "")
-				return
-			}
-			if err := discardSvc.Discard(ctx, landing.DiscardOpts{
-				RepoID:       repoID,
-				InvocationID: invocation.InvocationID,
-				RepoRoot:     repoRoot,
-				Env:          prSyncNonInteractiveEnv(profileEnv),
-				StopCallback: s.stopInvocationForDiscard,
-			}); err != nil {
-				code := errors.CodeOr(err, errors.ELandFailed)
-				s.failWorktreeRm(w, http.StatusConflict, requestID, repoID, record.WorktreeID, string(code), err.Error(), errors.Hint(err))
-				return
-			}
-		}
-	}
-
-	if treeMissing {
-		if err := s.store.UpdateIntegrationWorktreeMeta(repoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
-			m.State = store.WorktreeStateArchived
-		}); err != nil {
-			s.failWorktreeRm(w, http.StatusInternalServerError, requestID, repoID, record.WorktreeID, string(errors.EWorktreeRemoveFailed),
-				"worktree tree is missing and metadata archive failed: "+err.Error(),
-				"inspect worktree metadata before retrying")
-			return
-		}
-		s.finishWorktreeRm(w, requestID, repoID, record.WorktreeID, true)
+	if fail := s.executeWorktreeRm(ctx, req, record, repoRoot, treeMissing, unresolved); fail != nil {
+		s.failWorktreeRm(w, fail.status, requestID, repoID, record.WorktreeID, string(fail.code), fail.message, fail.hint)
 		return
 	}
-
-	// Verify tree contains INTEGRATION_MARKER
-	if !integrationworktree.HasIntegrationMarker(record.Meta.TreePath) {
-		s.failWorktreeRm(w, http.StatusBadRequest, requestID, repoID, record.WorktreeID, string(errors.ENotAnIntegrationWorktree),
-			"tree missing .agency/INTEGRATION_MARKER - not an integration worktree",
-			"this safety check prevents accidentally deleting user-managed worktrees")
-		return
-	}
-
-	profileEnv, err := s.executionProfileEnv(record.Meta.ExecutionProfile)
-	if err != nil {
-		code := errors.CodeOr(err, errors.EExecutionProfileNotFound)
-		s.failWorktreeRm(w, http.StatusBadRequest, requestID, repoID, record.WorktreeID, string(code), apiErrorMessage(err), "")
-		return
-	}
-	worktreeEnv := prSyncNonInteractiveEnv(profileEnv)
-
-	// Check if tree is dirty (unless force)
-	if !req.Force {
-		clean, err := git.IsClean(ctx, s.runner, record.Meta.TreePath, worktreeEnv)
-		if err != nil {
-			s.failWorktreeRm(w, http.StatusInternalServerError, requestID, repoID, record.WorktreeID, string(errors.EWorktreeRemoveFailed),
-				"failed to check worktree cleanliness: "+err.Error(), "")
-			return
-		} else if !clean {
-			s.failWorktreeRm(w, http.StatusConflict, requestID, repoID, record.WorktreeID, string(errors.EDirtyWorktree),
-				"worktree has uncommitted changes",
-				"commit/stash your changes or use --force")
-			return
-		}
-	}
-
-	// Remove git worktree
-	args := []string{"-C", repoRoot, "worktree", "remove"}
-	if req.Force {
-		args = append(args, "--force")
-	}
-	args = append(args, record.Meta.TreePath)
-
-	removeCtx, cancel := context.WithTimeout(ctx, worktreeRmGitRemoveTimeout)
-	defer cancel()
-
-	result, runErr := s.runner.Run(removeCtx, "git", args, exec.RunOpts{Env: worktreeEnv})
-	if runErr != nil {
-		if stderrors.Is(runErr, context.DeadlineExceeded) {
-			s.failWorktreeRm(w, http.StatusInternalServerError, requestID, repoID, record.WorktreeID, string(errors.EWorktreeRemoveFailed),
-				"git worktree remove timed out", "retry the removal or inspect the worktree for a blocked git process")
-			return
-		}
-		s.failWorktreeRm(w, http.StatusInternalServerError, requestID, repoID, record.WorktreeID, string(errors.EWorktreeRemoveFailed),
-			"failed to execute git worktree remove: "+runErr.Error(), "")
-		return
-	}
-
-	if result.ExitCode != 0 {
-		stderr := strings.TrimSpace(result.Stderr)
-		// Check for dirty worktree error
-		if !req.Force && (strings.Contains(stderr, "untracked") || strings.Contains(stderr, "modified")) {
-			s.failWorktreeRm(w, http.StatusConflict, requestID, repoID, record.WorktreeID, string(errors.EDirtyWorktree),
-				"worktree has uncommitted changes",
-				"commit/stash your changes or use --force")
-			return
-		}
-		s.failWorktreeRm(w, http.StatusInternalServerError, requestID, repoID, record.WorktreeID, string(errors.EWorktreeRemoveFailed),
-			"git worktree remove failed: "+stderr, "")
-		return
-	}
-
-	// Update meta.json to archived state
-	err = s.store.UpdateIntegrationWorktreeMeta(repoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
-		m.State = store.WorktreeStateArchived
-	})
-	if err != nil {
-		s.failWorktreeRm(w, http.StatusInternalServerError, requestID, repoID, record.WorktreeID, string(errors.EWorktreeRemoveFailed),
-			"failed to archive worktree metadata after git remove: "+err.Error(),
-			"inspect worktree metadata before retrying")
-		return
-	}
-
-	s.finishWorktreeRm(w, requestID, repoID, record.WorktreeID, false)
+	s.finishWorktreeRm(w, requestID, repoID, record.WorktreeID, treeMissing)
 }
 
 // failWorktreeRm emits worktree_rm_failed then writes the http error.
