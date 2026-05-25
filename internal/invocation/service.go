@@ -207,28 +207,11 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 
 	// 7. Capture base_commit
 	integrationBranch := opts.IntegrationWorktreeMeta.Branch
-	baseCommitResult, err := s.runner.Run(ctx, "git", []string{
-		"-C", opts.RepoRoot,
-		"rev-parse", integrationBranch,
-	}, exec.RunOpts{Env: opts.Env})
+	baseCommit, err := s.captureBaseCommit(ctx, opts.RepoRoot, integrationBranch, opts.Env)
 	if err != nil {
 		cleanup()
-		return nil, errors.WrapWithDetails(
-			errors.ESandboxCreateFailed,
-			"failed to get base commit",
-			err,
-			map[string]string{"branch": integrationBranch},
-		)
+		return nil, err
 	}
-	if baseCommitResult.ExitCode != 0 {
-		cleanup()
-		return nil, errors.NewWithDetails(
-			errors.ESandboxCreateFailed,
-			"failed to get base commit: "+strings.TrimSpace(baseCommitResult.Stderr),
-			map[string]string{"branch": integrationBranch},
-		)
-	}
-	baseCommit := strings.TrimSpace(baseCommitResult.Stdout)
 
 	// 8. Write invocation meta.json before git side effects so idempotency survives daemon restart.
 	meta := store.NewInvocationMeta(
@@ -260,79 +243,17 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 	}
 
 	// 9. Create sandbox git worktree + branch
-	args := []string{
-		"-C", opts.RepoRoot,
-		"worktree", "add",
-		"-b", sandboxBranch,
-		sandboxTreePath,
-		integrationBranch,
-	}
-
-	result, err := s.runner.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
-	if err != nil {
+	if err := s.createSandboxWorktree(ctx, opts.RepoRoot, sandboxBranch, sandboxTreePath, integrationBranch, opts.Env); err != nil {
 		cleanup()
-		return nil, errors.WrapWithDetails(
-			errors.ESandboxCreateFailed,
-			"failed to execute git worktree add",
-			err,
-			map[string]string{"command": "git " + strings.Join(args, " ")},
-		)
+		return nil, err
 	}
-
-	if result.ExitCode != 0 {
-		cleanup()
-		details := map[string]string{
-			"command":   "git " + strings.Join(args, " "),
-			"exit_code": fmt.Sprintf("%d", result.ExitCode),
-		}
-		if result.Stderr != "" {
-			details["stderr"] = strings.TrimSpace(result.Stderr)
-		}
-		return nil, errors.NewWithDetails(
-			errors.ESandboxCreateFailed,
-			"git worktree add failed: "+strings.TrimSpace(result.Stderr),
-			details,
-		)
-	}
-
 	gitWorktreeCreated = true
 	branchCreated = true
 
-	// 10. Write SANDBOX_MARKER
-	agencyDir := filepath.Join(sandboxTreePath, ".agency")
-	if err := s.fsys.MkdirAll(agencyDir, 0o755); err != nil {
+	// 10. Write SANDBOX_MARKER + defensive integration-marker check
+	if err := s.writeSandboxMarker(sandboxTreePath); err != nil {
 		cleanup()
-		return nil, errors.WrapWithDetails(
-			errors.ESandboxCreateFailed,
-			"failed to create .agency directory in sandbox",
-			err,
-			map[string]string{"path": agencyDir},
-		)
-	}
-
-	markerPath := filepath.Join(agencyDir, SandboxMarkerFileName)
-	markerContent := "# This directory is a sandbox worktree.\n# Runners may execute here.\n"
-	if err := s.fsys.WriteFile(markerPath, []byte(markerContent), 0o644); err != nil {
-		cleanup()
-		return nil, errors.WrapWithDetails(
-			errors.ESandboxCreateFailed,
-			"failed to write SANDBOX_MARKER",
-			err,
-			map[string]string{"path": markerPath},
-		)
-	}
-
-	// Verify sandbox does NOT have integration marker (defensive check)
-	if integrationworktree.HasIntegrationMarker(sandboxTreePath) {
-		cleanup()
-		return nil, errors.NewWithDetails(
-			errors.ESandboxPathUnsafe,
-			"CRITICAL: sandbox tree contains INTEGRATION_MARKER - aborting",
-			map[string]string{
-				"sandbox_path": sandboxTreePath,
-				"hint":         "this is a bug - sandbox path resolved to integration tree",
-			},
-		)
+		return nil, err
 	}
 
 	return &CreateResult{
@@ -342,6 +263,95 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		BaseCommit:    baseCommit,
 		TmuxSession:   tmuxSession,
 	}, nil
+}
+
+// writeSandboxMarker creates .agency/SANDBOX_MARKER in sandboxTreePath and
+// defensively rejects any tree that turns out to carry an INTEGRATION_MARKER.
+func (s *Service) writeSandboxMarker(sandboxTreePath string) error {
+	agencyDir := filepath.Join(sandboxTreePath, ".agency")
+	if err := s.fsys.MkdirAll(agencyDir, 0o755); err != nil {
+		return errors.WrapWithDetails(
+			errors.ESandboxCreateFailed,
+			"failed to create .agency directory in sandbox",
+			err,
+			map[string]string{"path": agencyDir},
+		)
+	}
+	markerPath := filepath.Join(agencyDir, SandboxMarkerFileName)
+	markerContent := "# This directory is a sandbox worktree.\n# Runners may execute here.\n"
+	if err := s.fsys.WriteFile(markerPath, []byte(markerContent), 0o644); err != nil {
+		return errors.WrapWithDetails(
+			errors.ESandboxCreateFailed,
+			"failed to write SANDBOX_MARKER",
+			err,
+			map[string]string{"path": markerPath},
+		)
+	}
+	if integrationworktree.HasIntegrationMarker(sandboxTreePath) {
+		return errors.NewWithDetails(
+			errors.ESandboxPathUnsafe,
+			"CRITICAL: sandbox tree contains INTEGRATION_MARKER - aborting",
+			map[string]string{
+				"sandbox_path": sandboxTreePath,
+				"hint":         "this is a bug - sandbox path resolved to integration tree",
+			},
+		)
+	}
+	return nil
+}
+
+// captureBaseCommit runs git rev-parse on integrationBranch and returns the
+// resulting commit. All failures are wrapped as ESandboxCreateFailed.
+func (s *Service) captureBaseCommit(ctx context.Context, repoRoot, integrationBranch string, env map[string]string) (string, error) {
+	result, err := s.runner.Run(ctx, "git", []string{"-C", repoRoot, "rev-parse", integrationBranch}, exec.RunOpts{Env: env})
+	if err != nil {
+		return "", errors.WrapWithDetails(
+			errors.ESandboxCreateFailed,
+			"failed to get base commit",
+			err,
+			map[string]string{"branch": integrationBranch},
+		)
+	}
+	if result.ExitCode != 0 {
+		return "", errors.NewWithDetails(
+			errors.ESandboxCreateFailed,
+			"failed to get base commit: "+strings.TrimSpace(result.Stderr),
+			map[string]string{"branch": integrationBranch},
+		)
+	}
+	return strings.TrimSpace(result.Stdout), nil
+}
+
+// createSandboxWorktree adds a git worktree at sandboxTreePath on a new
+// sandboxBranch starting from integrationBranch. All failures are wrapped as
+// ESandboxCreateFailed.
+func (s *Service) createSandboxWorktree(ctx context.Context, repoRoot, sandboxBranch, sandboxTreePath, integrationBranch string, env map[string]string) error {
+	args := []string{"-C", repoRoot, "worktree", "add", "-b", sandboxBranch, sandboxTreePath, integrationBranch}
+	result, err := s.runner.Run(ctx, "git", args, exec.RunOpts{Env: env})
+	command := "git " + strings.Join(args, " ")
+	if err != nil {
+		return errors.WrapWithDetails(
+			errors.ESandboxCreateFailed,
+			"failed to execute git worktree add",
+			err,
+			map[string]string{"command": command},
+		)
+	}
+	if result.ExitCode != 0 {
+		details := map[string]string{
+			"command":   command,
+			"exit_code": fmt.Sprintf("%d", result.ExitCode),
+		}
+		if result.Stderr != "" {
+			details["stderr"] = strings.TrimSpace(result.Stderr)
+		}
+		return errors.NewWithDetails(
+			errors.ESandboxCreateFailed,
+			"git worktree add failed: "+strings.TrimSpace(result.Stderr),
+			details,
+		)
+	}
+	return nil
 }
 
 // validateSandboxPath ensures the sandbox path does not resolve to the integration tree.
