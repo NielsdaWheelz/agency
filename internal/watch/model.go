@@ -303,6 +303,46 @@ func (m model) Init() tea.Cmd {
 	}
 }
 
+// handleActionResult applies an actionResultMsg to the model: clears the
+// running/menu/confirmation flags, formats the user-visible message, and
+// queues whichever data loads the affected page needs to refresh.
+func (m model) handleActionResult(msg actionResultMsg) (tea.Model, tea.Cmd) {
+	m.actionRunning = false
+	m.actionMenuOpen = false
+	m.confirmAction = ""
+	m.followupInput = false
+	m.followupText = ""
+	m.lastActionError = msg.err != nil
+	if msg.err != nil {
+		m.lastActionMessage = formatActionError(msg.kind, msg.err, msg.invocationID, msg.worktreeID, msg.turnID)
+		if output := strings.TrimSpace(msg.output); output != "" {
+			m.lastActionMessage += " | " + output
+		}
+	} else if output := strings.TrimSpace(msg.output); output != "" {
+		m.lastActionMessage = output
+	} else {
+		m.lastActionMessage = fmt.Sprintf("%s complete for %s", msg.kind, actionTarget(msg.kind, msg.invocationID, msg.worktreeID, msg.turnID))
+	}
+
+	cmds := make([]tea.Cmd, 0, 2)
+	if msg.kind == actionRestore && m.page == pageHistory && !m.historyLoading {
+		m.historyLoading = true
+		cmds = append(cmds, m.loadHistoryCmd())
+	}
+	if m.page == pageReview && !m.reviewLoading {
+		m.reviewLoading = true
+		cmds = append(cmds, m.loadReviewCmd())
+	}
+	if !m.workspaceLoading {
+		m.workspaceLoading = true
+		cmds = append(cmds, m.loadWorkspaceSnapshotCmd())
+	}
+	if len(cmds) == 0 {
+		return m, nil
+	}
+	return m, tea.Batch(cmds...)
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -419,40 +459,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case actionResultMsg:
-		m.actionRunning = false
-		m.actionMenuOpen = false
-		m.confirmAction = ""
-		m.followupInput = false
-		m.followupText = ""
-		m.lastActionError = msg.err != nil
-		if msg.err != nil {
-			m.lastActionMessage = formatActionError(msg.kind, msg.err, msg.invocationID, msg.worktreeID, msg.turnID)
-			if output := strings.TrimSpace(msg.output); output != "" {
-				m.lastActionMessage += " | " + output
-			}
-		} else if output := strings.TrimSpace(msg.output); output != "" {
-			m.lastActionMessage = output
-		} else {
-			m.lastActionMessage = fmt.Sprintf("%s complete for %s", msg.kind, actionTarget(msg.kind, msg.invocationID, msg.worktreeID, msg.turnID))
-		}
-
-		cmds := make([]tea.Cmd, 0, 2)
-		if msg.kind == actionRestore && m.page == pageHistory && !m.historyLoading {
-			m.historyLoading = true
-			cmds = append(cmds, m.loadHistoryCmd())
-		}
-		if m.page == pageReview && !m.reviewLoading {
-			m.reviewLoading = true
-			cmds = append(cmds, m.loadReviewCmd())
-		}
-		if !m.workspaceLoading {
-			m.workspaceLoading = true
-			cmds = append(cmds, m.loadWorkspaceSnapshotCmd())
-		}
-		if len(cmds) == 0 {
-			return m, nil
-		}
-		return m, tea.Batch(cmds...)
+		return m.handleActionResult(msg)
 
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
