@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/NielsdaWheelz/agency/internal/daemon/checkpoint"
 	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
 	"github.com/NielsdaWheelz/agency/internal/daemon/stream"
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -122,25 +121,7 @@ type supervisedHeadedSetup struct {
 // launchSupervisedHeadedProcess.
 func (s *Server) buildSupervisedHeadedProcess(ctx context.Context, setup supervisedHeadedSetup) *supervisedProcess {
 	streamLogPath := s.store.InvocationStreamLogPath(setup.repoID, setup.invocationID)
-	parser := stream.NewParser(setup.invocationID, setup.runner, s.clock)
-	parser.SetInitialSeq(loadMaxStreamSeq(streamLogPath))
-	cpConfig := checkpoint.DefaultConfig()
-	cpConfig.IncludeUntracked = setup.includeUntracked
-	cpConfig.Env = setup.gitEnv
-	cpEngine := checkpoint.NewEngineWithWriter(
-		setup.invocationID,
-		setup.repoID,
-		setup.sandboxPath,
-		setup.repoRoot,
-		s.store.InvocationDir(setup.repoID, setup.invocationID),
-		s.store.InvocationEventsPath(setup.repoID, setup.invocationID),
-		cpConfig,
-		s.runner,
-		s.fsys,
-		s.clock,
-		s.invocationEvents,
-	)
-	s.configureCheckpointIgnoredDirs(daemonOwnedContext(ctx), setup.repoID, setup.invocationID, cpEngine, setup.sandboxPath, cpConfig.Env)
+	parser, cpEngine := s.buildParserAndCheckpointEngine(daemonOwnedContext(ctx), setup.repoID, setup.invocationID, setup.sandboxPath, setup.repoRoot, setup.runner, streamLogPath, setup.gitEnv, !setup.includeUntracked)
 	proc := &supervisedProcess{
 		invocationID:          setup.invocationID,
 		repoID:                setup.repoID,
@@ -157,7 +138,6 @@ func (s *Server) buildSupervisedHeadedProcess(ctx context.Context, setup supervi
 		checkpointEngine:      cpEngine,
 		done:                  make(chan struct{}),
 	}
-	s.attachCheckpointTriggers(setup.repoID, setup.invocationID, parser, cpEngine)
 	parser.SetFinalNotify(func(n stream.FinalNotification) {
 		s.handleSuccessfulFinalNotification(proc, n)
 	})

@@ -118,13 +118,7 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 	stderrFile := logFiles.StderrFile
 	streamFile := logFiles.StreamFile
 
-	envOverlay := copyStringMap(req.Env)
-	if envOverlay == nil {
-		envOverlay = map[string]string{}
-	}
-	for k, v := range exec.NonInteractiveEnv() {
-		envOverlay[k] = v
-	}
+	envOverlay := prSyncNonInteractiveEnv(req.Env)
 
 	var stdinReader *os.File
 	var followUpRelay relay.FollowUpRelay
@@ -178,31 +172,7 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 
 	pid := startedProc.PID
 	pgid := startedProc.PGID
-	parser := stream.NewParser(result.InvocationID, req.Runner, s.clock)
-	parser.SetInitialSeq(loadMaxStreamSeq(streamLogPath))
-
-	checkpointsDir := s.store.InvocationDir(repoID, result.InvocationID)
-	eventsPath := s.store.InvocationEventsPath(repoID, result.InvocationID)
-	cpConfig := checkpoint.DefaultConfig()
-	cpConfig.IncludeUntracked = !req.NoIncludeUntracked
-	cpConfig.Env = gitEnv
-
-	cpEngine := checkpoint.NewEngineWithWriter(
-		result.InvocationID,
-		repoID,
-		result.SandboxPath,
-		repoRoot,
-		checkpointsDir,
-		eventsPath,
-		cpConfig,
-		s.runner,
-		s.fsys,
-		s.clock,
-		s.invocationEvents,
-	)
-	s.configureCheckpointIgnoredDirs(runnerCtx, repoID, result.InvocationID, cpEngine, result.SandboxPath, cpConfig.Env)
-
-	s.attachCheckpointTriggers(repoID, result.InvocationID, parser, cpEngine)
+	parser, cpEngine := s.buildParserAndCheckpointEngine(runnerCtx, repoID, result.InvocationID, result.SandboxPath, repoRoot, req.Runner, streamLogPath, gitEnv, req.NoIncludeUntracked)
 
 	proc := &supervisedProcess{
 		invocationID:          result.InvocationID,
@@ -220,20 +190,7 @@ func (s *Server) startRunnerWithArgs(ctx context.Context, repoID string, result 
 		relay:                 followUpRelay,
 		done:                  make(chan struct{}),
 	}
-	if proc.relay != nil {
-		proc.initializeTurnTracking()
-	}
-	proc.setResumeSessionID(resumeSessionID)
-	parser.SetFinalNotify(func(n stream.FinalNotification) {
-		s.handleSuccessfulFinalNotification(proc, n)
-	})
-	parser.SetSessionStartNotify(func(n stream.SessionStartNotification) {
-		proc.setResumeSessionID(n.SessionID)
-	})
-
-	s.mu.Lock()
-	s.processes[result.InvocationID] = proc
-	s.mu.Unlock()
+	s.attachSupervisedProcess(proc, resumeSessionID)
 
 	if claim != nil {
 		if err := claim(pid, pgid); err != nil {
@@ -269,6 +226,57 @@ func copyStringMap(in map[string]string) map[string]string {
 		return nil
 	}
 	return maps.Clone(in)
+}
+
+// attachSupervisedProcess wires parser notifications into proc, applies
+// initial resume state, and registers the process under the server mutex.
+func (s *Server) attachSupervisedProcess(proc *supervisedProcess, resumeSessionID string) {
+	if proc.relay != nil {
+		proc.initializeTurnTracking()
+	}
+	proc.setResumeSessionID(resumeSessionID)
+	if proc.parser != nil {
+		proc.parser.SetFinalNotify(func(n stream.FinalNotification) {
+			s.handleSuccessfulFinalNotification(proc, n)
+		})
+		proc.parser.SetSessionStartNotify(func(n stream.SessionStartNotification) {
+			proc.setResumeSessionID(n.SessionID)
+		})
+	}
+	s.mu.Lock()
+	s.processes[proc.invocationID] = proc
+	s.mu.Unlock()
+}
+
+func (s *Server) buildParserAndCheckpointEngine(
+	ctx context.Context,
+	repoID, invocationID, sandboxPath, repoRoot, runner, streamLogPath string,
+	gitEnv map[string]string,
+	noIncludeUntracked bool,
+) (*stream.Parser, *checkpoint.Engine) {
+	parser := stream.NewParser(invocationID, runner, s.clock)
+	parser.SetInitialSeq(loadMaxStreamSeq(streamLogPath))
+
+	cpConfig := checkpoint.DefaultConfig()
+	cpConfig.IncludeUntracked = !noIncludeUntracked
+	cpConfig.Env = gitEnv
+
+	cpEngine := checkpoint.NewEngineWithWriter(
+		invocationID,
+		repoID,
+		sandboxPath,
+		repoRoot,
+		s.store.InvocationDir(repoID, invocationID),
+		s.store.InvocationEventsPath(repoID, invocationID),
+		cpConfig,
+		s.runner,
+		s.fsys,
+		s.clock,
+		s.invocationEvents,
+	)
+	s.configureCheckpointIgnoredDirs(ctx, repoID, invocationID, cpEngine, sandboxPath, cpConfig.Env)
+	s.attachCheckpointTriggers(repoID, invocationID, parser, cpEngine)
+	return parser, cpEngine
 }
 
 func (s *Server) cleanupFailedInvocation(ctx context.Context, repoID string, result *invocation.CreateResult, repoRoot, failureReason string, env map[string]string) {
