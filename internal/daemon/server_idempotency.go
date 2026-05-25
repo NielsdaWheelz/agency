@@ -2,9 +2,6 @@ package daemon
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
@@ -115,7 +112,7 @@ func worktreeIdempotencyKey(repoID, idempotencyKey string) string {
 }
 
 func worktreeCreateFingerprint(repoRoot string, req WorktreeCreateRequest, execCtx executionContext) string {
-	payload, _ := json.Marshal(struct {
+	return hashStructFingerprint(struct {
 		RepoRoot         string `json:"repo_root"`
 		Name             string `json:"name"`
 		BaseBranch       string `json:"base_branch"`
@@ -128,8 +125,6 @@ func worktreeCreateFingerprint(repoRoot string, req WorktreeCreateRequest, execC
 		ExecutionProfile: execCtx.Profile,
 		CheckoutRoot:     execCtx.CheckoutRoot,
 	})
-	sum := sha256.Sum256(payload)
-	return hex.EncodeToString(sum[:])
 }
 
 func (s *Server) checkWorktreeIdempotency(repoID, idempotencyKey, fingerprint string) (worktreeIdempotencyEntry, bool, bool) {
@@ -192,16 +187,13 @@ func (s *Server) findWorktreeByIdempotencyKey(repoID, idempotencyKey, fingerprin
 }
 
 func followUpFingerprint(invocationID, prompt string) string {
-	promptHash := sha256.Sum256([]byte(prompt))
-	payload, _ := json.Marshal(struct {
+	return hashStructFingerprint(struct {
 		InvocationID string `json:"invocation_id"`
 		PromptSHA256 string `json:"prompt_sha256"`
 	}{
 		InvocationID: invocationID,
-		PromptSHA256: hex.EncodeToString(promptHash[:]),
+		PromptSHA256: sha256Hex([]byte(prompt)),
 	})
-	sum := sha256.Sum256(payload)
-	return hex.EncodeToString(sum[:])
 }
 
 func (s *Server) reserveFollowUpIdempotency(repoID, clientRequestID, invocationID, fingerprint string) (idempotencyEntry, bool, bool) {

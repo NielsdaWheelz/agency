@@ -1,9 +1,6 @@
 package daemon
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -256,8 +253,7 @@ func normalizeAndValidateTaskRetryRequest(req *TaskRetryRequest, meta *store.Tas
 }
 
 func taskRetryFingerprint(meta *store.TaskMeta, mode, runner string, req TaskRetryRequest, requestEnv map[string]string) string {
-	promptHash := sha256.Sum256([]byte(req.Prompt))
-	payload, _ := json.Marshal(struct {
+	return hashStructFingerprint(struct {
 		TaskID             string   `json:"task_id"`
 		WorktreeID         string   `json:"worktree_id"`
 		CheckoutRoot       string   `json:"checkout_root"`
@@ -277,13 +273,11 @@ func taskRetryFingerprint(meta *store.TaskMeta, mode, runner string, req TaskRet
 		Mode:               mode,
 		Runner:             runner,
 		EnvKeys:            sortedEnvKeys(requestEnv),
-		PromptSHA256:       hex.EncodeToString(promptHash[:]),
+		PromptSHA256:       sha256Hex([]byte(req.Prompt)),
 		InvocationName:     req.InvocationName,
 		RunnerArgs:         slices.Clone(req.RunnerArgs),
 		NoIncludeUntracked: req.NoIncludeUntracked,
 	})
-	sum := sha256.Sum256(payload)
-	return hex.EncodeToString(sum[:])
 }
 
 func (s *Server) writeTaskRetryIdempotencyResult(w http.ResponseWriter, requestID string, meta *store.TaskMeta, clientRequestID, fingerprint string, finalizeIncomplete bool) bool {

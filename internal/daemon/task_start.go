@@ -2,9 +2,6 @@ package daemon
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -314,8 +311,7 @@ func (s *Server) startTaskHeadedInvocation(ctx context.Context, repoRoot, repoID
 }
 
 func taskStartFingerprint(repoRoot, checkoutRoot string, req TaskStartRequest, requestEnv map[string]string) string {
-	promptHash := sha256.Sum256([]byte(req.Prompt))
-	payload, _ := json.Marshal(struct {
+	return hashStructFingerprint(struct {
 		RepoRoot           string   `json:"repo_root"`
 		Name               string   `json:"name"`
 		BaseBranch         string   `json:"base_branch"`
@@ -337,13 +333,11 @@ func taskStartFingerprint(repoRoot, checkoutRoot string, req TaskStartRequest, r
 		Mode:               req.Mode,
 		Runner:             req.Runner,
 		EnvKeys:            sortedEnvKeys(requestEnv),
-		PromptSHA256:       hex.EncodeToString(promptHash[:]),
+		PromptSHA256:       sha256Hex([]byte(req.Prompt)),
 		InvocationName:     req.InvocationName,
 		RunnerArgs:         slices.Clone(req.RunnerArgs),
 		NoIncludeUntracked: req.NoIncludeUntracked,
 	})
-	sum := sha256.Sum256(payload)
-	return hex.EncodeToString(sum[:])
 }
 
 func (s *Server) findTaskByClientRequestID(repoID, clientRequestID, fingerprint string) (*store.TaskRecord, bool, bool) {

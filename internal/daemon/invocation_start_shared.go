@@ -317,9 +317,22 @@ func validateControlPlaneStartInvocationName(name string) error {
 	return core.ValidateName(name)
 }
 
+// hashStructFingerprint serialises v as JSON and returns the hex-encoded
+// sha256 of the result. Used to compute stable idempotency fingerprints over
+// arbitrary request shapes.
+func hashStructFingerprint(v any) string {
+	payload, _ := json.Marshal(v)
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
+}
+
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
 func controlPlaneStartFingerprint(repoRoot, worktreeID, checkoutRoot string, mode store.RunnerMode, req ControlPlaneStartRequest, requestEnv map[string]string) string {
-	promptHash := sha256.Sum256([]byte(req.Prompt))
-	payload, _ := json.Marshal(struct {
+	return hashStructFingerprint(struct {
 		RepoRoot           string           `json:"repo_root"`
 		WorktreeID         string           `json:"worktree_id"`
 		CheckoutRoot       string           `json:"checkout_root"`
@@ -339,13 +352,11 @@ func controlPlaneStartFingerprint(repoRoot, worktreeID, checkoutRoot string, mod
 		Mode:               mode,
 		Runner:             req.Runner,
 		EnvKeys:            sortedEnvKeys(requestEnv),
-		PromptSHA256:       hex.EncodeToString(promptHash[:]),
+		PromptSHA256:       sha256Hex([]byte(req.Prompt)),
 		InvocationName:     req.InvocationName,
 		RunnerArgs:         slices.Clone(req.RunnerArgs),
 		NoIncludeUntracked: req.NoIncludeUntracked,
 	})
-	sum := sha256.Sum256(payload)
-	return hex.EncodeToString(sum[:])
 }
 
 func isInsideAgencyManagedWorktree(path string) bool {
