@@ -124,40 +124,7 @@ func (s *Server) runWorktreeArchive(
 
 	removeResult, removeRunErr := s.runner.Run(removeCtx, "git", removeArgs, exec.RunOpts{Env: withNonInteractiveEnv(profileEnv)})
 	removeCmd := "git " + strings.Join(removeArgs, " ")
-	appendArchiveSection := func(title string, result exec.CmdResult, runErr error) {
-		logFile, err := os.OpenFile(archiveLogPath, os.O_WRONLY|os.O_APPEND, 0o600)
-		if err != nil {
-			return
-		}
-		defer func() { _ = logFile.Close() }()
-
-		_, _ = fmt.Fprintln(logFile)
-		_, _ = fmt.Fprintf(logFile, "=== %s ===\n", title)
-		_, _ = fmt.Fprintf(logFile, "Exit code: %d\n", result.ExitCode)
-		if strings.TrimSpace(result.Stdout) != "" {
-			_, _ = fmt.Fprintln(logFile)
-			_, _ = fmt.Fprintln(logFile, "=== stdout ===")
-			_, _ = fmt.Fprint(logFile, result.Stdout)
-			if !strings.HasSuffix(result.Stdout, "\n") {
-				_, _ = fmt.Fprintln(logFile)
-			}
-		}
-		if strings.TrimSpace(result.Stderr) != "" {
-			_, _ = fmt.Fprintln(logFile)
-			_, _ = fmt.Fprintln(logFile, "=== stderr ===")
-			_, _ = fmt.Fprint(logFile, result.Stderr)
-			if !strings.HasSuffix(result.Stderr, "\n") {
-				_, _ = fmt.Fprintln(logFile)
-			}
-		}
-		if runErr != nil {
-			_, _ = fmt.Fprintln(logFile)
-			_, _ = fmt.Fprintln(logFile, "=== execution_error ===")
-			_, _ = fmt.Fprintln(logFile, runErr.Error())
-		}
-		_ = s.fsys.Chmod(archiveLogPath, 0o600)
-	}
-	appendArchiveSection(removeCmd, removeResult, removeRunErr)
+	s.appendArchiveLogSection(archiveLogPath, removeCmd, removeResult, removeRunErr)
 	if removeRunErr != nil {
 		if ctx.Err() != nil {
 			return "", errors.Wrap(errors.EWorktreeMergeInterrupted, "merge interrupted while removing archived worktree", ctx.Err())
@@ -199,7 +166,7 @@ func (s *Server) runWorktreeArchive(
 	if err := s.store.UpdateIntegrationWorktreeMeta(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMeta) {
 		m.State = store.WorktreeStateArchived
 	}); err != nil {
-		appendArchiveSection("metadata", exec.CmdResult{
+		s.appendArchiveLogSection(archiveLogPath, "metadata", exec.CmdResult{
 			Stdout: fmt.Sprintf("failed to persist archived state: %v\n", err),
 		}, nil)
 		code := errors.CodeOr(err, errors.EMetaWriteFailed)
@@ -215,6 +182,41 @@ func (s *Server) runWorktreeArchive(
 	}
 
 	return archiveLogPath, nil
+}
+
+// appendArchiveLogSection appends a delimited "=== title ===" block plus
+// optional stdout/stderr/execution_error sections to archiveLogPath, then
+// re-applies the 0o600 mode. Best-effort: open failures silently drop the
+// section so the surrounding flow's primary error is preserved.
+func (s *Server) appendArchiveLogSection(archiveLogPath, title string, result exec.CmdResult, runErr error) {
+	logFile, err := os.OpenFile(archiveLogPath, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	defer func() { _ = logFile.Close() }()
+
+	_, _ = fmt.Fprintln(logFile)
+	_, _ = fmt.Fprintf(logFile, "=== %s ===\n", title)
+	_, _ = fmt.Fprintf(logFile, "Exit code: %d\n", result.ExitCode)
+	writeNamedSection := func(name, content string) {
+		if strings.TrimSpace(content) == "" {
+			return
+		}
+		_, _ = fmt.Fprintln(logFile)
+		_, _ = fmt.Fprintln(logFile, "=== "+name+" ===")
+		_, _ = fmt.Fprint(logFile, content)
+		if !strings.HasSuffix(content, "\n") {
+			_, _ = fmt.Fprintln(logFile)
+		}
+	}
+	writeNamedSection("stdout", result.Stdout)
+	writeNamedSection("stderr", result.Stderr)
+	if runErr != nil {
+		_, _ = fmt.Fprintln(logFile)
+		_, _ = fmt.Fprintln(logFile, "=== execution_error ===")
+		_, _ = fmt.Fprintln(logFile, runErr.Error())
+	}
+	_ = s.fsys.Chmod(archiveLogPath, 0o600)
 }
 
 func buildWorktreeMergeScriptEnv(
