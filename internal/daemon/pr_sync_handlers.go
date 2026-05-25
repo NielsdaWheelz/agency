@@ -114,77 +114,72 @@ func (s *Server) runPRSync(
 	}
 
 	if len(prs) == 0 {
-		createErr := prSyncCreatePR(ctx, s.runner, wtMeta.TreePath, wtMeta.BaseBranch, wtMeta.Branch, title, bodyPath, env)
-		createdNow := createErr == nil
-		if createErr != nil && !prSyncIsAlreadyExistsError(createErr) {
-			return nil, createErr
-		}
+		return s.prSyncCreateAndResolve(ctx, wtMeta, owner, title, head, bodyPath, env)
+	}
+	return s.prSyncUpdateExisting(ctx, wtMeta, &prs[0], bodyPath, env)
+}
 
-		pr, lookupErr := prSyncLookupPRAfterCreateWithRetry(ctx, s.runner, wtMeta.TreePath, owner, wtMeta.Branch, env)
-		if lookupErr != nil {
-			return nil, lookupErr
-		}
-		if pr == nil {
-			return nil, errors.NewWithDetails(
-				errors.EGHPRViewFailed,
-				"failed to resolve PR after create",
-				map[string]string{"head": head, "branch": wtMeta.Branch},
-			)
-		}
-		if strings.ToUpper(pr.State) != "OPEN" {
-			return nil, errors.NewWithDetails(
-				errors.EPRNotOpen,
-				fmt.Sprintf("PR #%d exists but state is %s (expected OPEN)", pr.Number, pr.State),
-				map[string]string{
-					"pr_number": fmt.Sprintf("%d", pr.Number),
-					"state":     pr.State,
-				},
-			)
-		}
-
-		// Newly created PR already has body from --body-file.
-		if createdNow {
-			return &prSyncResult{
-				Branch:   wtMeta.Branch,
-				PRNumber: pr.Number,
-				PRURL:    pr.URL,
-				PRAction: "created",
-			}, nil
-		}
-
-		// PR already existed (create raced/failed as already exists): update body.
-		if err := prSyncEditPRBody(ctx, s.runner, wtMeta.TreePath, pr.Number, bodyPath, env); err != nil {
-			return nil, err
-		}
-		return &prSyncResult{
-			Branch:   wtMeta.Branch,
-			PRNumber: pr.Number,
-			PRURL:    pr.URL,
-			PRAction: "updated",
-		}, nil
+func (s *Server) prSyncCreateAndResolve(
+	ctx context.Context,
+	wtMeta *store.IntegrationWorktreeMeta,
+	owner, title, head, bodyPath string,
+	env map[string]string,
+) (*prSyncResult, error) {
+	createErr := prSyncCreatePR(ctx, s.runner, wtMeta.TreePath, wtMeta.BaseBranch, wtMeta.Branch, title, bodyPath, env)
+	createdNow := createErr == nil
+	if createErr != nil && !prSyncIsAlreadyExistsError(createErr) {
+		return nil, createErr
 	}
 
-	pr := prs[0]
-	if strings.ToUpper(pr.State) != "OPEN" {
+	pr, err := prSyncLookupPRAfterCreateWithRetry(ctx, s.runner, wtMeta.TreePath, owner, wtMeta.Branch, env)
+	if err != nil {
+		return nil, err
+	}
+	if pr == nil {
 		return nil, errors.NewWithDetails(
-			errors.EPRNotOpen,
-			fmt.Sprintf("PR #%d exists but state is %s (expected OPEN)", pr.Number, pr.State),
-			map[string]string{
-				"pr_number": fmt.Sprintf("%d", pr.Number),
-				"state":     pr.State,
-			},
+			errors.EGHPRViewFailed,
+			"failed to resolve PR after create",
+			map[string]string{"head": head, "branch": wtMeta.Branch},
 		)
+	}
+	if err := ensurePROpen(pr); err != nil {
+		return nil, err
+	}
+
+	if createdNow {
+		return &prSyncResult{Branch: wtMeta.Branch, PRNumber: pr.Number, PRURL: pr.URL, PRAction: "created"}, nil
+	}
+	return s.prSyncUpdateExisting(ctx, wtMeta, pr, bodyPath, env)
+}
+
+func (s *Server) prSyncUpdateExisting(
+	ctx context.Context,
+	wtMeta *store.IntegrationWorktreeMeta,
+	pr *prSyncPR,
+	bodyPath string,
+	env map[string]string,
+) (*prSyncResult, error) {
+	if err := ensurePROpen(pr); err != nil {
+		return nil, err
 	}
 	if err := prSyncEditPRBody(ctx, s.runner, wtMeta.TreePath, pr.Number, bodyPath, env); err != nil {
 		return nil, err
 	}
+	return &prSyncResult{Branch: wtMeta.Branch, PRNumber: pr.Number, PRURL: pr.URL, PRAction: "updated"}, nil
+}
 
-	return &prSyncResult{
-		Branch:   wtMeta.Branch,
-		PRNumber: pr.Number,
-		PRURL:    pr.URL,
-		PRAction: "updated",
-	}, nil
+func ensurePROpen(pr *prSyncPR) error {
+	if strings.ToUpper(pr.State) == "OPEN" {
+		return nil
+	}
+	return errors.NewWithDetails(
+		errors.EPRNotOpen,
+		fmt.Sprintf("PR #%d exists but state is %s (expected OPEN)", pr.Number, pr.State),
+		map[string]string{
+			"pr_number": fmt.Sprintf("%d", pr.Number),
+			"state":     pr.State,
+		},
+	)
 }
 
 func prSyncLookupPRAfterCreate(ctx context.Context, runner exec.CommandRunner, workDir, owner, branch string, env map[string]string) (*prSyncPR, error) {
