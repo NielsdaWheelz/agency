@@ -141,6 +141,89 @@ func validateControlPlaneStartCommon(req *ControlPlaneStartRequest, headless boo
 	return headedRunnerArgs, nil
 }
 
+// findReusableCachedInvocation checks the in-memory idempotency cache for a
+// match. Returns (entry, meta, nil) when the cached entry is valid and its
+// stored meta loads cleanly; (nil, nil, nil) when there is no cache hit; or
+// (nil, nil, fail) for a conflict or unreadable meta.
+func (s *Server) findReusableCachedInvocation(repoID string, scope idempotencyScope, modeLabel, clientRequestID, fingerprint string) (*idempotencyEntry, *store.InvocationMeta, *startFailure) {
+	entry, isDuplicate, conflict := s.checkIdempotency(scope, repoID, clientRequestID, fingerprint)
+	if !isDuplicate {
+		return nil, nil, nil
+	}
+	if conflict {
+		f := newStartFailure(http.StatusConflict, errors.EIdempotencyConflict, "client_request_id was already used for a different "+modeLabel+" invocation start request", "retry with the original request or choose a new client_request_id")
+		return nil, nil, &f
+	}
+	meta, err := s.store.ReadInvocationMeta(repoID, entry.invocationID)
+	if err != nil {
+		f := newStartFailure(http.StatusConflict, errors.EStoreCorrupt, "client_request_id was already accepted but invocation metadata is unreadable: "+err.Error(), "inspect invocation state before retrying")
+		return nil, nil, &f
+	}
+	if fail := evaluateIdempotentStartRecord(meta); fail != nil {
+		return nil, nil, fail
+	}
+	return &entry, meta, nil
+}
+
+// findReusableStoredInvocation does a fingerprint-aware store scan for an
+// existing invocation matching client_request_id. Same return convention as
+// findReusablePriorInvocation.
+func (s *Server) findReusableStoredInvocation(repoID, modeLabel, clientRequestID, fingerprint string) (*store.InvocationRecord, *startFailure) {
+	record, exists, conflict, err := s.findInvocationByClientRequestID(repoID, clientRequestID, fingerprint)
+	if err != nil {
+		f := newStartFailure(http.StatusInternalServerError, errors.EInternal, "failed to scan invocations for idempotency: "+err.Error(), "")
+		return nil, &f
+	}
+	if !exists {
+		return nil, nil
+	}
+	if conflict {
+		f := newStartFailure(http.StatusConflict, errors.EIdempotencyConflict, "client_request_id was already used for a different "+modeLabel+" invocation start request", "retry with the original request or choose a new client_request_id")
+		return nil, &f
+	}
+	if record.Meta == nil || record.Broken {
+		f := newStartFailure(http.StatusConflict, errors.EStoreCorrupt, "client_request_id record exists but invocation metadata is unreadable", "inspect invocation state before retrying")
+		return nil, &f
+	}
+	if fail := evaluateIdempotentStartRecord(record.Meta); fail != nil {
+		return nil, fail
+	}
+	return record, nil
+}
+
+// findReusablePriorInvocation scans for an existing invocation matching
+// req.ClientRequestID and validates it can be reused for an idempotent return.
+// Returns:
+//   - (record, nil) when an existing reusable record is found; the caller
+//     should record idempotency and write a success response.
+//   - (nil, fail) for any error or conflict surfaced by the scan or validation.
+//   - (nil, nil) when no prior record exists; the caller should proceed.
+//
+// modeLabel ("headed" or "headless") is inserted into the IdempotencyConflict
+// message so each handler keeps its surface-specific wording.
+func (s *Server) findReusablePriorInvocation(repoID, repoRoot, modeLabel string, mode store.RunnerMode, req ControlPlaneStartRequest, requestEnv map[string]string) (*store.InvocationRecord, *startFailure) {
+	record, exists, err := s.findInvocationRecordByClientRequestID(repoID, req.ClientRequestID)
+	if err != nil {
+		f := newStartFailure(http.StatusInternalServerError, errors.EInternal, "failed to scan invocations for idempotency: "+err.Error(), "")
+		return nil, &f
+	}
+	if !exists {
+		return nil, nil
+	}
+	if record.Meta == nil || record.Broken {
+		f := newStartFailure(http.StatusConflict, errors.EStoreCorrupt, "client_request_id record exists but invocation metadata is unreadable", "inspect invocation state before retrying")
+		return nil, &f
+	}
+	if s.directStartRequestConflictsWithRecord(repoID, repoRoot, mode, req, requestEnv, record.Meta) {
+		f := newStartFailure(http.StatusConflict, errors.EIdempotencyConflict, "client_request_id was already used for a different "+modeLabel+" invocation start request", "retry with the original request or choose a new client_request_id")
+		return nil, &f
+	}
+	if fail := evaluateIdempotentStartRecord(record.Meta); fail != nil {
+		return nil, fail
+	}
+	return record, nil
+}
+
 // runnerValidationFailure converts an error from validateControlPlaneStartRunner
 // into a typed startFailure with the appropriate HTTP status and hint.
 func runnerValidationFailure(err error) *startFailure {

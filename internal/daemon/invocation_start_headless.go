@@ -37,24 +37,14 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 	}
 
 	requestEnv := req.Env
-	if record, exists, err := s.findInvocationRecordByClientRequestID(repoIdentity.RepoID, req.ClientRequestID); err != nil {
-		writeErr(http.StatusInternalServerError, string(errors.EInternal), "failed to scan invocations for idempotency: "+err.Error(), "", req.ClientRequestID)
+	prior, fail := s.findReusablePriorInvocation(repoIdentity.RepoID, repoRoot, "headless", store.RunnerModeHeadless, req, requestEnv)
+	if fail != nil {
+		writeErr(fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID)
 		return
-	} else if exists {
-		if record.Meta == nil || record.Broken {
-			writeErr(http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id record exists but invocation metadata is unreadable", "inspect invocation state before retrying", req.ClientRequestID)
-			return
-		}
-		if s.directStartRequestConflictsWithRecord(repoIdentity.RepoID, repoRoot, store.RunnerModeHeadless, req, requestEnv, record.Meta) {
-			writeErr(http.StatusConflict, string(errors.EIdempotencyConflict), "client_request_id was already used for a different headless invocation start request", "retry with the original request or choose a new client_request_id", req.ClientRequestID)
-			return
-		}
-		if fail := evaluateIdempotentStartRecord(record.Meta); fail != nil {
-			writeErr(fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID)
-			return
-		}
-		s.recordIdempotency(idempotencyScopeHeadlessStart, repoIdentity.RepoID, req.ClientRequestID, record.InvocationID, record.Meta.RequestFingerprint)
-		s.writeControlPlaneSuccess(w, record.InvocationID, record.Meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
+	}
+	if prior != nil {
+		s.recordIdempotency(idempotencyScopeHeadlessStart, repoIdentity.RepoID, req.ClientRequestID, prior.InvocationID, prior.Meta.RequestFingerprint)
+		s.writeControlPlaneSuccess(w, prior.InvocationID, prior.Meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
 		return
 	}
 
@@ -77,41 +67,23 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 	defer func() { _ = prep.unlockRepo() }()
 
 	fingerprint := controlPlaneStartFingerprint(repoRoot, prep.wtRecord.WorktreeID, execCtx.CheckoutRoot, store.RunnerModeHeadless, req, requestEnv)
-	if entry, isDuplicate, conflict := s.checkIdempotency(idempotencyScopeHeadlessStart, repoIdentity.RepoID, req.ClientRequestID, fingerprint); isDuplicate {
-		if conflict {
-			writeErr(http.StatusConflict, string(errors.EIdempotencyConflict), "client_request_id was already used for a different headless invocation start request", "retry with the original request or choose a new client_request_id", req.ClientRequestID)
-			return
-		}
-		meta, err := s.store.ReadInvocationMeta(repoIdentity.RepoID, entry.invocationID)
-		if err != nil {
-			writeErr(http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id was already accepted but invocation metadata is unreadable: "+err.Error(), "inspect invocation state before retrying", req.ClientRequestID)
-			return
-		}
-		if fail := evaluateIdempotentStartRecord(meta); fail != nil {
-			writeErr(fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID)
-			return
-		}
-		s.writeControlPlaneSuccess(w, entry.invocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
+	cachedEntry, cachedMeta, fail := s.findReusableCachedInvocation(repoIdentity.RepoID, idempotencyScopeHeadlessStart, "headless", req.ClientRequestID, fingerprint)
+	if fail != nil {
+		writeErr(fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID)
 		return
 	}
-	if record, exists, conflict, err := s.findInvocationByClientRequestID(repoIdentity.RepoID, req.ClientRequestID, fingerprint); err != nil {
-		writeErr(http.StatusInternalServerError, string(errors.EInternal), "failed to scan invocations for idempotency: "+err.Error(), "", req.ClientRequestID)
+	if cachedEntry != nil {
+		s.writeControlPlaneSuccess(w, cachedEntry.invocationID, cachedMeta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
 		return
-	} else if exists {
-		if conflict {
-			writeErr(http.StatusConflict, string(errors.EIdempotencyConflict), "client_request_id was already used for a different headless invocation start request", "retry with the original request or choose a new client_request_id", req.ClientRequestID)
-			return
-		}
-		if record.Meta == nil || record.Broken {
-			writeErr(http.StatusConflict, string(errors.EStoreCorrupt), "client_request_id record exists but invocation metadata is unreadable", "inspect invocation state before retrying", req.ClientRequestID)
-			return
-		}
-		if fail := evaluateIdempotentStartRecord(record.Meta); fail != nil {
-			writeErr(fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID)
-			return
-		}
-		s.recordIdempotency(idempotencyScopeHeadlessStart, repoIdentity.RepoID, req.ClientRequestID, record.InvocationID, fingerprint)
-		s.writeControlPlaneSuccess(w, record.InvocationID, record.Meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
+	}
+	stored, fail := s.findReusableStoredInvocation(repoIdentity.RepoID, "headless", req.ClientRequestID, fingerprint)
+	if fail != nil {
+		writeErr(fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID)
+		return
+	}
+	if stored != nil {
+		s.recordIdempotency(idempotencyScopeHeadlessStart, repoIdentity.RepoID, req.ClientRequestID, stored.InvocationID, fingerprint)
+		s.writeControlPlaneSuccess(w, stored.InvocationID, stored.Meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
 		return
 	}
 
