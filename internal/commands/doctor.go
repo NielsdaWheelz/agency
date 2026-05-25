@@ -84,11 +84,6 @@ type DoctorOpts struct {
 // Doctor implements the `agency doctor` command.
 // Validates repo, tools, config, and scripts without mutating on-disk state.
 func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd string, opts DoctorOpts, stdout, stderr io.Writer) error {
-	targetPath := cwd
-	if opts.Path != "" {
-		targetPath = opts.Path
-	}
-
 	dirs, err := resolveCommandDirs(opts.DataDirOverride, opts.ConfigDirOverride)
 	if err != nil {
 		return err
@@ -96,27 +91,10 @@ func Doctor(ctx context.Context, cr agencyexec.CommandRunner, fsys fs.FS, cwd st
 	dirs.DataDir = doctorDisplayPath(dirs.DataDir)
 	dirs.ConfigDir = doctorDisplayPath(dirs.ConfigDir)
 	dirs.CacheDir = doctorDisplayPath(dirs.CacheDir)
-	if cwdInsideAgencyManagedTree(targetPath) {
-		ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
-		if err != nil {
-			return err
-		}
-		repoID, ok, err := agencyManagedTreeRepoID(ctx, ns.client, targetPath)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return errors.NewWithDetails(
-				errors.EUnsafeRepoRoot,
-				"target path is inside an agency-managed tree but no matching metadata was found",
-				map[string]string{"hint": "re-run against the original repo checkout"},
-			)
-		}
-		repo, err := resolveAccessibleRepo(ctx, ns.client, repoID)
-		if err != nil {
-			return err
-		}
-		targetPath = repo.PreferredRoot
+
+	targetPath, err := resolveDoctorTargetPath(ctx, fsys, cwd, opts)
+	if err != nil {
+		return err
 	}
 
 	repoRoot, err := git.GetRepoRoot(ctx, cr, targetPath, nil)
@@ -429,6 +407,39 @@ func pickRunnerDefault(userVal, repoVal, repoSource string) (string, string) {
 		return userVal, "user"
 	}
 	return "", "none"
+}
+
+// resolveDoctorTargetPath chooses --path > cwd as the target, then if it falls
+// inside an agency-managed tree, redirects to the registered repo's preferred
+// root so doctor inspects the upstream checkout rather than a sandbox.
+func resolveDoctorTargetPath(ctx context.Context, fsys fs.FS, cwd string, opts DoctorOpts) (string, error) {
+	targetPath := cwd
+	if opts.Path != "" {
+		targetPath = opts.Path
+	}
+	if !cwdInsideAgencyManagedTree(targetPath) {
+		return targetPath, nil
+	}
+	ns, err := setupDaemonNav(ctx, fsys, opts.DataDirOverride)
+	if err != nil {
+		return "", err
+	}
+	repoID, ok, err := agencyManagedTreeRepoID(ctx, ns.client, targetPath)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", errors.NewWithDetails(
+			errors.EUnsafeRepoRoot,
+			"target path is inside an agency-managed tree but no matching metadata was found",
+			map[string]string{"hint": "re-run against the original repo checkout"},
+		)
+	}
+	repo, err := resolveAccessibleRepo(ctx, ns.client, repoID)
+	if err != nil {
+		return "", err
+	}
+	return repo.PreferredRoot, nil
 }
 
 func doctorCanonicalPath(pathValue, label string) (string, error) {
