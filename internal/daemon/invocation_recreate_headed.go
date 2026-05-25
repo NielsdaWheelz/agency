@@ -14,6 +14,46 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
+// loadRecreatableHeadedMeta reads the invocation meta and confirms it can be
+// recreated: headed mode, not landed/discarded, sandbox directory exists.
+func (s *Server) loadRecreatableHeadedMeta(repoID, invocationID string) (*store.InvocationMeta, *startFailure) {
+	meta, err := s.store.ReadInvocationMeta(repoID, invocationID)
+	if err != nil {
+		if errors.GetCode(err) == errors.EInvocationNotFound {
+			f := newStartFailure(http.StatusNotFound, errors.EInvocationNotFound, "invocation not found", "")
+			return nil, &f
+		}
+		f := newStartFailure(http.StatusInternalServerError, errors.EInternal, "failed to read invocation meta: "+err.Error(), "")
+		return nil, &f
+	}
+	if meta.Mode != store.RunnerModeHeaded {
+		f := newStartFailure(http.StatusBadRequest, errors.EInvocationInvalidMode, "recreate is only supported for headed invocations", "use 'agency agent <invocation-ref> history' to inspect or 'agency agent <invocation-ref> restore' to roll back a headless invocation")
+		return nil, &f
+	}
+	if meta.LandingStatus == store.LandingStatusLanded {
+		f := newStartFailure(http.StatusConflict, errors.ELandAlreadyLanded, "invocation has already been landed", "start a new invocation from an active integration worktree")
+		return nil, &f
+	}
+	if meta.LandingStatus == store.LandingStatusDiscarded {
+		f := newStartFailure(http.StatusConflict, errors.ELandAlreadyDiscarded, "invocation has already been discarded", "start a new invocation from an active integration worktree")
+		return nil, &f
+	}
+	info, err := os.Stat(meta.SandboxPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			f := newStartFailure(http.StatusNotFound, errors.ESandboxMissing, "sandbox no longer exists", "sandbox was removed after landing or discarding")
+			return nil, &f
+		}
+		f := newStartFailure(http.StatusInternalServerError, errors.ESandboxMissing, "failed to inspect sandbox: "+err.Error(), "")
+		return nil, &f
+	}
+	if !info.IsDir() {
+		f := newStartFailure(http.StatusNotFound, errors.ESandboxMissing, "sandbox path is not a directory", "")
+		return nil, &f
+	}
+	return meta, nil
+}
+
 // reattachExistingHeadedSession returns the post-attach meta when a tmux
 // session for this invocation is already live. If the invocation is also
 // already supervised, only meta is refreshed; otherwise supervision is
@@ -112,38 +152,9 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 	}
 	defer func() { _ = unlock() }()
 
-	meta, err := s.store.ReadInvocationMeta(record.RepoID, record.InvocationID)
-	if err != nil {
-		if errors.GetCode(err) == errors.EInvocationNotFound {
-			respondErr(http.StatusNotFound, string(errors.EInvocationNotFound), "invocation not found", "")
-			return
-		}
-		respondErr(http.StatusInternalServerError, string(errors.EInternal), "failed to read invocation meta: "+err.Error(), "")
-		return
-	}
-	if meta.Mode != store.RunnerModeHeaded {
-		respondErr(http.StatusBadRequest, string(errors.EInvocationInvalidMode), "recreate is only supported for headed invocations", "use 'agency agent <invocation-ref> history' to inspect or 'agency agent <invocation-ref> restore' to roll back a headless invocation")
-		return
-	}
-	if meta.LandingStatus == store.LandingStatusLanded {
-		respondErr(http.StatusConflict, string(errors.ELandAlreadyLanded), "invocation has already been landed", "start a new invocation from an active integration worktree")
-		return
-	}
-	if meta.LandingStatus == store.LandingStatusDiscarded {
-		respondErr(http.StatusConflict, string(errors.ELandAlreadyDiscarded), "invocation has already been discarded", "start a new invocation from an active integration worktree")
-		return
-	}
-	info, err := os.Stat(meta.SandboxPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			respondErr(http.StatusNotFound, string(errors.ESandboxMissing), "sandbox no longer exists", "sandbox was removed after landing or discarding")
-			return
-		}
-		respondErr(http.StatusInternalServerError, string(errors.ESandboxMissing), "failed to inspect sandbox: "+err.Error(), "")
-		return
-	}
-	if !info.IsDir() {
-		respondErr(http.StatusNotFound, string(errors.ESandboxMissing), "sandbox path is not a directory", "")
+	meta, fail := s.loadRecreatableHeadedMeta(record.RepoID, record.InvocationID)
+	if fail != nil {
+		respondErr(fail.status, string(fail.code), fail.msg, fail.hint)
 		return
 	}
 
