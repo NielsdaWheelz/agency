@@ -78,55 +78,12 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 		return
 	}
 
-	mode := strings.TrimSpace(req.Mode)
-	if mode == "" {
-		mode = string(meta.Mode)
-	}
-	if mode == "" {
-		mode = string(store.RunnerModeHeadless)
-	}
-	runner := strings.TrimSpace(req.Runner)
-	if runner == "" {
-		runner = meta.Runner
-	}
-	if runner == "" {
-		s.writeTaskStartError(w, http.StatusBadRequest, requestID, errors.EInvalidArgument, "runner is required", "", req.ClientRequestID, meta)
-		return
-	}
-	headless := mode == string(store.RunnerModeHeadless)
-	switch mode {
-	case string(store.RunnerModeHeadless):
-		if req.Prompt == "" {
-			s.writeTaskStartError(w, http.StatusBadRequest, requestID, errors.EPromptRequired, "prompt is required for headless task retry", "", req.ClientRequestID, meta)
-			return
-		}
-		if len(req.Prompt) > MaxPromptSize {
-			s.writeTaskStartError(w, http.StatusBadRequest, requestID, errors.EPromptTooLarge, "prompt exceeds maximum size", "reduce prompt size or split into smaller chunks", req.ClientRequestID, meta)
-			return
-		}
-	case string(store.RunnerModeHeaded):
-		if req.Prompt != "" {
-			s.writeTaskStartError(w, http.StatusBadRequest, requestID, errors.EUsage, "headed task retry does not accept a prompt", "omit --prompt/--prompt-file or use --mode headless", req.ClientRequestID, meta)
-			return
-		}
-	default:
-		s.writeTaskStartError(w, http.StatusBadRequest, requestID, errors.EInvalidArgument, "mode must be headless or headed", "", req.ClientRequestID, meta)
-		return
-	}
-	canonicalRunner, err := validateControlPlaneStartRunner(runner, req.RunnerArgs, headless)
-	if err != nil {
-		fail := runnerValidationFailure(err)
+	mode, runner, fail := normalizeAndValidateTaskRetryRequest(&req, meta)
+	if fail != nil {
 		s.writeTaskStartError(w, fail.status, requestID, fail.code, fail.msg, fail.hint, req.ClientRequestID, meta)
 		return
 	}
-	runner = canonicalRunner
-	req.InvocationName = strings.TrimSpace(req.InvocationName)
-	req.ExecutionProfile = strings.TrimSpace(req.ExecutionProfile)
-	req.AgencyConfigPath = strings.TrimSpace(req.AgencyConfigPath)
-	if req.AgencyConfigPath != "" && !filepath.IsAbs(req.AgencyConfigPath) {
-		s.writeTaskStartError(w, http.StatusBadRequest, requestID, errors.EInvalidArgument, "agency_config_path must be absolute", "", req.ClientRequestID, meta)
-		return
-	}
+	headless := mode == string(store.RunnerModeHeadless)
 
 	requestEnv := copyStringMap(req.Env)
 	execCtx, err := s.resolveExecutionContext(meta.RepoRoot, repoID, req.AgencyConfigPath, req.ExecutionProfile)
@@ -240,6 +197,62 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 		return
 	}
 	s.writeTaskStartSuccess(w, requestID, req.ClientRequestID, latest, false)
+}
+
+// normalizeAndValidateTaskRetryRequest resolves the effective mode/runner for
+// a retry (request fields take precedence, else fall back to the existing task
+// meta), enforces prompt/mode/runner-args invariants, canonicalises the
+// runner, trims optional string fields, and returns the resolved mode + runner
+// or a typed startFailure on any validation error.
+func normalizeAndValidateTaskRetryRequest(req *TaskRetryRequest, meta *store.TaskMeta) (string, string, *startFailure) {
+	mode := strings.TrimSpace(req.Mode)
+	if mode == "" {
+		mode = string(meta.Mode)
+	}
+	if mode == "" {
+		mode = string(store.RunnerModeHeadless)
+	}
+	runner := strings.TrimSpace(req.Runner)
+	if runner == "" {
+		runner = meta.Runner
+	}
+	if runner == "" {
+		f := newStartFailure(http.StatusBadRequest, errors.EInvalidArgument, "runner is required", "")
+		return "", "", &f
+	}
+	headless := mode == string(store.RunnerModeHeadless)
+	switch mode {
+	case string(store.RunnerModeHeadless):
+		if req.Prompt == "" {
+			f := newStartFailure(http.StatusBadRequest, errors.EPromptRequired, "prompt is required for headless task retry", "")
+			return "", "", &f
+		}
+		if len(req.Prompt) > MaxPromptSize {
+			f := newStartFailure(http.StatusBadRequest, errors.EPromptTooLarge, "prompt exceeds maximum size", "reduce prompt size or split into smaller chunks")
+			return "", "", &f
+		}
+	case string(store.RunnerModeHeaded):
+		if req.Prompt != "" {
+			f := newStartFailure(http.StatusBadRequest, errors.EUsage, "headed task retry does not accept a prompt", "omit --prompt/--prompt-file or use --mode headless")
+			return "", "", &f
+		}
+	default:
+		f := newStartFailure(http.StatusBadRequest, errors.EInvalidArgument, "mode must be headless or headed", "")
+		return "", "", &f
+	}
+	canonicalRunner, err := validateControlPlaneStartRunner(runner, req.RunnerArgs, headless)
+	if err != nil {
+		return "", "", runnerValidationFailure(err)
+	}
+	runner = canonicalRunner
+	req.InvocationName = strings.TrimSpace(req.InvocationName)
+	req.ExecutionProfile = strings.TrimSpace(req.ExecutionProfile)
+	req.AgencyConfigPath = strings.TrimSpace(req.AgencyConfigPath)
+	if req.AgencyConfigPath != "" && !filepath.IsAbs(req.AgencyConfigPath) {
+		f := newStartFailure(http.StatusBadRequest, errors.EInvalidArgument, "agency_config_path must be absolute", "")
+		return "", "", &f
+	}
+	return mode, runner, nil
 }
 
 func taskRetryFingerprint(meta *store.TaskMeta, mode, runner string, req TaskRetryRequest, requestEnv map[string]string) string {
