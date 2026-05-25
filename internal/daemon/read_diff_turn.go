@@ -133,25 +133,13 @@ func (s *Server) resolveTurnDiffContext(record *resolvedInvocation, params GetDi
 		turnIndexByID[turn.EntryID] = i
 	}
 
-	startTurnIndex, ok := turnIndexByID[startTurnID]
-	if !ok {
-		return nil, errors.NewWithDetails(
-			errors.EInvalidArgument,
-			"selected turn was not found in invocation timeline",
-			map[string]string{
-				"turn_id": startTurnID,
-			},
-		)
+	startTurnIndex, startCheckpointID, err := lookupTurnAndCheckpoint(turns, turnIndexByID, startTurnID, "selected turn", "select a later turn or use full invocation diff")
+	if err != nil {
+		return nil, err
 	}
-	endTurnIndex, ok := turnIndexByID[endTurnID]
-	if !ok {
-		return nil, errors.NewWithDetails(
-			errors.EInvalidArgument,
-			"selected turn was not found in invocation timeline",
-			map[string]string{
-				"turn_id": endTurnID,
-			},
-		)
+	endTurnIndex, endCheckpointID, err := lookupTurnAndCheckpoint(turns, turnIndexByID, endTurnID, "selected turn range end", "")
+	if err != nil {
+		return nil, err
 	}
 	if startTurnIndex > endTurnIndex {
 		return nil, errors.NewWithDetails(
@@ -160,28 +148,6 @@ func (s *Server) resolveTurnDiffContext(record *resolvedInvocation, params GetDi
 			map[string]string{
 				"turn_start": startTurnID,
 				"turn_end":   endTurnID,
-			},
-		)
-	}
-
-	startCheckpointID := turns[startTurnIndex].CheckpointID
-	if startCheckpointID <= 0 {
-		return nil, errors.NewWithDetails(
-			errors.ECheckpointNotFound,
-			"no checkpoint mapping exists for selected turn",
-			map[string]string{
-				"turn_id": startTurnID,
-				"hint":    "select a later turn or use full invocation diff",
-			},
-		)
-	}
-	endCheckpointID := turns[endTurnIndex].CheckpointID
-	if endCheckpointID <= 0 {
-		return nil, errors.NewWithDetails(
-			errors.ECheckpointNotFound,
-			"no checkpoint mapping exists for selected turn range end",
-			map[string]string{
-				"turn_id": endTurnID,
 			},
 		)
 	}
@@ -238,6 +204,34 @@ func (s *Server) resolveTurnDiffContext(record *resolvedInvocation, params GetDi
 			ToCommit:          toCommit,
 		},
 	}, nil
+}
+
+// lookupTurnAndCheckpoint resolves turnID to its index within turns and its
+// associated CheckpointID. desc is interpolated into the not-found error
+// message; checkpointHint, when non-empty, is attached to the
+// no-checkpoint-mapping error to guide the caller.
+func lookupTurnAndCheckpoint(turns []Turn, turnIndexByID map[string]int, turnID, desc, checkpointHint string) (int, int, error) {
+	idx, ok := turnIndexByID[turnID]
+	if !ok {
+		return 0, 0, errors.NewWithDetails(
+			errors.EInvalidArgument,
+			desc+" was not found in invocation timeline",
+			map[string]string{"turn_id": turnID},
+		)
+	}
+	cpID := turns[idx].CheckpointID
+	if cpID <= 0 {
+		details := map[string]string{"turn_id": turnID}
+		if checkpointHint != "" {
+			details["hint"] = checkpointHint
+		}
+		return 0, 0, errors.NewWithDetails(
+			errors.ECheckpointNotFound,
+			"no checkpoint mapping exists for "+desc,
+			details,
+		)
+	}
+	return idx, cpID, nil
 }
 
 func resolveTurnSelectorBounds(params GetDiffParams) (DiffTurnSelector, string, string) {
