@@ -56,13 +56,19 @@ func (s *Server) recordIdempotency(scope idempotencyScope, repoID, clientRequest
 	}
 }
 
-func (s *Server) cleanupExpiredIdempotency() {
-	now := s.clock().Unix()
-	for key, entry := range s.idempotency {
-		if now-entry.createdAt > idempotencyTTL {
-			delete(s.idempotency, key)
+// cleanupExpiredEntries removes entries from m whose createdAt timestamp
+// (returned by age) is older than idempotencyTTL relative to s.clock().
+func cleanupExpiredEntries[T any](clock func() int64, m map[string]T, age func(T) int64) {
+	now := clock()
+	for key, entry := range m {
+		if now-age(entry) > idempotencyTTL {
+			delete(m, key)
 		}
 	}
+}
+
+func (s *Server) cleanupExpiredIdempotency() {
+	cleanupExpiredEntries(func() int64 { return s.clock().Unix() }, s.idempotency, func(e idempotencyEntry) int64 { return e.createdAt })
 }
 
 func (s *Server) findInvocationByClientRequestID(repoID, clientRequestID, fingerprint string) (*store.InvocationRecord, bool, bool, error) {
@@ -160,12 +166,7 @@ func (s *Server) recordWorktreeIdempotency(repoID, idempotencyKey, worktreeID, f
 }
 
 func (s *Server) cleanupExpiredWorktreeIdempotency() {
-	now := s.clock().Unix()
-	for key, entry := range s.worktreeIdempotency {
-		if now-entry.createdAt > idempotencyTTL {
-			delete(s.worktreeIdempotency, key)
-		}
-	}
+	cleanupExpiredEntries(func() int64 { return s.clock().Unix() }, s.worktreeIdempotency, func(e worktreeIdempotencyEntry) int64 { return e.createdAt })
 }
 
 func (s *Server) findWorktreeByIdempotencyKey(repoID, idempotencyKey, fingerprint string) (*store.IntegrationWorktreeRecord, bool, bool, error) {
