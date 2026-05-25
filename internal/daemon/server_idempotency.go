@@ -9,11 +9,25 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
-func idempotencyKey(repoID, clientRequestID string) string {
-	return repoID + ":" + clientRequestID
+// idempotencyScope discriminates entries within the single idempotency map so
+// that headed and headless starts (or other future flows) cannot collide on a
+// reused client_request_id.
+type idempotencyScope string
+
+const (
+	idempotencyScopeHeadlessStart idempotencyScope = ""
+	idempotencyScopeHeadedStart   idempotencyScope = "headed"
+	idempotencyScopeFollowUp      idempotencyScope = "followup"
+)
+
+func idempotencyKey(repoID string, scope idempotencyScope, clientRequestID string) string {
+	if scope == "" {
+		return repoID + ":" + clientRequestID
+	}
+	return repoID + ":" + string(scope) + ":" + clientRequestID
 }
 
-func (s *Server) checkIdempotency(repoID, clientRequestID, fingerprint string) (idempotencyEntry, bool, bool) {
+func (s *Server) checkIdempotency(scope idempotencyScope, repoID, clientRequestID, fingerprint string) (idempotencyEntry, bool, bool) {
 	if clientRequestID == "" {
 		return idempotencyEntry{}, false, false
 	}
@@ -21,21 +35,21 @@ func (s *Server) checkIdempotency(repoID, clientRequestID, fingerprint string) (
 	s.idempotencyMu.RLock()
 	defer s.idempotencyMu.RUnlock()
 
-	entry, exists := s.idempotency[idempotencyKey(repoID, clientRequestID)]
+	entry, exists := s.idempotency[idempotencyKey(repoID, scope, clientRequestID)]
 	if !exists || s.clock().Unix()-entry.createdAt > idempotencyTTL {
 		return idempotencyEntry{}, false, false
 	}
 	return entry, true, entry.fingerprint != fingerprint
 }
 
-func (s *Server) recordIdempotency(repoID, clientRequestID, invocationID, fingerprint string) {
+func (s *Server) recordIdempotency(scope idempotencyScope, repoID, clientRequestID, invocationID, fingerprint string) {
 	if clientRequestID == "" {
 		return
 	}
 
 	s.idempotencyMu.Lock()
 	defer s.idempotencyMu.Unlock()
-	s.idempotency[idempotencyKey(repoID, clientRequestID)] = idempotencyEntry{
+	s.idempotency[idempotencyKey(repoID, scope, clientRequestID)] = idempotencyEntry{
 		invocationID: invocationID,
 		fingerprint:  fingerprint,
 		createdAt:    s.clock().Unix(),
@@ -177,10 +191,6 @@ func (s *Server) findWorktreeByIdempotencyKey(repoID, idempotencyKey, fingerprin
 	return nil, false, false, nil
 }
 
-func followUpIdempotencyScope(repoID string) string {
-	return repoID + ":followup"
-}
-
 func followUpFingerprint(invocationID, prompt string) string {
 	promptHash := sha256.Sum256([]byte(prompt))
 	payload, _ := json.Marshal(struct {
@@ -202,7 +212,7 @@ func (s *Server) reserveFollowUpIdempotency(repoID, clientRequestID, invocationI
 	s.idempotencyMu.Lock()
 	defer s.idempotencyMu.Unlock()
 
-	key := idempotencyKey(followUpIdempotencyScope(repoID), clientRequestID)
+	key := idempotencyKey(repoID, idempotencyScopeFollowUp, clientRequestID)
 	entry, exists := s.idempotency[key]
 	if exists && s.clock().Unix()-entry.createdAt <= idempotencyTTL {
 		return entry, true, entry.fingerprint != fingerprint
@@ -218,51 +228,6 @@ func (s *Server) reserveFollowUpIdempotency(repoID, clientRequestID, invocationI
 		s.cleanupExpiredIdempotency()
 	}
 	return entry, false, false
-}
-
-func headedIdempotencyKey(repoID, clientRequestID string) string {
-	return repoID + ":headed:" + clientRequestID
-}
-
-func (s *Server) checkHeadedIdempotency(repoID, clientRequestID, fingerprint string) (headedIdempotencyEntry, bool, bool) {
-	if clientRequestID == "" {
-		return headedIdempotencyEntry{}, false, false
-	}
-
-	s.headedIdempotencyMu.RLock()
-	defer s.headedIdempotencyMu.RUnlock()
-
-	entry, exists := s.headedIdempotency[headedIdempotencyKey(repoID, clientRequestID)]
-	if !exists || s.clock().Unix()-entry.createdAt > idempotencyTTL {
-		return headedIdempotencyEntry{}, false, false
-	}
-	return entry, true, entry.fingerprint != fingerprint
-}
-
-func (s *Server) recordHeadedIdempotency(repoID, clientRequestID, invocationID, fingerprint string) {
-	if clientRequestID == "" {
-		return
-	}
-
-	s.headedIdempotencyMu.Lock()
-	defer s.headedIdempotencyMu.Unlock()
-	s.headedIdempotency[headedIdempotencyKey(repoID, clientRequestID)] = headedIdempotencyEntry{
-		invocationID: invocationID,
-		fingerprint:  fingerprint,
-		createdAt:    s.clock().Unix(),
-	}
-	if len(s.headedIdempotency) > 100 {
-		s.cleanupExpiredHeadedIdempotency()
-	}
-}
-
-func (s *Server) cleanupExpiredHeadedIdempotency() {
-	now := s.clock().Unix()
-	for key, entry := range s.headedIdempotency {
-		if now-entry.createdAt > idempotencyTTL {
-			delete(s.headedIdempotency, key)
-		}
-	}
 }
 
 func (s *Server) runCheckpointLoop(proc *supervisedProcess) {

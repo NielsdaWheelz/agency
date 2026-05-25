@@ -52,13 +52,6 @@ type worktreeIdempotencyEntry struct {
 	createdAt   int64 // Unix timestamp
 }
 
-// headedIdempotencyEntry tracks a recent headed invocation request for idempotency.
-type headedIdempotencyEntry struct {
-	invocationID string
-	fingerprint  string
-	createdAt    int64 // Unix timestamp
-}
-
 // worktreeMergeProcess holds runtime state for one accepted worktree merge attempt.
 type worktreeMergeProcess struct {
 	repoID     string

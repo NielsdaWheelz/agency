@@ -55,7 +55,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 			writeErr(fail.status, string(fail.code), fail.msg, fail.hint)
 			return
 		}
-		s.recordHeadedIdempotency(repoIdentity.RepoID, req.ClientRequestID, record.InvocationID, record.Meta.RequestFingerprint)
+		s.recordIdempotency(idempotencyScopeHeadedStart, repoIdentity.RepoID, req.ClientRequestID, record.InvocationID, record.Meta.RequestFingerprint)
 		s.writeHeadedSuccess(w, record.InvocationID, record.Meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
 		return
 	}
@@ -79,7 +79,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 	defer func() { _ = prep.unlockRepo() }()
 
 	fingerprint := controlPlaneStartFingerprint(repoRoot, prep.wtRecord.WorktreeID, execCtx.CheckoutRoot, store.RunnerModeHeaded, req, requestEnv)
-	if entry, isDuplicate, conflict := s.checkHeadedIdempotency(repoIdentity.RepoID, req.ClientRequestID, fingerprint); isDuplicate {
+	if entry, isDuplicate, conflict := s.checkIdempotency(idempotencyScopeHeadedStart, repoIdentity.RepoID, req.ClientRequestID, fingerprint); isDuplicate {
 		if conflict {
 			writeErr(http.StatusConflict, string(errors.EIdempotencyConflict), "client_request_id was already used for a different headed invocation start request", "retry with the original request or choose a new client_request_id")
 			return
@@ -112,7 +112,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 			writeErr(fail.status, string(fail.code), fail.msg, fail.hint)
 			return
 		}
-		s.recordHeadedIdempotency(repoIdentity.RepoID, req.ClientRequestID, record.InvocationID, fingerprint)
+		s.recordIdempotency(idempotencyScopeHeadedStart, repoIdentity.RepoID, req.ClientRequestID, record.InvocationID, fingerprint)
 		s.writeHeadedSuccess(w, record.InvocationID, record.Meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
 		return
 	}
@@ -160,7 +160,7 @@ func (s *Server) handleControlPlaneStartHeaded(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	s.recordHeadedIdempotency(repoIdentity.RepoID, req.ClientRequestID, createResult.InvocationID, fingerprint)
+	s.recordIdempotency(idempotencyScopeHeadedStart, repoIdentity.RepoID, req.ClientRequestID, createResult.InvocationID, fingerprint)
 	s.writeHeadedSuccess(w, createResult.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, false)
 }
 

@@ -86,13 +86,6 @@ type Server struct {
 	// Used to prevent duplicate headless invocations from retried requests.
 	idempotency map[string]idempotencyEntry
 
-	// headedIdempotencyMu protects the headed idempotency map.
-	headedIdempotencyMu sync.RWMutex
-
-	// headedIdempotency maps (repo_id, client_request_id) -> headedIdempotencyEntry.
-	// Used to prevent duplicate headed invocations from retried requests.
-	headedIdempotency map[string]headedIdempotencyEntry
-
 	// headedHookMu serializes headed hook imports so transcript offsets and parser
 	// state advance in the same order as writes to raw.jsonl and stream.jsonl.
 	headedHookMu sync.Mutex
@@ -157,7 +150,6 @@ func NewServer(st *store.Store, runner exec.CommandRunner, fsys fs.FS, configDir
 		processes:               make(map[string]*supervisedProcess),
 		activeMerges:            make(map[string]*worktreeMergeProcess),
 		idempotency:             make(map[string]idempotencyEntry),
-		headedIdempotency:       make(map[string]headedIdempotencyEntry),
 		worktreeIdempotency:     make(map[string]worktreeIdempotencyEntry),
 		headedStartingTickCount: make(map[string]int),
 		repoLock:                &repoLock,

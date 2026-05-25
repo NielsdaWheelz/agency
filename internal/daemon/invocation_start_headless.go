@@ -53,7 +53,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 			writeErr(fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID)
 			return
 		}
-		s.recordIdempotency(repoIdentity.RepoID, req.ClientRequestID, record.InvocationID, record.Meta.RequestFingerprint)
+		s.recordIdempotency(idempotencyScopeHeadlessStart, repoIdentity.RepoID, req.ClientRequestID, record.InvocationID, record.Meta.RequestFingerprint)
 		s.writeControlPlaneSuccess(w, record.InvocationID, record.Meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
 		return
 	}
@@ -77,7 +77,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 	defer func() { _ = prep.unlockRepo() }()
 
 	fingerprint := controlPlaneStartFingerprint(repoRoot, prep.wtRecord.WorktreeID, execCtx.CheckoutRoot, store.RunnerModeHeadless, req, requestEnv)
-	if entry, isDuplicate, conflict := s.checkIdempotency(repoIdentity.RepoID, req.ClientRequestID, fingerprint); isDuplicate {
+	if entry, isDuplicate, conflict := s.checkIdempotency(idempotencyScopeHeadlessStart, repoIdentity.RepoID, req.ClientRequestID, fingerprint); isDuplicate {
 		if conflict {
 			writeErr(http.StatusConflict, string(errors.EIdempotencyConflict), "client_request_id was already used for a different headless invocation start request", "retry with the original request or choose a new client_request_id", req.ClientRequestID)
 			return
@@ -110,7 +110,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 			writeErr(fail.status, string(fail.code), fail.msg, fail.hint, req.ClientRequestID)
 			return
 		}
-		s.recordIdempotency(repoIdentity.RepoID, req.ClientRequestID, record.InvocationID, fingerprint)
+		s.recordIdempotency(idempotencyScopeHeadlessStart, repoIdentity.RepoID, req.ClientRequestID, record.InvocationID, fingerprint)
 		s.writeControlPlaneSuccess(w, record.InvocationID, record.Meta, repoIdentity.RepoID, req.ClientRequestID, requestID, true)
 		return
 	}
@@ -160,7 +160,7 @@ func (s *Server) handleControlPlaneStartHeadless(w http.ResponseWriter, r *http.
 		return
 	}
 
-	s.recordIdempotency(repoIdentity.RepoID, req.ClientRequestID, createResult.InvocationID, fingerprint)
+	s.recordIdempotency(idempotencyScopeHeadlessStart, repoIdentity.RepoID, req.ClientRequestID, createResult.InvocationID, fingerprint)
 	s.writeControlPlaneSuccess(w, createResult.InvocationID, meta, repoIdentity.RepoID, req.ClientRequestID, requestID, false)
 }
 
