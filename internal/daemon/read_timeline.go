@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -229,27 +230,32 @@ func readTimelineJSONL(
 	entries := make([]timelineSortableEntry, 0)
 	visitErr := jsonl.Visit(f, maxTimelineLineBytes, jsonl.VisitOptions{}, func(line jsonl.Line) error {
 		if line.Oversized {
-			entries = append(entries, newTimelineReadFailureEntry(
-				source,
-				sourceRank,
-				line.Number,
-				defaultTimestamp,
-				"line_too_large",
-				nil,
-			))
+			entries = append(entries, newParseErrorTimelineEntry(parseErrorEntry{
+				source:           source,
+				sourceRank:       sourceRank,
+				lineNumber:       line.Number,
+				defaultTimestamp: defaultTimestamp,
+				idPrefix:         "parse_error",
+				reason:           "line_too_large",
+			}))
 			return nil
 		}
 
 		var event timelineJSONLEnvelope
 		if err := json.Unmarshal(line.Bytes, &event); err != nil {
-			entries = append(entries, newTimelineReadFailureEntry(
-				source,
-				sourceRank,
-				line.Number,
-				defaultTimestamp,
-				"json_unmarshal_failed",
-				err,
-			))
+			extras := map[string]any{}
+			if trimmed := strings.TrimSpace(err.Error()); trimmed != "" {
+				extras["error"] = trimmed
+			}
+			entries = append(entries, newParseErrorTimelineEntry(parseErrorEntry{
+				source:           source,
+				sourceRank:       sourceRank,
+				lineNumber:       line.Number,
+				defaultTimestamp: defaultTimestamp,
+				idPrefix:         "parse_error",
+				reason:           "json_unmarshal_failed",
+				extras:           extras,
+			}))
 			return nil
 		}
 		entry := build(line.Number, event, defaultTimestamp)
@@ -265,27 +271,34 @@ func readTimelineJSONL(
 
 func buildStreamTimelineEntry(lineNumber int, event timelineJSONLEnvelope, defaultTimestamp string) timelineSortableEntry {
 	if event.SchemaVersion != expectedTimelineSchema {
-		return newSchemaMismatchTimelineEntry(
-			"stream",
-			timelineSourceRankStream,
-			lineNumber,
-			event.Seq,
-			event.Timestamp,
-			defaultTimestamp,
-			event.SchemaVersion,
-			event.Kind,
-		)
+		return newParseErrorTimelineEntry(parseErrorEntry{
+			source:           "stream",
+			sourceRank:       timelineSourceRankStream,
+			lineNumber:       lineNumber,
+			seq:              event.Seq,
+			timestamp:        event.Timestamp,
+			defaultTimestamp: defaultTimestamp,
+			idPrefix:         "schema_mismatch",
+			reason:           "unsupported_schema_version",
+			extras: map[string]any{
+				"expected_schema_version": expectedTimelineSchema,
+				"actual_schema_version":   cmp.Or(strings.TrimSpace(event.SchemaVersion), "<empty>"),
+				"event_kind":              strings.TrimSpace(event.Kind),
+			},
+		})
 	}
 	normalizedKind := strings.TrimSpace(event.Kind)
 	if normalizedKind == "" {
-		return newMissingEventKindTimelineEntry(
-			"stream",
-			timelineSourceRankStream,
-			lineNumber,
-			event.Seq,
-			event.Timestamp,
-			defaultTimestamp,
-		)
+		return newParseErrorTimelineEntry(parseErrorEntry{
+			source:           "stream",
+			sourceRank:       timelineSourceRankStream,
+			lineNumber:       lineNumber,
+			seq:              event.Seq,
+			timestamp:        event.Timestamp,
+			defaultTimestamp: defaultTimestamp,
+			idPrefix:         "missing_event_kind",
+			reason:           "missing_event_kind",
+		})
 	}
 	kind := normalizedKind
 	switch normalizedKind {
@@ -306,7 +319,7 @@ func buildStreamTimelineEntry(lineNumber int, event timelineJSONLEnvelope, defau
 			EntryID:   entryID,
 			Kind:      kind,
 			Source:    "stream",
-			Timestamp: nonEmpty(event.Timestamp, defaultTimestamp),
+			Timestamp: cmp.Or(event.Timestamp, defaultTimestamp),
 			Seq:       event.Seq,
 			Data:      event.Data,
 		},
@@ -316,39 +329,50 @@ func buildStreamTimelineEntry(lineNumber int, event timelineJSONLEnvelope, defau
 
 func buildInvocationEventTimelineEntry(lineNumber int, event timelineJSONLEnvelope, defaultTimestamp string) timelineSortableEntry {
 	if event.SchemaVersion != expectedTimelineSchema {
-		return newSchemaMismatchTimelineEntry(
-			"invocation_event",
-			timelineSourceRankEvent,
-			lineNumber,
-			event.Seq,
-			event.Timestamp,
-			defaultTimestamp,
-			event.SchemaVersion,
-			event.Kind,
-		)
+		return newParseErrorTimelineEntry(parseErrorEntry{
+			source:           "invocation_event",
+			sourceRank:       timelineSourceRankEvent,
+			lineNumber:       lineNumber,
+			seq:              event.Seq,
+			timestamp:        event.Timestamp,
+			defaultTimestamp: defaultTimestamp,
+			idPrefix:         "schema_mismatch",
+			reason:           "unsupported_schema_version",
+			extras: map[string]any{
+				"expected_schema_version": expectedTimelineSchema,
+				"actual_schema_version":   cmp.Or(strings.TrimSpace(event.SchemaVersion), "<empty>"),
+				"event_kind":              strings.TrimSpace(event.Kind),
+			},
+		})
 	}
 
 	if event.Seq == 0 {
-		return newInvalidEventSeqTimelineEntry(
-			"invocation_event",
-			timelineSourceRankEvent,
-			lineNumber,
-			event.Timestamp,
-			defaultTimestamp,
-			event.Kind,
-		)
+		return newParseErrorTimelineEntry(parseErrorEntry{
+			source:           "invocation_event",
+			sourceRank:       timelineSourceRankEvent,
+			lineNumber:       lineNumber,
+			timestamp:        event.Timestamp,
+			defaultTimestamp: defaultTimestamp,
+			idPrefix:         "invalid_event_seq",
+			reason:           "invalid_event_seq",
+			extras: map[string]any{
+				"event_kind": strings.TrimSpace(event.Kind),
+			},
+		})
 	}
 
 	kind := strings.TrimSpace(event.Kind)
 	if kind == "" {
-		return newMissingEventKindTimelineEntry(
-			"invocation_event",
-			timelineSourceRankEvent,
-			lineNumber,
-			event.Seq,
-			event.Timestamp,
-			defaultTimestamp,
-		)
+		return newParseErrorTimelineEntry(parseErrorEntry{
+			source:           "invocation_event",
+			sourceRank:       timelineSourceRankEvent,
+			lineNumber:       lineNumber,
+			seq:              event.Seq,
+			timestamp:        event.Timestamp,
+			defaultTimestamp: defaultTimestamp,
+			idPrefix:         "missing_event_kind",
+			reason:           "missing_event_kind",
+		})
 	}
 	entryKind := "invocation_event"
 	if strings.HasPrefix(kind, "agency.checkpoint_") {
@@ -368,7 +392,7 @@ func buildInvocationEventTimelineEntry(lineNumber int, event timelineJSONLEnvelo
 			EntryID:   "inv_event:" + strconv.FormatUint(event.Seq, 10) + ":" + kind,
 			Kind:      entryKind,
 			Source:    "invocation_event",
-			Timestamp: nonEmpty(event.Timestamp, defaultTimestamp),
+			Timestamp: cmp.Or(event.Timestamp, defaultTimestamp),
 			Seq:       event.Seq,
 			Data:      payload,
 		},
@@ -376,149 +400,45 @@ func buildInvocationEventTimelineEntry(lineNumber int, event timelineJSONLEnvelo
 	)
 }
 
-func newInvalidEventSeqTimelineEntry(
-	source string,
-	sourceRank int,
-	lineNumber int,
-	timestamp string,
-	defaultTimestamp string,
-	eventKind string,
-) timelineSortableEntry {
-	normalizedSource := strings.TrimSpace(source)
-	if normalizedSource == "" {
-		normalizedSource = "timeline"
-	}
-	if lineNumber < 1 {
-		lineNumber = 1
-	}
-
-	return newTimelineEntry(
-		TimelineEntryDTO{
-			EntryID:   fmt.Sprintf("%s:invalid_event_seq:line:%d", normalizedSource, lineNumber),
-			Kind:      "parse_error",
-			Source:    normalizedSource,
-			Timestamp: nonEmpty(timestamp, defaultTimestamp),
-			Data: map[string]interface{}{
-				"reason":     "invalid_event_seq",
-				"line":       lineNumber,
-				"event_kind": strings.TrimSpace(eventKind),
-			},
-		},
-		sourceRank,
-	)
+type parseErrorEntry struct {
+	source           string
+	sourceRank       int
+	lineNumber       int
+	seq              uint64
+	timestamp        string
+	defaultTimestamp string
+	idPrefix         string
+	reason           string
+	extras           map[string]any
 }
 
-func newTimelineReadFailureEntry(
-	source string,
-	sourceRank int,
-	lineNumber int,
-	defaultTimestamp string,
-	reason string,
-	readErr error,
-) timelineSortableEntry {
-	normalizedSource := strings.TrimSpace(source)
-	if normalizedSource == "" {
-		normalizedSource = "timeline"
+func newParseErrorTimelineEntry(p parseErrorEntry) timelineSortableEntry {
+	source := strings.TrimSpace(p.source)
+	if source == "" {
+		source = "timeline"
 	}
-	if lineNumber < 1 {
-		lineNumber = 1
+	line := p.lineNumber
+	if line < 1 {
+		line = 1
 	}
-	data := map[string]interface{}{
-		"reason": reason,
-		"line":   lineNumber,
+	entryID := fmt.Sprintf("%s:%s:line:%d", source, p.idPrefix, line)
+	if p.seq > 0 {
+		entryID = fmt.Sprintf("%s:%s:%d", source, p.idPrefix, p.seq)
 	}
-	if readErr != nil {
-		if trimmedErr := strings.TrimSpace(readErr.Error()); trimmedErr != "" {
-			data["error"] = trimmedErr
-		}
-	}
-	return newTimelineEntry(
-		TimelineEntryDTO{
-			EntryID:   fmt.Sprintf("%s:parse_error:line:%d", normalizedSource, lineNumber),
-			Kind:      "parse_error",
-			Source:    normalizedSource,
-			Timestamp: defaultTimestamp,
-			Data:      data,
-		},
-		sourceRank,
-	)
-}
-
-func newSchemaMismatchTimelineEntry(
-	source string,
-	sourceRank int,
-	lineNumber int,
-	seq uint64,
-	timestamp string,
-	defaultTimestamp string,
-	actualSchema string,
-	eventKind string,
-) timelineSortableEntry {
-	normalizedSource := strings.TrimSpace(source)
-	if normalizedSource == "" {
-		normalizedSource = "timeline"
-	}
-	entryID := fmt.Sprintf("%s:schema_mismatch:line:%d", normalizedSource, lineNumber)
-	if seq > 0 {
-		entryID = fmt.Sprintf("%s:schema_mismatch:%d", normalizedSource, seq)
-	}
-	trimmedSchema := strings.TrimSpace(actualSchema)
-	if trimmedSchema == "" {
-		trimmedSchema = "<empty>"
+	data := map[string]any{"reason": p.reason, "line": line}
+	for k, v := range p.extras {
+		data[k] = v
 	}
 	return newTimelineEntry(
 		TimelineEntryDTO{
 			EntryID:   entryID,
 			Kind:      "parse_error",
-			Source:    normalizedSource,
-			Timestamp: nonEmpty(timestamp, defaultTimestamp),
-			Seq:       seq,
-			Data: map[string]interface{}{
-				"reason":                  "unsupported_schema_version",
-				"expected_schema_version": expectedTimelineSchema,
-				"actual_schema_version":   trimmedSchema,
-				"event_kind":              strings.TrimSpace(eventKind),
-			},
-		},
-		sourceRank,
-	)
-}
-
-func newMissingEventKindTimelineEntry(
-	source string,
-	sourceRank int,
-	lineNumber int,
-	seq uint64,
-	timestamp string,
-	defaultTimestamp string,
-) timelineSortableEntry {
-	normalizedSource := strings.TrimSpace(source)
-	if normalizedSource == "" {
-		normalizedSource = "timeline"
-	}
-	if lineNumber < 1 {
-		lineNumber = 1
-	}
-	entryID := fmt.Sprintf("%s:missing_event_kind:line:%d", normalizedSource, lineNumber)
-	if seq > 0 {
-		entryID = fmt.Sprintf("%s:missing_event_kind:%d", normalizedSource, seq)
-	}
-
-	data := map[string]interface{}{
-		"reason": "missing_event_kind",
-		"line":   lineNumber,
-	}
-
-	return newTimelineEntry(
-		TimelineEntryDTO{
-			EntryID:   entryID,
-			Kind:      "parse_error",
-			Source:    normalizedSource,
-			Timestamp: nonEmpty(timestamp, defaultTimestamp),
-			Seq:       seq,
+			Source:    source,
+			Timestamp: cmp.Or(p.timestamp, p.defaultTimestamp),
+			Seq:       p.seq,
 			Data:      data,
 		},
-		sourceRank,
+		p.sourceRank,
 	)
 }
 
@@ -548,31 +468,12 @@ func newTimelineEntry(dto TimelineEntryDTO, sourceRank int) timelineSortableEntr
 }
 
 func compareTimelineKeys(a, b timelineSortKey) int {
-	if a.Timestamp < b.Timestamp {
-		return -1
-	}
-	if a.Timestamp > b.Timestamp {
-		return 1
-	}
-	if a.SourceRank < b.SourceRank {
-		return -1
-	}
-	if a.SourceRank > b.SourceRank {
-		return 1
-	}
-	if a.Seq < b.Seq {
-		return -1
-	}
-	if a.Seq > b.Seq {
-		return 1
-	}
-	if a.EntryID < b.EntryID {
-		return -1
-	}
-	if a.EntryID > b.EntryID {
-		return 1
-	}
-	return 0
+	return cmp.Or(
+		cmp.Compare(a.Timestamp, b.Timestamp),
+		cmp.Compare(a.SourceRank, b.SourceRank),
+		cmp.Compare(a.Seq, b.Seq),
+		cmp.Compare(a.EntryID, b.EntryID),
+	)
 }
 
 func paginateTimeline(all []timelineSortableEntry, cursor string, limit int) ([]TimelineEntryDTO, string) {
@@ -622,11 +523,4 @@ func paginateTimeline(all []timelineSortableEntry, cursor string, limit int) ([]
 	}
 
 	return entries, nextCursor
-}
-
-func nonEmpty(v, defaultValue string) string {
-	if v != "" {
-		return v
-	}
-	return defaultValue
 }

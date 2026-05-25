@@ -92,4 +92,3 @@ func (c *Client) Shutdown(ctx context.Context, force bool) (*daemon.ShutdownResp
 	}
 	return &result, nil
 }
-

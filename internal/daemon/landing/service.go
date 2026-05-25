@@ -41,6 +41,10 @@ type Service struct {
 	eventWriter eventlog.Appender
 }
 
+func (s *Service) nowRFC3339() string {
+	return s.clock().UTC().Format(time.RFC3339)
+}
+
 // NewService creates a landing service.
 func NewService(
 	st *store.Store,
@@ -266,7 +270,7 @@ func (s *Service) Discard(ctx context.Context, opts DiscardOpts) error {
 		return errors.Wrap(errors.ELandFailed, "discard cleanup failed", err)
 	}
 
-	now := s.clock().UTC().Format(time.RFC3339)
+	now := s.nowRFC3339()
 	if _, err := s.store.UpdateInvocationMeta(opts.RepoID, opts.InvocationID, func(m *store.InvocationMeta) {
 		m.LandingStatus = store.LandingStatusDiscarded
 		if m.FinishedAt == "" {
@@ -296,7 +300,7 @@ func (s *Service) syncWorktreeRunnerStatus(repoID, invocationID, worktreeID stri
 	worktreeStatus := runnerstatus.RunnerStatus{
 		SchemaVersion: runnerstatus.SchemaVersion,
 		State:         runnerstatus.StateSucceeded,
-		UpdatedAt:     s.clock().UTC().Format(time.RFC3339),
+		UpdatedAt:     s.nowRFC3339(),
 		Summary:       "Landed invocation " + invocationID,
 		Questions:     []string{},
 		HowToTest:     "How to test not provided.",

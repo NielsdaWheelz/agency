@@ -48,7 +48,7 @@ func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID
 	}
 	switch meta.Status {
 	case store.InvocationStatusStarting, store.InvocationStatusRunning, store.InvocationStatusStopping:
-		now := s.clock().UTC().Format(time.RFC3339)
+		now := s.nowRFC3339()
 		record := store.InvocationRecord{
 			InvocationID: mutation.record.InvocationID,
 			RepoID:       mutation.record.RepoID,
@@ -297,7 +297,7 @@ func (s *Server) stopInvocationForDiscard(ctx context.Context, repoID, invocatio
 
 		// Update meta if not supervised
 		if !supervised {
-			now := s.clock().UTC().Format(time.RFC3339)
+			now := s.nowRFC3339()
 			if _, err := s.store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
 				m.Status = store.InvocationStatusFailed
 				m.ExitReason = store.ExitReasonDiscarded

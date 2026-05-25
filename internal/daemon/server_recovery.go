@@ -188,7 +188,7 @@ func (s *Server) recoverRepoWorktreeMerges(repoID string) error {
 		return err
 	}
 
-	now := s.clock().UTC().Format(time.RFC3339)
+	now := s.nowRFC3339()
 	for _, r := range records {
 		if r.Broken || r.Meta == nil {
 			continue

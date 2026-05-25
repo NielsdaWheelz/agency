@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/runners"
@@ -35,7 +34,7 @@ func (s *Server) handleTaskArchive(w http.ResponseWriter, r *http.Request, taskR
 
 	meta, err := s.store.UpdateTaskMeta(repoID, record.TaskID, func(meta *store.TaskMeta) {
 		meta.State = store.TaskStateArchived
-		meta.UpdatedAt = s.clock().UTC().Format(time.RFC3339)
+		meta.UpdatedAt = s.nowRFC3339()
 	})
 	if err != nil {
 		s.writeTaskStartError(w, http.StatusInternalServerError, requestID, errors.GetCode(err), err.Error(), "", "", record.Meta)
@@ -347,7 +346,7 @@ func (s *Server) repairTaskRetryFromClaimedInvocation(repoID string, meta *store
 
 func (s *Server) reserveTaskRetryRequest(repoID string, meta *store.TaskMeta, clientRequestID, fingerprint string) error {
 	_, err := s.store.UpdateTaskMeta(repoID, meta.TaskID, func(latest *store.TaskMeta) {
-		now := s.clock().UTC().Format(time.RFC3339)
+		now := s.nowRFC3339()
 		if latest.RetryRequests == nil {
 			latest.RetryRequests = make(map[string]store.TaskRetryRecord)
 		}
@@ -364,7 +363,7 @@ func (s *Server) reserveTaskRetryRequest(repoID string, meta *store.TaskMeta, cl
 
 func (s *Server) markTaskRetryRunning(repoID, taskID, clientRequestID string, invMeta *store.InvocationMeta) (*store.TaskMeta, error) {
 	return s.store.UpdateTaskMeta(repoID, taskID, func(meta *store.TaskMeta) {
-		now := s.clock().UTC().Format(time.RFC3339)
+		now := s.nowRFC3339()
 		meta.State = store.TaskStateRunning
 		meta.PrimaryInvocationID = invMeta.InvocationID
 		meta.Mode = invMeta.Mode
@@ -395,7 +394,7 @@ func (s *Server) markTaskRetryFailed(repoID, taskID, clientRequestID string, fai
 		record.State = store.TaskRetryStateFailed
 		record.ErrorCode = string(failure.code)
 		record.Error = failure.msg
-		record.UpdatedAt = s.clock().UTC().Format(time.RFC3339)
+		record.UpdatedAt = s.nowRFC3339()
 		meta.RetryRequests[clientRequestID] = record
 	}); err != nil {
 		log.Printf("agencyd: persist failed task retry %s/%s: %v", repoID, taskID, err)

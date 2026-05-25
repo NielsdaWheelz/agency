@@ -3,16 +3,11 @@ package daemon
 import (
 	"log"
 	"os"
-	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
 const daemonLifecycleOwner = "daemon"
-
-func (s *Server) nowRFC3339() string {
-	return s.clock().UTC().Format(time.RFC3339)
-}
 
 // persistInvocationMeta applies a terminal-state update and logs — rather than
 // silently dropping — a persistence failure. Used by the fire-and-forget

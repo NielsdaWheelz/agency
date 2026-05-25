@@ -42,7 +42,7 @@ func (s *Server) reconcileHeadedInvocationsForRepo(ctx context.Context, repoID s
 		return
 	}
 
-	now := s.clock().UTC().Format(time.RFC3339)
+	now := s.nowRFC3339()
 	for _, r := range records {
 		if r.Broken || r.Meta == nil {
 			continue

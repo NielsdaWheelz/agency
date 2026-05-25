@@ -223,13 +223,9 @@ func mergeListPRsForBranchWithRetry(ctx context.Context, runner exec.CommandRunn
 func mergeListPRsByHeadWithRetry(ctx context.Context, runner exec.CommandRunner, workDir, head string, env map[string]string) ([]prSyncPR, error) {
 	var prs []prSyncPR
 	for idx, delay := range mergeRetryDelays {
-		if idx > 0 && delay > 0 {
-			timer := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return nil, errors.Wrap(errors.ENoPR, "context canceled while waiting for PR visibility", ctx.Err())
-			case <-timer.C:
+		if idx > 0 {
+			if err := sleepCtx(ctx, delay); err != nil {
+				return nil, errors.Wrap(errors.ENoPR, "context canceled while waiting for PR visibility", err)
 			}
 		}
 
@@ -281,13 +277,9 @@ func mergeViewPR(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo
 
 func mergeEnsureMergeable(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo string, prNumber int, env map[string]string) error {
 	for idx, delay := range mergeReadbackDelays {
-		if idx > 0 && delay > 0 {
-			timer := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return errors.Wrap(errors.EPRMergeabilityUnknown, "context canceled while waiting for mergeability", ctx.Err())
-			case <-timer.C:
+		if idx > 0 {
+			if err := sleepCtx(ctx, delay); err != nil {
+				return errors.Wrap(errors.EPRMergeabilityUnknown, "context canceled while waiting for mergeability", err)
 			}
 		}
 
@@ -361,13 +353,9 @@ func (s *Server) resolveMergeGitHubRepo(ctx context.Context, repoID, workDir str
 
 func mergeConfirmPRMerged(ctx context.Context, runner exec.CommandRunner, workDir, ghRepo string, prNumber int, env map[string]string) (bool, error) {
 	for idx, delay := range mergeReadbackDelays {
-		if idx > 0 && delay > 0 {
-			timer := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return false, errors.Wrap(errors.EGHPRMergeFailed, "context canceled while confirming merged state", ctx.Err())
-			case <-timer.C:
+		if idx > 0 {
+			if err := sleepCtx(ctx, delay); err != nil {
+				return false, errors.Wrap(errors.EGHPRMergeFailed, "context canceled while confirming merged state", err)
 			}
 		}
 
@@ -396,4 +384,3 @@ func mergeConfirmPRMerged(ctx context.Context, runner exec.CommandRunner, workDi
 
 	return false, nil
 }
-

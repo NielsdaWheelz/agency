@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -58,44 +57,13 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Canonicalize repo_root: Abs -> EvalSymlinks -> git rev-parse --show-toplevel
-	repoRoot, err := filepath.Abs(req.RepoRoot)
-	if err != nil {
-		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument),
-			"failed to resolve repo_root: "+err.Error(), "")
+	repoRoot, repoIdentity, ok := s.resolveControlPlaneRepoRoot(ctx, req.RepoRoot, func(status int, code, message, hint string) {
+		s.writeErrorWithRequestID(w, status, requestID, code, message, hint)
+	})
+	if !ok {
 		return
 	}
-	repoRoot, err = filepath.EvalSymlinks(repoRoot)
-	if err != nil {
-		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument),
-			"failed to resolve repo_root symlinks: "+err.Error(), "")
-		return
-	}
-	insideManagedTree, err := s.isInsideAgencyManagedTree(repoRoot)
-	if err != nil {
-		s.writeErrorWithRequestID(w, http.StatusInternalServerError, requestID, string(errors.EInternal),
-			"failed to inspect managed worktrees: "+err.Error(), "")
-		return
-	}
-	if insideManagedTree {
-		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EUnsafeRepoRoot),
-			"repo_root is inside an agency-managed worktree",
-			"use the original repository, not a sandbox or integration worktree")
-		return
-	}
-
-	// Derive git root via git rev-parse --show-toplevel
-	gitRoot, err := git.GetRepoRoot(ctx, s.runner, repoRoot, nil)
-	if err != nil {
-		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.ENoRepo),
-			"repo_root is not inside a git repository: "+err.Error(), "")
-		return
-	}
-	repoRoot = gitRoot.Path
-
-	// Derive repo identity.
 	originInfo := git.GetOriginInfo(ctx, s.runner, repoRoot, nil)
-	repoIdentity := identity.DeriveRepoIdentity(repoRoot, originInfo.URL)
 	execCtx, err := s.resolveExecutionContext(repoRoot, repoIdentity.RepoID, "", "")
 	if err != nil {
 		code := errors.CodeOr(err, errors.EInternal)
@@ -385,9 +353,9 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 	}
 
 	if err := s.appendWorktreeEvent(repoID, record.WorktreeID, worktreeRmEventStarted, map[string]any{
-		"force":          req.Force,
-		"unresolved":    len(unresolved),
-		"tree_missing":  treeMissing,
+		"force":        req.Force,
+		"unresolved":   len(unresolved),
+		"tree_missing": treeMissing,
 	}); err != nil {
 		s.writeErrorWithRequestID(w, http.StatusInternalServerError, requestID, string(errors.EPersistFailed),
 			"failed to append worktree_rm_started event: "+err.Error(), "")

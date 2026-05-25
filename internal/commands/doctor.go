@@ -386,16 +386,16 @@ func writeDoctorOutput(w io.Writer, r DoctorReport) {
 	// Identity/origin
 	_, _ = fmt.Fprintf(w, "repo_key: %s\n", r.RepoKey)
 	_, _ = fmt.Fprintf(w, "repo_id: %s\n", r.RepoID)
-	_, _ = fmt.Fprintf(w, "origin_present: %s\n", boolStr(r.OriginPresent))
+	_, _ = fmt.Fprintf(w, "origin_present: %t\n", r.OriginPresent)
 	_, _ = fmt.Fprintf(w, "origin_url: %s\n", r.OriginURL)
 	_, _ = fmt.Fprintf(w, "origin_host: %s\n", r.OriginHost)
-	_, _ = fmt.Fprintf(w, "github_flow_available: %s\n", boolStr(r.GitHubFlowAvailable))
+	_, _ = fmt.Fprintf(w, "github_flow_available: %t\n", r.GitHubFlowAvailable)
 
 	// Tooling
 	_, _ = fmt.Fprintf(w, "git_version: %s\n", r.GitVersion)
 	_, _ = fmt.Fprintf(w, "tmux_version: %s\n", r.TmuxVersion)
 	_, _ = fmt.Fprintf(w, "gh_version: %s\n", r.GhVersion)
-	_, _ = fmt.Fprintf(w, "gh_authenticated: %s\n", boolStr(r.GhAuthenticated))
+	_, _ = fmt.Fprintf(w, "gh_authenticated: %t\n", r.GhAuthenticated)
 
 	// Config resolution
 	_, _ = fmt.Fprintf(w, "defaults_base_branch: %s\n", r.DefaultsBaseBranch)
@@ -429,13 +429,6 @@ func pickRunnerDefault(userVal, repoVal, repoSource string) (string, string) {
 		return userVal, "user"
 	}
 	return "", "none"
-}
-
-func boolStr(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
 }
 
 func doctorCanonicalPath(pathValue, label string) (string, error) {

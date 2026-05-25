@@ -224,7 +224,9 @@ func (m model) updateWorkspaceFilterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 
 	switch msg.String() {
 	case "backspace", "ctrl+h":
-		*filter = trimLastRune(*filter)
+		if runes := []rune(*filter); len(runes) > 0 {
+			*filter = string(runes[:len(runes)-1])
+		}
 	case "ctrl+u":
 		*filter = ""
 	default:
@@ -503,12 +505,4 @@ func isTopKey(msg tea.KeyPressMsg) bool {
 
 func isBottomKey(msg tea.KeyPressMsg) bool {
 	return msg.Code == tea.KeyEnd || msg.Text == "G"
-}
-
-func trimLastRune(value string) string {
-	runes := []rune(value)
-	if len(runes) == 0 {
-		return ""
-	}
-	return string(runes[:len(runes)-1])
 }

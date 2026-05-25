@@ -39,94 +39,11 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 		writeErr(http.StatusBadRequest, errors.EInvalidRequest, strictJSONDecodeErrorMessage(err), "", "")
 		return
 	}
-	req.Name = strings.TrimSpace(req.Name)
-	req.BaseBranch = strings.TrimSpace(req.BaseBranch)
-	req.Mode = strings.TrimSpace(req.Mode)
-	if req.Mode == "" {
-		req.Mode = string(store.RunnerModeHeadless)
-	}
-	req.Runner = strings.TrimSpace(req.Runner)
-	req.InvocationName = strings.TrimSpace(req.InvocationName)
-	req.ExecutionProfile = strings.TrimSpace(req.ExecutionProfile)
-	req.AgencyConfigPath = strings.TrimSpace(req.AgencyConfigPath)
-	if req.AgencyConfigPath != "" && !filepath.IsAbs(req.AgencyConfigPath) {
-		writeErr(http.StatusBadRequest, errors.EInvalidArgument, "agency_config_path must be absolute", "", req.ClientRequestID)
+	if fail := normalizeAndValidateTaskStartRequest(&req); fail != nil {
+		writeErr(fail.status, fail.code, fail.msg, fail.hint, req.ClientRequestID)
 		return
 	}
-
-	if req.ClientRequestID == "" {
-		writeErr(http.StatusBadRequest, errors.EInvalidRequest, "client_request_id is required", "provide a UUID for idempotency", "")
-		return
-	}
-	if req.RepoRoot == "" {
-		writeErr(http.StatusBadRequest, errors.EInvalidRequest, "repo_root is required", "", req.ClientRequestID)
-		return
-	}
-	if req.Name == "" {
-		writeErr(http.StatusBadRequest, errors.EInvalidRequest, "name is required", "", req.ClientRequestID)
-		return
-	}
-	if err := core.ValidateName(req.Name); err != nil {
-		writeErr(http.StatusBadRequest, errors.EInvalidName, "invalid task name: "+err.Error(), "names must be 2-40 chars, lowercase alphanumeric + hyphens", req.ClientRequestID)
-		return
-	}
-	if req.BaseBranch == "" {
-		writeErr(http.StatusBadRequest, errors.EInvalidRequest, "base_branch is required", "", req.ClientRequestID)
-		return
-	}
-	if req.Runner == "" {
-		writeErr(http.StatusBadRequest, errors.EInvalidRequest, "runner is required", "", req.ClientRequestID)
-		return
-	}
-
 	headless := req.Mode == string(store.RunnerModeHeadless)
-	switch req.Mode {
-	case string(store.RunnerModeHeadless):
-		if req.Prompt == "" {
-			writeErr(http.StatusBadRequest, errors.EPromptRequired, "prompt is required for headless task", "", req.ClientRequestID)
-			return
-		}
-		if len(req.Prompt) > MaxPromptSize {
-			writeErr(http.StatusBadRequest, errors.EPromptTooLarge, fmt.Sprintf("prompt exceeds maximum size of %d bytes (got %d)", MaxPromptSize, len(req.Prompt)), "reduce prompt size or split into smaller chunks", req.ClientRequestID)
-			return
-		}
-	case string(store.RunnerModeHeaded):
-		if req.Prompt != "" {
-			writeErr(http.StatusBadRequest, errors.EUsage, "headed task start does not accept a prompt", "omit --prompt/--prompt-file or use --mode headless", req.ClientRequestID)
-			return
-		}
-	default:
-		writeErr(http.StatusBadRequest, errors.EInvalidArgument, "mode must be headless or headed", "", req.ClientRequestID)
-		return
-	}
-
-	canonicalRunner, err := validateControlPlaneStartRunner(req.Runner, req.RunnerArgs, headless)
-	if err != nil {
-		code := errors.CodeOr(err, errors.ERunnerArgConflict)
-		hint := "remove reserved flags from runner_args"
-		if code == errors.ERunnerNotFound {
-			hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
-		}
-		writeErr(http.StatusBadRequest, code, err.Error(), hint, req.ClientRequestID)
-		return
-	}
-	req.Runner = canonicalRunner
-	if !headless {
-		if _, err := buildRunnerArgsForHeaded(req.Runner, req.RunnerArgs); err != nil {
-			code := errors.CodeOr(err, errors.EInternal)
-			hint := ""
-			status := http.StatusInternalServerError
-			if code == errors.ERunnerNotFound || code == errors.EInvocationInvalidMode {
-				status = http.StatusBadRequest
-			}
-			writeErr(status, code, err.Error(), hint, req.ClientRequestID)
-			return
-		}
-	}
-	if err := validateControlPlaneStartInvocationName(req.InvocationName); err != nil {
-		writeErr(http.StatusBadRequest, errors.EInvalidName, "invalid invocation name: "+err.Error(), "names must be 2-40 chars, lowercase alphanumeric + hyphens", req.ClientRequestID)
-		return
-	}
 
 	repoRoot, repoIdentity, ok := s.resolveControlPlaneRepoRoot(ctx, req.RepoRoot, func(status int, code, message, hint string) {
 		writeErr(status, errors.Code(code), message, hint, req.ClientRequestID)
@@ -197,7 +114,7 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 		writeErr(http.StatusInternalServerError, errors.GetCode(err), err.Error(), "", req.ClientRequestID)
 		return
 	}
-	now := s.clock().UTC().Format(time.RFC3339)
+	now := s.nowRFC3339()
 	taskMeta := &store.TaskMeta{
 		SchemaVersion:      store.SchemaVersion,
 		TaskID:             taskID,
@@ -318,6 +235,96 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeTaskStartSuccess(w, requestID, req.ClientRequestID, taskMeta, false)
+}
+
+func normalizeAndValidateTaskStartRequest(req *TaskStartRequest) *startFailure {
+	req.Name = strings.TrimSpace(req.Name)
+	req.BaseBranch = strings.TrimSpace(req.BaseBranch)
+	req.Mode = strings.TrimSpace(req.Mode)
+	if req.Mode == "" {
+		req.Mode = string(store.RunnerModeHeadless)
+	}
+	req.Runner = strings.TrimSpace(req.Runner)
+	req.InvocationName = strings.TrimSpace(req.InvocationName)
+	req.ExecutionProfile = strings.TrimSpace(req.ExecutionProfile)
+	req.AgencyConfigPath = strings.TrimSpace(req.AgencyConfigPath)
+	if req.AgencyConfigPath != "" && !filepath.IsAbs(req.AgencyConfigPath) {
+		f := newStartFailure(http.StatusBadRequest, errors.EInvalidArgument, "agency_config_path must be absolute", "")
+		return &f
+	}
+	if req.ClientRequestID == "" {
+		f := newStartFailure(http.StatusBadRequest, errors.EInvalidRequest, "client_request_id is required", "provide a UUID for idempotency")
+		return &f
+	}
+	if req.RepoRoot == "" {
+		f := newStartFailure(http.StatusBadRequest, errors.EInvalidRequest, "repo_root is required", "")
+		return &f
+	}
+	if req.Name == "" {
+		f := newStartFailure(http.StatusBadRequest, errors.EInvalidRequest, "name is required", "")
+		return &f
+	}
+	if err := core.ValidateName(req.Name); err != nil {
+		f := newStartFailure(http.StatusBadRequest, errors.EInvalidName, "invalid task name: "+err.Error(), "names must be 2-40 chars, lowercase alphanumeric + hyphens")
+		return &f
+	}
+	if req.BaseBranch == "" {
+		f := newStartFailure(http.StatusBadRequest, errors.EInvalidRequest, "base_branch is required", "")
+		return &f
+	}
+	if req.Runner == "" {
+		f := newStartFailure(http.StatusBadRequest, errors.EInvalidRequest, "runner is required", "")
+		return &f
+	}
+
+	headless := req.Mode == string(store.RunnerModeHeadless)
+	switch req.Mode {
+	case string(store.RunnerModeHeadless):
+		if req.Prompt == "" {
+			f := newStartFailure(http.StatusBadRequest, errors.EPromptRequired, "prompt is required for headless task", "")
+			return &f
+		}
+		if len(req.Prompt) > MaxPromptSize {
+			f := newStartFailure(http.StatusBadRequest, errors.EPromptTooLarge, fmt.Sprintf("prompt exceeds maximum size of %d bytes (got %d)", MaxPromptSize, len(req.Prompt)), "reduce prompt size or split into smaller chunks")
+			return &f
+		}
+	case string(store.RunnerModeHeaded):
+		if req.Prompt != "" {
+			f := newStartFailure(http.StatusBadRequest, errors.EUsage, "headed task start does not accept a prompt", "omit --prompt/--prompt-file or use --mode headless")
+			return &f
+		}
+	default:
+		f := newStartFailure(http.StatusBadRequest, errors.EInvalidArgument, "mode must be headless or headed", "")
+		return &f
+	}
+
+	canonicalRunner, err := validateControlPlaneStartRunner(req.Runner, req.RunnerArgs, headless)
+	if err != nil {
+		code := errors.CodeOr(err, errors.ERunnerArgConflict)
+		hint := "remove reserved flags from runner_args"
+		if code == errors.ERunnerNotFound {
+			hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
+		}
+		f := newStartFailure(http.StatusBadRequest, code, err.Error(), hint)
+		return &f
+	}
+	req.Runner = canonicalRunner
+	if !headless {
+		if _, err := buildRunnerArgsForHeaded(req.Runner, req.RunnerArgs); err != nil {
+			code := errors.CodeOr(err, errors.EInternal)
+			status := http.StatusInternalServerError
+			if code == errors.ERunnerNotFound || code == errors.EInvocationInvalidMode {
+				status = http.StatusBadRequest
+			}
+			f := newStartFailure(status, code, err.Error(), "")
+			return &f
+		}
+	}
+	if err := validateControlPlaneStartInvocationName(req.InvocationName); err != nil {
+		f := newStartFailure(http.StatusBadRequest, errors.EInvalidName, "invalid invocation name: "+err.Error(), "names must be 2-40 chars, lowercase alphanumeric + hyphens")
+		return &f
+	}
+	return nil
 }
 
 func (s *Server) startTaskHeadlessInvocation(ctx context.Context, repoRoot, repoID, taskID, requestFingerprint string, wtRecord *store.IntegrationWorktreeRecord, req TaskStartRequest, envKeys []string, gitEnv map[string]string) (*store.InvocationMeta, error) {
@@ -601,7 +608,7 @@ func (s *Server) updateTaskWorktree(repoID, taskID string, wtMeta *store.Integra
 		meta.WorktreeName = wtMeta.Name
 		meta.WorktreePath = wtCreate.TreePath
 		meta.Branch = wtCreate.Branch
-		meta.UpdatedAt = s.clock().UTC().Format(time.RFC3339)
+		meta.UpdatedAt = s.nowRFC3339()
 	})
 	return err
 }
@@ -615,7 +622,7 @@ func (s *Server) markTaskRunning(repoID, taskID string, invMeta *store.Invocatio
 		meta.FailedPhase = ""
 		meta.ErrorCode = ""
 		meta.Error = ""
-		meta.UpdatedAt = s.clock().UTC().Format(time.RFC3339)
+		meta.UpdatedAt = s.nowRFC3339()
 	})
 }
 
@@ -671,7 +678,7 @@ func (s *Server) markTaskFailed(repoID, taskID, phase string, failure startFailu
 		meta.FailedPhase = phase
 		meta.ErrorCode = string(failure.code)
 		meta.Error = failure.msg
-		meta.UpdatedAt = s.clock().UTC().Format(time.RFC3339)
+		meta.UpdatedAt = s.nowRFC3339()
 	}); err != nil {
 		log.Printf("agencyd: persist failed task %s/%s: %v", repoID, taskID, err)
 	}

@@ -223,13 +223,9 @@ func prSyncLookupPRAfterCreateWithRetry(ctx context.Context, runner exec.Command
 
 	var lastErr error
 	for i, delay := range delays {
-		if i > 0 && delay > 0 {
-			timer := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return nil, ctx.Err()
-			case <-timer.C:
+		if i > 0 {
+			if err := sleepCtx(ctx, delay); err != nil {
+				return nil, err
 			}
 		}
 
@@ -582,4 +578,3 @@ func prSyncNonInteractiveEnv(profileEnv map[string]string) map[string]string {
 	}
 	return env
 }
-

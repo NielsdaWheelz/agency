@@ -2,7 +2,6 @@ package landing
 
 import (
 	"os"
-	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -41,7 +40,7 @@ func (s *Service) ensureLandingBase(opts LandOpts, meta *store.InvocationMeta, h
 }
 
 func (s *Service) finalizeLand(repoID, invocationID, worktreeID string, result *landResult) error {
-	now := s.clock().UTC().Format(time.RFC3339)
+	now := s.nowRFC3339()
 	if _, err := s.store.UpdateInvocationMeta(repoID, invocationID, func(m *store.InvocationMeta) {
 		m.LandingStatus = store.LandingStatusLanded
 		m.FinishedAt = now
