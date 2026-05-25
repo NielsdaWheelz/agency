@@ -4,12 +4,10 @@ import (
 	"net/http"
 	"os"
 	"slices"
-	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/config"
 	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
 	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
@@ -113,29 +111,14 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 
 	canonicalRunner, err := validateControlPlaneStartRunner(meta.Runner, meta.RunnerArgs, false)
 	if err != nil {
-		code := errors.CodeOr(err, errors.ERunnerArgConflict)
-		hint := "remove reserved flags from runner_args"
-		if code == errors.ERunnerNotFound {
-			hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
-		}
-		s.writeHeadedError(w, http.StatusBadRequest, string(code), err.Error(), hint, "", requestID)
+		fail := runnerValidationFailure(err)
+		s.writeHeadedError(w, fail.status, string(fail.code), fail.msg, fail.hint, "", requestID)
 		return
 	}
 	headedRunnerArgs, err := buildRunnerArgsForHeaded(canonicalRunner, meta.RunnerArgs)
 	if err != nil {
-		code := errors.CodeOr(err, errors.EInternal)
-		hint := ""
-		if code == errors.ERunnerNotFound {
-			hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
-		}
-		if code == errors.EInvocationInvalidMode {
-			hint = "runner does not support headed mode"
-		}
-		status := http.StatusInternalServerError
-		if code == errors.ERunnerNotFound || code == errors.EInvocationInvalidMode {
-			status = http.StatusBadRequest
-		}
-		s.writeHeadedError(w, status, string(code), err.Error(), hint, "", requestID)
+		fail := headedRunnerArgsFailure(err)
+		s.writeHeadedError(w, fail.status, string(fail.code), fail.msg, fail.hint, "", requestID)
 		return
 	}
 	repoRoot, err := s.resolveRegisteredRepoRoot(record.RepoID)

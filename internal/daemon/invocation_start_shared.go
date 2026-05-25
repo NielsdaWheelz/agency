@@ -78,6 +78,37 @@ func asStartFailure(err error) startFailure {
 	return startFailureFromError(http.StatusInternalServerError, errors.EInternal, err, "")
 }
 
+// runnerValidationFailure converts an error from validateControlPlaneStartRunner
+// into a typed startFailure with the appropriate HTTP status and hint.
+func runnerValidationFailure(err error) *startFailure {
+	code := errors.CodeOr(err, errors.ERunnerArgConflict)
+	hint := "remove reserved flags from runner_args"
+	if code == errors.ERunnerNotFound {
+		hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
+	}
+	f := newStartFailure(http.StatusBadRequest, code, err.Error(), hint)
+	return &f
+}
+
+// headedRunnerArgsFailure converts an error from buildRunnerArgsForHeaded into
+// a typed startFailure with the appropriate HTTP status and hint.
+func headedRunnerArgsFailure(err error) *startFailure {
+	code := errors.CodeOr(err, errors.EInternal)
+	hint := ""
+	switch code {
+	case errors.ERunnerNotFound:
+		hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
+	case errors.EInvocationInvalidMode:
+		hint = "runner does not support headed mode"
+	}
+	status := http.StatusInternalServerError
+	if code == errors.ERunnerNotFound || code == errors.EInvocationInvalidMode {
+		status = http.StatusBadRequest
+	}
+	f := newStartFailure(status, code, err.Error(), hint)
+	return &f
+}
+
 // evaluateIdempotentStartRecord inspects an existing invocation meta found by
 // a client_request_id lookup. It returns nil if the record represents a valid
 // completed or post-claim state suitable for idempotent reuse, or a typed

@@ -22,7 +22,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
 	"github.com/NielsdaWheelz/agency/internal/invocation"
 	agencylock "github.com/NielsdaWheelz/agency/internal/lock"
-	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
@@ -227,24 +226,12 @@ func normalizeAndValidateTaskStartRequest(req *TaskStartRequest) *startFailure {
 
 	canonicalRunner, err := validateControlPlaneStartRunner(req.Runner, req.RunnerArgs, headless)
 	if err != nil {
-		code := errors.CodeOr(err, errors.ERunnerArgConflict)
-		hint := "remove reserved flags from runner_args"
-		if code == errors.ERunnerNotFound {
-			hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
-		}
-		f := newStartFailure(http.StatusBadRequest, code, err.Error(), hint)
-		return &f
+		return runnerValidationFailure(err)
 	}
 	req.Runner = canonicalRunner
 	if !headless {
 		if _, err := buildRunnerArgsForHeaded(req.Runner, req.RunnerArgs); err != nil {
-			code := errors.CodeOr(err, errors.EInternal)
-			status := http.StatusInternalServerError
-			if code == errors.ERunnerNotFound || code == errors.EInvocationInvalidMode {
-				status = http.StatusBadRequest
-			}
-			f := newStartFailure(status, code, err.Error(), "")
-			return &f
+			return headedRunnerArgsFailure(err)
 		}
 	}
 	if err := validateControlPlaneStartInvocationName(req.InvocationName); err != nil {
