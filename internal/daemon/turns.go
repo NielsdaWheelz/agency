@@ -118,56 +118,7 @@ func groupTimelineIntoTurns(entries []timelineTurnEntry, checkpoints []turnCheck
 			continue
 		case "tool_use":
 			if len(turns) > 0 && turns[len(turns)-1].Kind == TurnAssistant {
-				payload := render.DecodeTimelinePayload(entry.Data)
-				tc := ToolCall{
-					ID:      payload.ToolID,
-					Name:    payload.Name,
-					Command: payload.Command,
-				}
-				if payload.HasExitCode {
-					tc.ExitCode = payload.ExitCode
-					tc.HasExit = true
-				}
-				lastTurn := &turns[len(turns)-1]
-				if tc.ID != "" {
-					matched := false
-					for i := len(lastTurn.ToolCalls) - 1; i >= 0; i-- {
-						lastTool := &lastTurn.ToolCalls[i]
-						if strings.TrimSpace(lastTool.ID) != tc.ID {
-							continue
-						}
-						if strings.TrimSpace(lastTool.Name) == "" {
-							lastTool.Name = tc.Name
-						}
-						if strings.TrimSpace(lastTool.Command) == "" {
-							lastTool.Command = tc.Command
-						}
-						if tc.HasExit {
-							lastTool.ExitCode = tc.ExitCode
-							lastTool.HasExit = true
-						}
-						matched = true
-						break
-					}
-					if matched {
-						continue
-					}
-				}
-				if tc.HasExit && len(lastTurn.ToolCalls) > 0 {
-					lastTool := &lastTurn.ToolCalls[len(lastTurn.ToolCalls)-1]
-					if !lastTool.HasExit && sameToolIdentity(*lastTool, tc) {
-						if strings.TrimSpace(lastTool.Name) == "" {
-							lastTool.Name = tc.Name
-						}
-						if strings.TrimSpace(lastTool.Command) == "" {
-							lastTool.Command = tc.Command
-						}
-						lastTool.ExitCode = tc.ExitCode
-						lastTool.HasExit = true
-						continue
-					}
-				}
-				lastTurn.ToolCalls = append(lastTurn.ToolCalls, tc)
+				mergeToolUseIntoAssistantTurn(&turns[len(turns)-1], entry)
 			}
 			continue
 		case "message":
@@ -237,6 +188,53 @@ func groupTimelineIntoTurns(entries []timelineTurnEntry, checkpoints []turnCheck
 	}
 
 	return turns
+}
+
+// mergeToolUseIntoAssistantTurn folds a tool_use timeline entry into the
+// trailing assistant turn: matches by tool ID when set, falls back to
+// completing the most recent unfinished tool when an exit code arrives, and
+// otherwise appends a fresh ToolCall.
+func mergeToolUseIntoAssistantTurn(turn *Turn, entry timelineTurnEntry) {
+	payload := render.DecodeTimelinePayload(entry.Data)
+	tc := ToolCall{ID: payload.ToolID, Name: payload.Name, Command: payload.Command}
+	if payload.HasExitCode {
+		tc.ExitCode = payload.ExitCode
+		tc.HasExit = true
+	}
+	if tc.ID != "" {
+		for i := len(turn.ToolCalls) - 1; i >= 0; i-- {
+			lastTool := &turn.ToolCalls[i]
+			if strings.TrimSpace(lastTool.ID) != tc.ID {
+				continue
+			}
+			fillToolCall(lastTool, tc)
+			return
+		}
+	}
+	if tc.HasExit && len(turn.ToolCalls) > 0 {
+		lastTool := &turn.ToolCalls[len(turn.ToolCalls)-1]
+		if !lastTool.HasExit && sameToolIdentity(*lastTool, tc) {
+			fillToolCall(lastTool, tc)
+			return
+		}
+	}
+	turn.ToolCalls = append(turn.ToolCalls, tc)
+}
+
+// fillToolCall populates dst's empty Name/Command fields from src and copies
+// the exit code if src carries one. Used to merge partial tool_use entries
+// (e.g. tool_start followed by tool_end) into the same ToolCall slot.
+func fillToolCall(dst *ToolCall, src ToolCall) {
+	if strings.TrimSpace(dst.Name) == "" {
+		dst.Name = src.Name
+	}
+	if strings.TrimSpace(dst.Command) == "" {
+		dst.Command = src.Command
+	}
+	if src.HasExit {
+		dst.ExitCode = src.ExitCode
+		dst.HasExit = true
+	}
 }
 
 func appendPromptLikeTurn(
