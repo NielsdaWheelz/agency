@@ -47,7 +47,7 @@ func (s *Server) runPRSync(
 	}
 	env := withNonInteractiveEnv(profileEnv)
 
-	clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.runner, wtMeta.TreePath, env)
+	clean, dirtyStatus, err := dirtyStatus(ctx, s.runner, wtMeta.TreePath, env)
 	if err != nil {
 		return nil, err
 	}
@@ -62,18 +62,18 @@ func (s *Server) runPRSync(
 		)
 	}
 
-	if err := prSyncCheckGHAuth(ctx, s.runner, wtMeta.TreePath, env); err != nil {
+	if err := checkGHAuth(ctx, s.runner, wtMeta.TreePath, env); err != nil {
 		return nil, err
 	}
-	if err := prSyncGitFetchOrigin(ctx, s.runner, wtMeta.TreePath, env); err != nil {
+	if err := gitFetchOrigin(ctx, s.runner, wtMeta.TreePath, env); err != nil {
 		return nil, err
 	}
 
-	baseRef, err := prSyncResolveBaseRef(ctx, s.runner, wtMeta.TreePath, wtMeta.BaseBranch, env)
+	baseRef, err := resolveBaseRef(ctx, s.runner, wtMeta.TreePath, wtMeta.BaseBranch, env)
 	if err != nil {
 		return nil, err
 	}
-	ahead, err := prSyncComputeAhead(ctx, s.runner, wtMeta.TreePath, baseRef, wtMeta.Branch, env)
+	ahead, err := computeAhead(ctx, s.runner, wtMeta.TreePath, baseRef, wtMeta.Branch, env)
 	if err != nil {
 		return nil, err
 	}
@@ -86,11 +86,11 @@ func (s *Server) runPRSync(
 		return nil, err
 	}
 
-	if err := prSyncGitPush(ctx, s.runner, wtMeta.TreePath, wtMeta.Branch, req.ForceWithLease, env); err != nil {
+	if err := gitPush(ctx, s.runner, wtMeta.TreePath, wtMeta.Branch, req.ForceWithLease, env); err != nil {
 		return nil, err
 	}
 
-	owner, err := prSyncResolveGitHubOwner(ctx, s.runner, wtMeta.TreePath, env)
+	owner, err := resolveGitHubOwner(ctx, s.runner, wtMeta.TreePath, env)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +245,7 @@ func prSyncIsAlreadyExistsError(err error) bool {
 	return strings.Contains(lower, "pull request") && strings.Contains(lower, "already exists")
 }
 
-func prSyncDirtyStatus(ctx context.Context, runner exec.CommandRunner, workDir string, env map[string]string) (bool, string, error) {
+func dirtyStatus(ctx context.Context, runner exec.CommandRunner, workDir string, env map[string]string) (bool, string, error) {
 	result, err := runner.Run(ctx, "git", []string{"status", "--porcelain", "--untracked-files=all"}, exec.RunOpts{
 		Dir: workDir,
 		Env: env,
@@ -279,7 +279,7 @@ func prSyncDirtyStatus(ctx context.Context, runner exec.CommandRunner, workDir s
 	return strings.TrimSpace(status) == "", status, nil
 }
 
-func prSyncCheckGHAuth(ctx context.Context, runner exec.CommandRunner, workDir string, env map[string]string) error {
+func checkGHAuth(ctx context.Context, runner exec.CommandRunner, workDir string, env map[string]string) error {
 	result, err := runner.Run(ctx, "gh", []string{"--version"}, exec.RunOpts{
 		Dir: workDir,
 		Env: env,
@@ -299,7 +299,7 @@ func prSyncCheckGHAuth(ctx context.Context, runner exec.CommandRunner, workDir s
 	return nil
 }
 
-func prSyncGitFetchOrigin(ctx context.Context, runner exec.CommandRunner, workDir string, env map[string]string) error {
+func gitFetchOrigin(ctx context.Context, runner exec.CommandRunner, workDir string, env map[string]string) error {
 	result, err := runner.Run(ctx, "git", []string{"fetch", "origin"}, exec.RunOpts{
 		Dir: workDir,
 		Env: env,
@@ -317,8 +317,8 @@ func prSyncGitFetchOrigin(ctx context.Context, runner exec.CommandRunner, workDi
 	return nil
 }
 
-func prSyncResolveBaseRef(ctx context.Context, runner exec.CommandRunner, workDir, baseBranch string, env map[string]string) (string, error) {
-	localExists, err := prSyncRefExists(ctx, runner, workDir, "refs/heads/"+baseBranch, env)
+func resolveBaseRef(ctx context.Context, runner exec.CommandRunner, workDir, baseBranch string, env map[string]string) (string, error) {
+	localExists, err := refExists(ctx, runner, workDir, "refs/heads/"+baseBranch, env)
 	if err != nil {
 		return "", err
 	}
@@ -327,7 +327,7 @@ func prSyncResolveBaseRef(ctx context.Context, runner exec.CommandRunner, workDi
 	}
 
 	remoteRef := "refs/remotes/origin/" + baseBranch
-	remoteExists, err := prSyncRefExists(ctx, runner, workDir, remoteRef, env)
+	remoteExists, err := refExists(ctx, runner, workDir, remoteRef, env)
 	if err != nil {
 		return "", err
 	}
@@ -342,7 +342,7 @@ func prSyncResolveBaseRef(ctx context.Context, runner exec.CommandRunner, workDi
 	)
 }
 
-func prSyncRefExists(ctx context.Context, runner exec.CommandRunner, workDir, ref string, env map[string]string) (bool, error) {
+func refExists(ctx context.Context, runner exec.CommandRunner, workDir, ref string, env map[string]string) (bool, error) {
 	result, err := runner.Run(ctx, "git", []string{"show-ref", "--verify", "--quiet", ref}, exec.RunOpts{
 		Dir: workDir,
 		Env: env,
@@ -353,7 +353,7 @@ func prSyncRefExists(ctx context.Context, runner exec.CommandRunner, workDir, re
 	return result.ExitCode == 0, nil
 }
 
-func prSyncComputeAhead(ctx context.Context, runner exec.CommandRunner, workDir, baseRef, branch string, env map[string]string) (int, error) {
+func computeAhead(ctx context.Context, runner exec.CommandRunner, workDir, baseRef, branch string, env map[string]string) (int, error) {
 	revRange := baseRef + ".." + branch
 	result, err := runner.Run(ctx, "git", []string{"rev-list", "--count", revRange}, exec.RunOpts{
 		Dir: workDir,
@@ -377,7 +377,7 @@ func prSyncComputeAhead(ctx context.Context, runner exec.CommandRunner, workDir,
 	return count, nil
 }
 
-func prSyncGitPush(ctx context.Context, runner exec.CommandRunner, workDir, branch string, forceWithLease bool, env map[string]string) error {
+func gitPush(ctx context.Context, runner exec.CommandRunner, workDir, branch string, forceWithLease bool, env map[string]string) error {
 	args := []string{"push", "-u", "origin", branch}
 	if forceWithLease {
 		args = []string{"push", "--force-with-lease", "-u", "origin", branch}
@@ -426,7 +426,7 @@ func isNonFastForwardError(stderr string) bool {
 	return strings.Contains(lower, "[rejected]") && strings.Contains(lower, "updates were rejected")
 }
 
-func prSyncResolveGitHubOwner(ctx context.Context, runner exec.CommandRunner, workDir string, env map[string]string) (string, error) {
+func resolveGitHubOwner(ctx context.Context, runner exec.CommandRunner, workDir string, env map[string]string) (string, error) {
 	result, err := runner.Run(ctx, "git", []string{"config", "--get", "remote.origin.url"}, exec.RunOpts{
 		Dir: workDir,
 		Env: env,

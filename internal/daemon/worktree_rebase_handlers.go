@@ -109,7 +109,7 @@ func (s *Server) performWorktreeRebase(ctx context.Context, record *store.Integr
 	}
 	env := withNonInteractiveEnv(profileEnv)
 
-	clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.runner, wtMeta.TreePath, env)
+	clean, dirtyStatus, err := dirtyStatus(ctx, s.runner, wtMeta.TreePath, env)
 	if err != nil {
 		return err
 	}
@@ -124,7 +124,7 @@ func (s *Server) performWorktreeRebase(ctx context.Context, record *store.Integr
 		)
 	}
 
-	if err := prSyncGitFetchOrigin(ctx, s.runner, wtMeta.TreePath, env); err != nil {
+	if err := gitFetchOrigin(ctx, s.runner, wtMeta.TreePath, env); err != nil {
 		return err
 	}
 

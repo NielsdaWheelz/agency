@@ -42,7 +42,7 @@ func (s *Server) runWorktreeMerge(
 	}
 	env := withNonInteractiveEnv(profileEnv)
 
-	if err := prSyncCheckGHAuth(ctx, s.runner, repoRoot, env); err != nil {
+	if err := checkGHAuth(ctx, s.runner, repoRoot, env); err != nil {
 		return nil, err
 	}
 
@@ -83,7 +83,7 @@ func (s *Server) runWorktreeMerge(
 			return nil, errors.Wrap(errors.EPersistFailed, "failed to persist merge verify stage", err)
 		}
 
-		clean, dirtyStatus, err := prSyncDirtyStatus(ctx, s.runner, wtMeta.TreePath, env)
+		clean, dirtyStatus, err := dirtyStatus(ctx, s.runner, wtMeta.TreePath, env)
 		if err != nil {
 			return nil, err
 		}
