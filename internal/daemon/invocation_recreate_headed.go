@@ -14,6 +14,30 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
+// reattachExistingHeadedSession returns the post-attach meta when a tmux
+// session for this invocation is already live. If the invocation is also
+// already supervised, only meta is refreshed; otherwise supervision is
+// restored against the existing session.
+func (s *Server) reattachExistingHeadedSession(ctx context.Context, record *resolvedInvocation, meta *store.InvocationMeta, sessionName string) (*store.InvocationMeta, *startFailure) {
+	s.mu.RLock()
+	_, supervised := s.processes[record.InvocationID]
+	s.mu.RUnlock()
+	if supervised {
+		updatedMeta, err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, "", meta.Runner, sessionName, slices.Clone(meta.RunnerArgs), slices.Clone(meta.CustomEnvKeys))
+		if err != nil {
+			f := newStartFailure(http.StatusInternalServerError, errors.EInternal, "failed to update invocation meta: "+err.Error(), "")
+			return nil, &f
+		}
+		return updatedMeta, nil
+	}
+	updatedMeta, err := s.restoreExistingHeadedSupervision(ctx, record.RepoID, record.InvocationID, meta, sessionName, "agency.headed_recreated")
+	if err != nil {
+		f := newStartFailure(http.StatusInternalServerError, errors.EInvocationStartFailed, "failed to restore headed supervision: "+err.Error(), "ensure tmux is still available")
+		return nil, &f
+	}
+	return updatedMeta, nil
+}
+
 // startHeadedTmuxSession creates the tmux session, replays any captured
 // scrollback into the terminal log, and starts piping the pane. On any
 // failure the partially-created session is killed.
@@ -134,21 +158,9 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		return
 	}
 	if exists {
-		s.mu.RLock()
-		_, supervised := s.processes[record.InvocationID]
-		s.mu.RUnlock()
-		if supervised {
-			updatedMeta, err := s.claimHeadedInvocation(record.RepoID, record.InvocationID, "", meta.Runner, sessionName, slices.Clone(meta.RunnerArgs), slices.Clone(meta.CustomEnvKeys))
-			if err != nil {
-				respondErr(http.StatusInternalServerError, string(errors.EInternal), "failed to update invocation meta: "+err.Error(), "")
-				return
-			}
-			s.writeHeadedSuccess(w, record.InvocationID, updatedMeta, record.RepoID, "", requestID, true)
-			return
-		}
-		updatedMeta, err := s.restoreExistingHeadedSupervision(ctx, record.RepoID, record.InvocationID, meta, sessionName, "agency.headed_recreated")
-		if err != nil {
-			respondErr(http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to restore headed supervision: "+err.Error(), "ensure tmux is still available")
+		updatedMeta, fail := s.reattachExistingHeadedSession(ctx, record, meta, sessionName)
+		if fail != nil {
+			respondErr(fail.status, string(fail.code), fail.msg, fail.hint)
 			return
 		}
 		s.writeHeadedSuccess(w, record.InvocationID, updatedMeta, record.RepoID, "", requestID, true)
