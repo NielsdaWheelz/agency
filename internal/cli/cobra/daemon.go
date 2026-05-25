@@ -1,14 +1,10 @@
 package cobra
 
 import (
-	"context"
-
 	"github.com/spf13/cobra"
 
 	"github.com/NielsdaWheelz/agency/internal/commands"
 	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/NielsdaWheelz/agency/internal/exec"
-	"github.com/NielsdaWheelz/agency/internal/fs"
 )
 
 func newDaemonCmd() *cobra.Command {
@@ -61,10 +57,7 @@ Examples:
   agency daemon start --foreground   # foreground (for launchd/systemd)`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
-
+			ctx, cr, fsys := realCommandDeps(cmd)
 			return commands.DaemonStart(ctx, cr, fsys, commands.DaemonStartOpts{
 				Foreground: foreground,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
@@ -91,9 +84,7 @@ Example:
   agency daemon status --json`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
-
+			ctx, _, fsys := realCommandDeps(cmd)
 			return commands.DaemonStatus(ctx, fsys, commands.DaemonStatusOpts{
 				JSON: jsonOut,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
@@ -121,9 +112,7 @@ Example:
   agency daemon stop --force`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
-
+			ctx, _, fsys := realCommandDeps(cmd)
 			return commands.DaemonStop(ctx, fsys, commands.DaemonStopOpts{
 				Force: force,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
@@ -153,9 +142,7 @@ Examples:
   agency daemon uninstall   # to remove`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cr := exec.NewRealRunner()
-			ctx := context.Background()
-
+			ctx, cr, _ := realCommandDeps(cmd)
 			return commands.DaemonInstall(ctx, cr, commands.DaemonInstallOpts{},
 				cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
@@ -177,9 +164,7 @@ Example:
   agency daemon uninstall`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cr := exec.NewRealRunner()
-			ctx := context.Background()
-
+			ctx, cr, _ := realCommandDeps(cmd)
 			return commands.DaemonUninstall(ctx, cr, commands.DaemonUninstallOpts{},
 				cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},

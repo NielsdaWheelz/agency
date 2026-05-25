@@ -124,7 +124,7 @@ func (s *Server) startHeadedTmuxSession(ctx context.Context, repoID, invocationI
 }
 
 func appendTerminalLog(path, content string) error {
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := openAppendLog(path)
 	if err != nil {
 		return fmt.Errorf("failed to append initial terminal capture: %w", err)
 	}
@@ -243,7 +243,7 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		respondErr(http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to prepare terminal log: "+err.Error(), "")
 		return
 	}
-	terminalFile, err := os.OpenFile(terminalLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	terminalFile, err := openAppendLog(terminalLogPath)
 	if err != nil {
 		respondErr(http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to create terminal log: "+err.Error(), "")
 		return

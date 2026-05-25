@@ -42,7 +42,7 @@ func (s *Server) restoreExistingHeadedSupervision(ctx context.Context, repoID, i
 	if err != nil {
 		return nil, fmt.Errorf("prepare terminal log: %w", err)
 	}
-	terminalFile, err := os.OpenFile(terminalLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	terminalFile, err := openAppendLog(terminalLogPath)
 	if err != nil {
 		return nil, fmt.Errorf("create terminal log: %w", err)
 	}
@@ -54,7 +54,7 @@ func (s *Server) restoreExistingHeadedSupervision(ctx context.Context, repoID, i
 			"target": target,
 		})
 	} else if scrollback != "" {
-		f, err := os.OpenFile(terminalLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		f, err := openAppendLog(terminalLogPath)
 		if err != nil {
 			return nil, fmt.Errorf("append initial terminal capture: %w", err)
 		}

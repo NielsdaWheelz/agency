@@ -8,6 +8,14 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
+// reconcileHeadedTickTimeout bounds the per-tick context for reconciliation
+// scans so a slow tmux probe cannot pin the reconcile goroutine indefinitely.
+const reconcileHeadedTickTimeout = 30 * time.Second
+
+// reconcileHeadedStartingSupervisionGrace defers supervision restoration for a
+// "starting" headed invocation until the runner has had time to finish setup.
+const reconcileHeadedStartingSupervisionGrace = 30 * time.Second
+
 func (s *Server) runHeadedReconcileLoop() {
 	defer close(s.reconcileLoopDone)
 
@@ -24,7 +32,7 @@ func (s *Server) runHeadedReconcileLoop() {
 }
 
 func (s *Server) reconcileHeadedInvocations() {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), reconcileHeadedTickTimeout)
 	defer cancel()
 
 	repoIDs, err := s.discoverDurableRepoIDs()
@@ -85,7 +93,7 @@ func (s *Server) reconcileHeadedInvocation(ctx context.Context, repoID string, r
 		restoreSupervision := !supervised && (r.Meta.Status == store.InvocationStatusRunning || r.Meta.Status == store.InvocationStatusStopping)
 		if !restoreSupervision && !supervised && r.Meta.Status == store.InvocationStatusStarting {
 			startedAt, parseErr := time.Parse(time.RFC3339, r.Meta.StartedAt)
-			restoreSupervision = parseErr == nil && s.clock().Sub(startedAt) > 30*time.Second
+			restoreSupervision = parseErr == nil && s.clock().Sub(startedAt) > reconcileHeadedStartingSupervisionGrace
 		}
 		if restoreSupervision {
 			if _, err := s.restoreExistingHeadedSupervision(ctx, repoID, r.InvocationID, r.Meta, sessionName, "agency.headed_supervision_reconciled"); err != nil {

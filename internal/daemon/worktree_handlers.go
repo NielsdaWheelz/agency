@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
@@ -12,6 +13,30 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
+
+// resolveWorktreeFromQuery validates the required repo_id query param and
+// resolves a worktree reference for the worktree-mutation handler surfaces. On
+// missing repo_id, lookup failure, or a broken/missing-meta record it writes
+// the appropriate API error and returns ok=false. Callers do their own
+// state-specific (present vs archived) checks.
+func (s *Server) resolveWorktreeFromQuery(w http.ResponseWriter, r *http.Request, worktreeRef, requestID string) (*store.IntegrationWorktreeRecord, bool) {
+	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
+	if repoID == "" {
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
+		return nil, false
+	}
+	record, err := s.resolveWorktreeRefForRepo(worktreeRef, repoID)
+	if err != nil {
+		code := errors.CodeOr(err, errors.EInternal)
+		s.writeErrorWithRequestID(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), "use 'agency worktree ls' to list worktrees")
+		return nil, false
+	}
+	if record == nil || record.Broken || record.Meta == nil {
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EWorktreeBroken), "integration worktree exists but meta.json is unreadable", "inspect or recreate the worktree")
+		return nil, false
+	}
+	return record, true
+}
 
 // worktreeRmGitRemoveTimeout bounds the git worktree removal performed by the worktree rm mutation surface.
 const worktreeRmGitRemoveTimeout = 30 * time.Second

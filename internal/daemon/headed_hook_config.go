@@ -220,7 +220,7 @@ func (s *Server) excludeSandboxFiles(ctx context.Context, sandboxPath string, pa
 	if b.Len() == 0 {
 		return nil
 	}
-	f, err := os.OpenFile(excludePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	f, err := openAppendLog(excludePath)
 	if err != nil {
 		return err
 	}

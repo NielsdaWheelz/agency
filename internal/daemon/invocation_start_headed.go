@@ -184,7 +184,7 @@ func (s *Server) finishHeadedInvocationStart(ctx context.Context, repoRoot, repo
 	if err != nil {
 		return nil, failStart(http.StatusInternalServerError, errors.EInvocationStartFailed, "failed to prepare terminal log: "+err.Error(), "")
 	}
-	terminalFile, err := os.OpenFile(terminalLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	terminalFile, err := openAppendLog(terminalLogPath)
 	if err != nil {
 		return nil, failStart(http.StatusInternalServerError, errors.EInvocationStartFailed, "failed to create terminal log: "+err.Error(), "")
 	}

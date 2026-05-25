@@ -3,12 +3,28 @@ package git
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 )
+
+// RunIn runs `git -C dir <args...>` and maps non-zero exit / process error to
+// a single labelled failure. Callers carrying their own runner and dir use this
+// to fold the boilerplate down to one expression per invocation.
+func RunIn(ctx context.Context, cr exec.CommandRunner, dir string, env map[string]string, label string, args ...string) (exec.CmdResult, error) {
+	fullArgs := append([]string{"-C", dir}, args...)
+	result, err := cr.Run(ctx, "git", fullArgs, exec.RunOpts{Env: env})
+	if err != nil {
+		return result, err
+	}
+	if result.ExitCode != 0 {
+		return result, fmt.Errorf("%s failed: %s", label, result.Stderr)
+	}
+	return result, nil
+}
 
 // RepoRoot holds the absolute path to a git repository root.
 type RepoRoot struct {

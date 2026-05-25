@@ -2,7 +2,6 @@ package watch
 
 import (
 	"context"
-	"strconv"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
@@ -35,29 +34,14 @@ func loadInvocationLogs(ctx context.Context, client *daemonclient.Client, invoca
 }
 
 func (m model) renderLogs() string {
-	width := m.width
-	if width <= 0 {
-		width = 120
-	}
-
+	width := m.viewWidth()
 	lines := m.renderPageHeader("logs (" + m.currentLogsKind() + ")")
 	if line := m.styledActionLine(width); line != "" {
 		lines = append(lines, line, "")
 	}
 	lines = appendPageError(lines, "logs", m.logsError, width)
 	lines = appendPageLoading(lines, "logs", m.logsLoading)
-
-	logLines := logLines(m.logsContent)
-	visible := m.logVisibleLines()
-	start, end := scrollWindow(len(logLines), m.logsScroll, visible)
-	for _, line := range logLines[start:end] {
-		lines = append(lines, truncateWithEllipsis(line, width))
-	}
-	if len(logLines) > visible {
-		lines = append(lines, "", warningStyle.Render(
-			"showing "+truncateWithEllipsis(strconv.Itoa(start+1)+"-"+strconv.Itoa(end)+" of "+strconv.Itoa(len(logLines)), width-12),
-		))
-	}
+	lines = append(lines, m.renderScrollViewport(logLines(m.logsContent), m.logsScroll)...)
 	lines = append(lines, "")
 	lines = append(lines, warningStyle.Render("j/k move • a attach • d review • x actions • r refresh • b back • q quit"))
 	return strings.Join(lines, "\n")
@@ -65,6 +49,10 @@ func (m model) renderLogs() string {
 
 func logLines(content string) []string {
 	return contentLines(content, "(no log output yet)")
+}
+
+func (m model) maxLogsScroll() int {
+	return m.pageMaxScroll(logLines(m.logsContent))
 }
 
 func contentLines(content, emptyMessage string) []string {

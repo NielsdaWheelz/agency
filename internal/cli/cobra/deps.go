@@ -19,5 +19,16 @@ func realCommandDepsFromCmd(cmd *cobra.Command) (context.Context, exec.CommandRu
 	if err != nil {
 		return nil, nil, nil, "", errors.Wrap(errors.EInternal, "failed to get cwd", err)
 	}
-	return cmd.Context(), exec.NewRealRunner(), fs.NewRealFS(), cwd, nil
+	ctx, cr, fsys := realCommandDeps(cmd)
+	return ctx, cr, fsys, cwd, nil
+}
+
+// realCommandDeps returns the runtime deps a command needs when it does not
+// require cwd. Use realCommandDepsFromCmd when cwd is needed.
+func realCommandDeps(cmd *cobra.Command) (context.Context, exec.CommandRunner, fs.FS) {
+	ctx := context.Background()
+	if cmd != nil {
+		ctx = cmd.Context()
+	}
+	return ctx, exec.NewRealRunner(), fs.NewRealFS()
 }

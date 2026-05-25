@@ -1,16 +1,12 @@
 package cobra
 
 import (
-	"context"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/NielsdaWheelz/agency/internal/commands"
 	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/NielsdaWheelz/agency/internal/exec"
-	"github.com/NielsdaWheelz/agency/internal/fs"
 )
 
 func newWatchCmd() *cobra.Command {
@@ -48,14 +44,10 @@ Use --interval to tune periodic refresh cadence.`,
 				return errors.New(errors.EInvalidArgument, "interval must be between 250ms and 5s")
 			}
 
-			cwd, err := os.Getwd()
+			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get cwd", err)
+				return err
 			}
-
-			ctx := context.Background()
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
 			return commands.Watch(ctx, cr, fsys, cwd, commands.WatchOpts{
 				Interval: interval,
 			}, cmd.OutOrStdout(), cmd.ErrOrStderr())

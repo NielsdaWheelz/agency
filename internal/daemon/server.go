@@ -19,6 +19,11 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
+// supervisedProcessSigintGrace bounds how long terminateSupervisedProcess
+// waits for a SIGINTed runner to close its done channel before escalating
+// to SIGKILL.
+const supervisedProcessSigintGrace = 2 * time.Second
+
 type tmuxClient interface {
 	HasSession(ctx context.Context, name string) (bool, error)
 	NewSession(ctx context.Context, name, cwd string, argv []string, env map[string]string) error
@@ -145,7 +150,7 @@ func NewServer(st *store.Store, runner exec.CommandRunner, fsys fs.FS, configDir
 		tmuxClient:              tmux.NewExecClient(runner),
 		configDir:               configDir,
 		clock:                   time.Now,
-		pidChecker:              IsPIDAlive,
+		pidChecker:              exec.IsPIDAlive,
 		instanceID:              uuid.New().String(),
 		processes:               make(map[string]*supervisedProcess),
 		activeMerges:            make(map[string]*worktreeMergeProcess),
@@ -156,34 +161,17 @@ func NewServer(st *store.Store, runner exec.CommandRunner, fsys fs.FS, configDir
 		shutdownCh:              make(chan struct{}),
 		reconcileLoopDone:       make(chan struct{}),
 	}
-	server.invocationEvents = eventlog.NewWriter("invocation_id", func() time.Time {
-		return server.clock()
-	})
-	server.worktreeEvents = eventlog.NewWriter("worktree_id", func() time.Time {
-		return server.clock()
-	})
-	server.taskEvents = eventlog.NewWriter("task_id", func() time.Time {
-		return server.clock()
-	})
-	server.repoEvents = eventlog.NewWriter("repo_id", func() time.Time {
-		return server.clock()
-	})
+	clockFn := func() time.Time { return server.clock() }
+	server.invocationEvents = eventlog.NewWriter("invocation_id", clockFn)
+	server.worktreeEvents = eventlog.NewWriter("worktree_id", clockFn)
+	server.taskEvents = eventlog.NewWriter("task_id", clockFn)
+	server.repoEvents = eventlog.NewWriter("repo_id", clockFn)
 	return server
 }
 
 // InstanceID returns the unique ID for this daemon instance.
 func (s *Server) InstanceID() string {
 	return s.instanceID
-}
-
-// IsPIDAlive checks if a process with the given PID is alive.
-func IsPIDAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	// Send signal 0 to check if process exists
-	err := syscall.Kill(pid, 0)
-	return err == nil || err == syscall.EPERM
 }
 
 // Serve starts the HTTP server on the given listener.
@@ -306,7 +294,7 @@ func (s *Server) terminateSupervisedProcess(ctx context.Context, proc *supervise
 		if err := syscall.Kill(-proc.pgid, syscall.SIGINT); err != syscall.ESRCH {
 			select {
 			case <-proc.done:
-			case <-time.After(2 * time.Second):
+			case <-time.After(supervisedProcessSigintGrace):
 				_ = syscall.Kill(-proc.pgid, syscall.SIGKILL)
 			case <-ctx.Done():
 				_ = syscall.Kill(-proc.pgid, syscall.SIGKILL)

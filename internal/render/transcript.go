@@ -37,6 +37,24 @@ func (o TranscriptOpts) style(code, text string) string {
 	return code + text + ansiReset
 }
 
+// transcriptWriter wraps an io.Writer and captures the first error from any
+// Println call; subsequent calls are no-ops. Callers drain the error via Err.
+type transcriptWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (x *transcriptWriter) Println(args ...any) {
+	if x.err != nil {
+		return
+	}
+	_, x.err = fmt.Fprintln(x.w, args...)
+}
+
+func (x *transcriptWriter) Err() error {
+	return x.err
+}
+
 // WriteTranscript renders timeline entries as a human-readable transcript.
 func WriteTranscript(w io.Writer, entries []TranscriptEntry, opts TranscriptOpts) error {
 	if len(entries) == 0 {
@@ -108,113 +126,75 @@ func renderSessionStart(w io.Writer, entry TranscriptEntry, payload timelinePayl
 }
 
 func renderPromptSeed(w io.Writer, payload timelinePayload, opts TranscriptOpts) error {
-	_, err := fmt.Fprintln(w, opts.style(ansiDim, "── Prompt ──"))
-	if err != nil {
-		return err
-	}
+	tw := &transcriptWriter{w: w}
+	tw.Println(opts.style(ansiDim, "── Prompt ──"))
 	if text := payload.PromptLikeSummary(); text != "" {
-		_, err = fmt.Fprintln(w, indentText(text, "  "))
+		tw.Println(indentText(text, "  "))
 	}
-	return err
+	return tw.Err()
 }
 
 func renderAssistantMessage(w io.Writer, payload timelinePayload, opts TranscriptOpts) error {
-	_, err := fmt.Fprintln(w)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintln(w, opts.style(ansiBold, "Assistant"))
-	if err != nil {
-		return err
-	}
+	tw := &transcriptWriter{w: w}
+	tw.Println()
+	tw.Println(opts.style(ansiBold, "Assistant"))
 
-	// Prefer content_blocks if available
 	if len(payload.blocks) > 0 {
 		for _, block := range payload.blocks {
 			switch block.Type {
 			case "text":
 				if text := block.Text; text != "" {
-					_, err = fmt.Fprintln(w, text)
-					if err != nil {
-						return err
-					}
+					tw.Println(text)
 				}
 			case "tool_use":
 				name := block.Name
 				if name == "" {
 					name = "unknown"
 				}
-				_, err = fmt.Fprintln(w, opts.style(ansiCyan, "▶ Tool: "+name))
-				if err != nil {
-					return err
-				}
-				if input := block.Input; input != nil {
-					_, err = fmt.Fprintln(w, opts.style(ansiDim, "  (input hidden; use raw/json to inspect)"))
-					if err != nil {
-						return err
-					}
+				tw.Println(opts.style(ansiCyan, "▶ Tool: "+name))
+				if block.Input != nil {
+					tw.Println(opts.style(ansiDim, "  (input hidden; use raw/json to inspect)"))
 				}
 			}
 		}
-		return nil
+		return tw.Err()
 	}
 
-	// Render text-only message payloads.
 	if text := payload.Text; text != "" {
-		_, err = fmt.Fprintln(w, text)
+		tw.Println(text)
 	}
-	return err
+	return tw.Err()
 }
 
 func renderUserMessage(w io.Writer, payload timelinePayload, opts TranscriptOpts) error {
+	tw := &transcriptWriter{w: w}
 	if !payload.isToolResultMessage() {
-		_, err := fmt.Fprintln(w)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(w, opts.style(ansiBold, "User"))
-		if err != nil {
-			return err
-		}
+		tw.Println()
+		tw.Println(opts.style(ansiBold, "User"))
 		if text := payload.promptMessageText(); text != "" {
-			_, err = fmt.Fprintln(w, text)
+			tw.Println(text)
 		}
-		return err
+		return tw.Err()
 	}
 
-	// Prefer content_blocks
 	if len(payload.blocks) > 0 {
-		_, err := fmt.Fprintln(w, opts.style(ansiDim, "Tool Result"))
-		if err != nil {
-			return err
-		}
+		tw.Println(opts.style(ansiDim, "Tool Result"))
 		for _, block := range payload.blocks {
 			if content := block.Content; content != "" {
-				_, err = fmt.Fprintln(w, indentText(content, "  "))
-				if err != nil {
-					return err
-				}
+				tw.Println(indentText(content, "  "))
 			}
 			if text := block.Text; text != "" {
-				_, err = fmt.Fprintln(w, indentText(text, "  "))
-				if err != nil {
-					return err
-				}
+				tw.Println(indentText(text, "  "))
 			}
 		}
-		return nil
+		return tw.Err()
 	}
 
-	// Render text-only tool results.
 	if text := payload.Text; text != "" {
-		_, err := fmt.Fprintln(w, opts.style(ansiDim, "Tool Result"))
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(w, indentText(text, "  "))
-		return err
+		tw.Println(opts.style(ansiDim, "Tool Result"))
+		tw.Println(indentText(text, "  "))
 	}
-	return nil
+	return tw.Err()
 }
 
 func renderToolUse(w io.Writer, payload timelinePayload, opts TranscriptOpts) error {
@@ -226,13 +206,12 @@ func renderToolUse(w io.Writer, payload timelinePayload, opts TranscriptOpts) er
 		label += " " + payload.Command
 	}
 
-	// Color exit code
 	if payload.HasExitCode {
+		exitStyle := ansiRed
 		if payload.ExitCode == 0 {
-			label += " " + opts.style(ansiGreen, fmt.Sprintf("(exit=%d)", payload.ExitCode))
-		} else {
-			label += " " + opts.style(ansiRed, fmt.Sprintf("(exit=%d)", payload.ExitCode))
+			exitStyle = ansiGreen
 		}
+		label += " " + opts.style(exitStyle, fmt.Sprintf("(exit=%d)", payload.ExitCode))
 	}
 
 	_, err := fmt.Fprintln(w, label)
@@ -240,18 +219,13 @@ func renderToolUse(w io.Writer, payload timelinePayload, opts TranscriptOpts) er
 }
 
 func renderFollowupPrompt(w io.Writer, payload timelinePayload, opts TranscriptOpts) error {
-	_, err := fmt.Fprintln(w)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintln(w, opts.style(ansiBold, "User"))
-	if err != nil {
-		return err
-	}
+	tw := &transcriptWriter{w: w}
+	tw.Println()
+	tw.Println(opts.style(ansiBold, "User"))
 	if text := payload.PromptLikeSummary(); text != "" {
-		_, err = fmt.Fprintln(w, text)
+		tw.Println(text)
 	}
-	return err
+	return tw.Err()
 }
 
 func renderFinal(w io.Writer, payload timelinePayload, opts TranscriptOpts) error {

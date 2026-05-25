@@ -21,6 +21,11 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
+// taskAbortTmuxKillTimeout bounds the cleanup that abortStartedTaskInvocation
+// uses when killing a still-starting headed tmux session after a task start
+// failed.
+const taskAbortTmuxKillTimeout = 5 * time.Second
+
 func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	requestID := prepareRequestID(w, r)
@@ -539,7 +544,7 @@ func (s *Server) abortStartedTaskInvocation(repoID string, invMeta *store.Invoca
 			})
 			return
 		}
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), taskAbortTmuxKillTimeout)
 		defer cancel()
 		if err := s.tmuxClient.KillSession(cleanupCtx, sessionName); err != nil && !tmux.IsNoSessionErr(err) {
 			s.recordInvocationWarning(repoID, invMeta.InvocationID, "task_abort_tmux_kill_failed", err.Error(), map[string]any{
@@ -595,31 +600,12 @@ func (s *Server) markTaskFailed(repoID, taskID, phase string, failure startFailu
 func (s *Server) writeTaskStartError(w http.ResponseWriter, status int, requestID string, code errors.Code, message, hint, clientRequestID string, meta *store.TaskMeta) {
 	setRequestIDHeader(w, requestID)
 	resp := TaskStartResponse{
-		OK:              false,
-		RequestID:       requestID,
-		APIVersion:      APIVersion,
-		BuildVersion:    daemonBuildVersion(),
-		ClientRequestID: clientRequestID,
-		ErrorCode:       string(code),
-		Message:         message,
-		Hint:            hint,
+		ResponseEnvelope: NewErrorEnvelope(requestID, string(code), message, hint),
+		ClientRequestID:  clientRequestID,
 	}
 	if meta != nil {
 		resp.Partial = true
-		resp.TaskID = meta.TaskID
-		resp.TaskName = meta.Name
-		resp.State = meta.State
-		resp.RepoID = meta.RepoID
-		resp.RepoName = s.repoName(meta.RepoID)
-		resp.WorktreeID = meta.WorktreeID
-		resp.WorktreeName = meta.WorktreeName
-		resp.WorktreePath = meta.WorktreePath
-		resp.Branch = meta.Branch
-		resp.ExecutionProfile = meta.ExecutionProfile
-		resp.CheckoutRoot = meta.CheckoutRoot
-		resp.InvocationID = meta.PrimaryInvocationID
-		resp.Mode = meta.Mode
-		resp.Runner = meta.Runner
+		s.populateTaskStartMetaFields(&resp, meta)
 		resp.FailedPhase = meta.FailedPhase
 	}
 	s.writeJSON(w, status, resp)
@@ -628,27 +614,11 @@ func (s *Server) writeTaskStartError(w http.ResponseWriter, status int, requestI
 func (s *Server) writeTaskStartSuccess(w http.ResponseWriter, requestID, clientRequestID string, meta *store.TaskMeta, duplicate bool) {
 	setRequestIDHeader(w, requestID)
 	resp := TaskStartResponse{
-		OK:               true,
-		RequestID:        requestID,
-		APIVersion:       APIVersion,
-		BuildVersion:     daemonBuildVersion(),
+		ResponseEnvelope: NewSuccessEnvelope(requestID),
 		ClientRequestID:  clientRequestID,
 		Duplicate:        duplicate,
-		TaskID:           meta.TaskID,
-		TaskName:         meta.Name,
-		State:            meta.State,
-		RepoID:           meta.RepoID,
-		RepoName:         s.repoName(meta.RepoID),
-		WorktreeID:       meta.WorktreeID,
-		WorktreeName:     meta.WorktreeName,
-		WorktreePath:     meta.WorktreePath,
-		Branch:           meta.Branch,
-		ExecutionProfile: meta.ExecutionProfile,
-		CheckoutRoot:     meta.CheckoutRoot,
-		InvocationID:     meta.PrimaryInvocationID,
-		Mode:             meta.Mode,
-		Runner:           meta.Runner,
 	}
+	s.populateTaskStartMetaFields(&resp, meta)
 	if meta.PrimaryInvocationID != "" {
 		if invMeta, err := s.store.ReadInvocationMeta(meta.RepoID, meta.PrimaryInvocationID); err == nil {
 			resp.SandboxPath = invMeta.SandboxPath
@@ -665,4 +635,24 @@ func (s *Server) writeTaskStartSuccess(w http.ResponseWriter, requestID, clientR
 		}
 	}
 	s.writeJSON(w, http.StatusOK, resp)
+}
+
+// populateTaskStartMetaFields copies task-meta fields shared by success and
+// error TaskStartResponses (everything except FailedPhase, which only error
+// responses carry).
+func (s *Server) populateTaskStartMetaFields(resp *TaskStartResponse, meta *store.TaskMeta) {
+	resp.TaskID = meta.TaskID
+	resp.TaskName = meta.Name
+	resp.State = meta.State
+	resp.RepoID = meta.RepoID
+	resp.RepoName = s.repoName(meta.RepoID)
+	resp.WorktreeID = meta.WorktreeID
+	resp.WorktreeName = meta.WorktreeName
+	resp.WorktreePath = meta.WorktreePath
+	resp.Branch = meta.Branch
+	resp.ExecutionProfile = meta.ExecutionProfile
+	resp.CheckoutRoot = meta.CheckoutRoot
+	resp.InvocationID = meta.PrimaryInvocationID
+	resp.Mode = meta.Mode
+	resp.Runner = meta.Runner
 }

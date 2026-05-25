@@ -164,28 +164,8 @@ func RunAttached(ctx context.Context, name string, args []string, opts AttachedR
 		cmd.Env = MergeEnv(os.Environ(), opts.Env)
 	}
 
-	err := cmd.Run()
-	result := CmdResult{}
-	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			result.ExitCode = exitTimeout
-			return result, nil
-		}
-		if errors.Is(ctx.Err(), context.Canceled) {
-			result.ExitCode = exitCanceled
-			return result, context.Canceled
-		}
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			result.ExitCode = exitErr.ExitCode()
-			return result, nil
-		}
-		result.ExitCode = exitStartFail
-		return result, err
-	}
-
-	result.ExitCode = 0
-	return result, nil
+	exitCode, _, returnedErr := classifyRunError(cmd.Run(), ctx.Err())
+	return CmdResult{ExitCode: exitCode}, returnedErr
 }
 
 // StartProcess starts a command and returns a handle for streaming + waiting.
@@ -265,31 +245,31 @@ func StartProcess(ctx context.Context, name string, args []string, opts StartOpt
 
 // WaitExit waits for the started process and normalizes exit status.
 func (p *StartedProcess) WaitExit() (ProcessExit, error) {
-	result := ProcessExit{}
-	err := p.cmd.Wait()
-	if err != nil {
-		if errors.Is(p.ctx.Err(), context.DeadlineExceeded) {
-			result.ExitCode = exitTimeout
-			return result, nil
-		}
-		if errors.Is(p.ctx.Err(), context.Canceled) {
-			result.ExitCode = exitCanceled
-			return result, context.Canceled
-		}
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			result.ExitCode = exitErr.ExitCode()
-			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
-				result.Signal = status.Signal().String()
-			}
-			return result, nil
-		}
-		result.ExitCode = exitStartFail
-		return result, err
-	}
+	exitCode, signal, returnedErr := classifyRunError(p.cmd.Wait(), p.ctx.Err())
+	return ProcessExit{ExitCode: exitCode, Signal: signal}, returnedErr
+}
 
-	result.ExitCode = 0
-	return result, nil
+// classifyRunError converts a cmd.Run/cmd.Wait error and the parent context's
+// error into normalized (exitCode, signal, returnedErr). signal is "" unless
+// the process was terminated by a POSIX signal.
+func classifyRunError(runErr, ctxErr error) (exitCode int, signal string, returnedErr error) {
+	if runErr == nil {
+		return 0, "", nil
+	}
+	if errors.Is(ctxErr, context.DeadlineExceeded) {
+		return exitTimeout, "", nil
+	}
+	if errors.Is(ctxErr, context.Canceled) {
+		return exitCanceled, "", context.Canceled
+	}
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) {
+		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+			signal = status.Signal().String()
+		}
+		return exitErr.ExitCode(), signal, nil
+	}
+	return exitStartFail, "", runErr
 }
 
 // MergeEnv applies overlay maps on top of a base environment, deterministically:
@@ -318,6 +298,17 @@ func MergeEnv(baseEnv []string, overlays ...map[string]string) []string {
 		out = append(out, k+"="+merged[k])
 	}
 	return out
+}
+
+// IsPIDAlive reports whether a process with the given PID exists. Returns
+// false for non-positive PIDs. Treats EPERM (process exists but we lack
+// permission to signal it) as alive.
+func IsPIDAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || err == syscall.EPERM
 }
 
 // NonInteractiveEnv returns the environment overlay that disables interactive

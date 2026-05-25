@@ -10,7 +10,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/fs"
 )
 
-// Default timeouts for scripts.
 const (
 	AgencyConfigVersion   = 4
 	CheckoutRootSibling   = "repo-sibling"
@@ -57,7 +56,7 @@ func loadAgencyConfigPath(filesystem fs.FS, path string) (AgencyConfig, error) {
 	// First, unmarshal into raw map for type checking
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return AgencyConfig{}, errors.New(errors.EInvalidAgencyJSON, "invalid json: "+err.Error())
+		return AgencyConfig{}, errors.Wrap(errors.EInvalidAgencyJSON, "invalid json", err)
 	}
 
 	// Perform strict type validation during parsing

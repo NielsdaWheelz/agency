@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/store"
@@ -12,29 +11,9 @@ import (
 func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, worktreeRef string) {
 	requestID := prepareRequestID(w, r)
 
-	repoID := strings.TrimSpace(r.URL.Query().Get("repo_id"))
-	if repoID == "" {
-		s.writeErrorWithRequestID(
-			w,
-			http.StatusBadRequest,
-			requestID,
-			string(errors.EInvalidRequest),
-			"repo_id query parameter is required",
-			"pass ?repo_id=<repo_id>",
-		)
-		return
-	}
-
 	var req WorktreePRMergeRequest
 	if err := decodeOptionalStrictJSON(r.Body, &req); err != nil {
-		s.writeErrorWithRequestID(
-			w,
-			http.StatusBadRequest,
-			requestID,
-			string(errors.EInvalidRequest),
-			strictJSONDecodeErrorMessage(err),
-			"",
-		)
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "")
 		return
 	}
 
@@ -45,14 +24,8 @@ func (s *Server) handleWorktreePRMerge(w http.ResponseWriter, r *http.Request, w
 		return
 	}
 
-	record, err := s.resolveWorktreeRefForRepo(worktreeRef, repoID)
-	if err != nil {
-		code := errors.CodeOr(err, errors.EInternal)
-		s.writeErrorWithRequestID(w, httpStatusForCode(code), requestID, string(code), apiErrorMessage(err), "use 'agency worktree ls' to list worktrees")
-		return
-	}
-	if record == nil || record.Broken || record.Meta == nil {
-		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EWorktreeBroken), "integration worktree exists but meta.json is unreadable", "inspect or recreate the worktree")
+	record, ok := s.resolveWorktreeFromQuery(w, r, worktreeRef, requestID)
+	if !ok {
 		return
 	}
 	if record.Meta.State != store.WorktreeStatePresent {

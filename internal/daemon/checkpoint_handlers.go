@@ -12,29 +12,18 @@ import (
 func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, invocationID string) {
 	requestID := prepareRequestID(w, r)
 
-	// Read repo_id from query params
-	repoID := r.URL.Query().Get("repo_id")
-	if repoID == "" {
-		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
-		return
-	}
-
-	// Parse request body
 	var req CheckpointApplyRequest
 	if err := decodeStrictJSON(r.Body, &req); err != nil {
 		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), strictJSONDecodeErrorMessage(err), "")
 		return
 	}
-
 	if req.CheckpointID <= 0 {
 		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidArgument), "checkpoint_id must be positive", "")
 		return
 	}
 
-	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
-	if resolveErr != nil {
-		status, code := invocationResolveStatus(resolveErr)
-		s.writeErrorWithRequestID(w, status, requestID, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
+	record, ok := s.resolveInvocationFromQuery(w, r, invocationID, requestID)
+	if !ok {
 		return
 	}
 
@@ -124,5 +113,5 @@ func (s *Server) handleCheckpointApply(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 
-	s.writeCheckpointSuccess(w, requestID, cp.ID, cp.SnapshotCommit, s.clock().UTC().Format("2006-01-02T15:04:05Z"))
+	s.writeCheckpointSuccess(w, requestID, cp.ID, cp.SnapshotCommit, s.nowRFC3339())
 }

@@ -12,14 +12,8 @@ import (
 )
 
 func (m model) renderWorkspace() string {
-	width := m.width
-	if width <= 0 {
-		width = 120
-	}
-	height := m.height
-	if height <= 0 {
-		height = 36
-	}
+	width := m.viewWidth()
+	height := m.viewHeight()
 
 	headerParts := []string{
 		"agency watch",
@@ -422,23 +416,24 @@ func appendPageLoading(lines []string, page string, loading bool) []string {
 }
 
 // actionMenuEntries lists the actions shown in the expanded action menu in
-// the order they appear. Each entry is only rendered when canStartAction
-// returns true for its kind.
+// the order they appear. Each entry is only rendered and dispatched when
+// canStartAction returns true for its kind.
 var actionMenuEntries = []struct {
-	kind actionKind
-	line string
+	key   string
+	kind  actionKind
+	label string
 }{
-	{actionAttach, "  a attach"},
-	{actionOpen, "  o open sandbox"},
-	{actionStop, "  s stop invocation"},
-	{actionKill, "  k kill invocation"},
-	{actionLand, "  n land changes"},
-	{actionDiscard, "  d discard changes"},
-	{actionFollowup, "  f send follow-up"},
-	{actionRecreate, "  c recreate headed session"},
-	{actionPRSync, "  p sync PR"},
-	{actionPRMerge, "  m merge PR"},
-	{actionRebase, "  b rebase worktree"},
+	{key: "a", kind: actionAttach, label: "attach"},
+	{key: "o", kind: actionOpen, label: "open sandbox"},
+	{key: "s", kind: actionStop, label: "stop invocation"},
+	{key: "k", kind: actionKill, label: "kill invocation"},
+	{key: "n", kind: actionLand, label: "land changes"},
+	{key: "d", kind: actionDiscard, label: "discard changes"},
+	{key: "f", kind: actionFollowup, label: "send follow-up"},
+	{key: "c", kind: actionRecreate, label: "recreate headed session"},
+	{key: "p", kind: actionPRSync, label: "sync PR"},
+	{key: "m", kind: actionPRMerge, label: "merge PR"},
+	{key: "b", kind: actionRebase, label: "rebase worktree"},
 }
 
 func (m model) renderActionPanel(width int) []string {
@@ -456,7 +451,7 @@ func (m model) renderActionPanel(width int) []string {
 		lines = append(lines, "Actions:")
 		for _, entry := range actionMenuEntries {
 			if m.canStartAction(entry.kind) {
-				lines = append(lines, entry.line)
+				lines = append(lines, "  "+entry.key+" "+entry.label)
 			}
 		}
 		lines = append(lines, dimStyle.Render("  esc cancel"))

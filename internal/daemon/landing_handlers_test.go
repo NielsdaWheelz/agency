@@ -216,7 +216,7 @@ func TestStopInvocationForDiscardUsesProcessGroupLivenessWhenLeaderExited(t *tes
 func TestIsProcessGroupAliveDetectsGroupAfterLeaderExited(t *testing.T) {
 	pgid := startOrphanedIgnoringSignalProcessGroup(t)
 
-	assert.False(t, IsPIDAlive(pgid), "group leader process should be gone")
+	assert.False(t, exec.IsPIDAlive(pgid), "group leader process should be gone")
 	assert.True(t, isProcessGroupAlive(pgid), "process group should still contain a live child")
 }
 
@@ -245,7 +245,7 @@ func startOrphanedIgnoringSignalProcessGroup(t *testing.T) int {
 	_, err = syscall.Wait4(pid, &status, 0, nil)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
-		return !IsPIDAlive(pgid) && isProcessGroupAlive(pgid)
+		return !exec.IsPIDAlive(pgid) && isProcessGroupAlive(pgid)
 	}, time.Second, 10*time.Millisecond)
 
 	return pgid

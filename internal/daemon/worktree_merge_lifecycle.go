@@ -182,9 +182,10 @@ func (s *Server) persistStartedWorktreePRMerge(
 		now,
 	)
 	mergeMeta.Branch = record.Meta.Branch
-	mergeMeta.MergeLogPath = filepath.Join(s.store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "merge.log")
-	mergeMeta.VerifyLogPath = filepath.Join(s.store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "verify.log")
-	mergeMeta.ArchiveLogPath = filepath.Join(s.store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "archive.log")
+	logsDir := s.store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID)
+	mergeMeta.MergeLogPath = filepath.Join(logsDir, "merge.log")
+	mergeMeta.VerifyLogPath = filepath.Join(logsDir, "verify.log")
+	mergeMeta.ArchiveLogPath = filepath.Join(logsDir, "archive.log")
 
 	if err := s.store.WriteIntegrationWorktreeMerge(record.RepoID, record.WorktreeID, mergeMeta); err != nil {
 		return nil, err

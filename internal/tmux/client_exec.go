@@ -21,6 +21,10 @@ const maxStderrLen = 4096
 
 const interruptKey = "C-c"
 
+// updateEnvironmentRestoreTimeout bounds the deferred restore of tmux
+// update-environment after a NewSession call extended it.
+const updateEnvironmentRestoreTimeout = 2 * time.Second
+
 // ExecClient shells out to tmux via internal/exec.CommandRunner.
 type ExecClient struct {
 	runner              exec.CommandRunner
@@ -79,7 +83,7 @@ func (c *ExecClient) NewSession(ctx context.Context, name, cwd string, argv []st
 	}
 	if restoreUpdateEnvironment != nil {
 		defer func() {
-			restoreCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			restoreCtx, cancel := context.WithTimeout(context.Background(), updateEnvironmentRestoreTimeout)
 			defer cancel()
 			restoreUpdateEnvironment(restoreCtx)
 		}()

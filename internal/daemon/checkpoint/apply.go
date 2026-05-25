@@ -13,6 +13,7 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
 	"github.com/NielsdaWheelz/agency/internal/fs"
+	"github.com/NielsdaWheelz/agency/internal/git"
 )
 
 // ApplyOptions controls checkpoint apply behavior for different callers.
@@ -163,17 +164,8 @@ func (a *Applier) ApplyWithOptions(ctx context.Context, checkpointID int, opts A
 	return cp, nil
 }
 
-// runGit runs `git -C <sandbox> <args...>` and maps non-zero exit / process error to a single labelled failure.
 func (a *Applier) runGit(ctx context.Context, env map[string]string, label string, args ...string) (exec.CmdResult, error) {
-	fullArgs := append([]string{"-C", a.sandboxPath}, args...)
-	result, err := a.runner.Run(ctx, "git", fullArgs, exec.RunOpts{Env: env})
-	if err != nil {
-		return result, err
-	}
-	if result.ExitCode != 0 {
-		return result, fmt.Errorf("%s failed: %s", label, result.Stderr)
-	}
-	return result, nil
+	return git.RunIn(ctx, a.runner, a.sandboxPath, env, label, args...)
 }
 
 func (a *Applier) verifyCommitExists(ctx context.Context, sha string, env map[string]string) error {
@@ -223,8 +215,12 @@ func (a *Applier) gitReadTree(ctx context.Context, snapshotCommit string, env ma
 	return err
 }
 
+// recoverPreApplyTimeout bounds the cleanup that runs after a failed checkpoint
+// apply to restore the sandbox to its pre-apply HEAD.
+const recoverPreApplyTimeout = 10 * time.Second
+
 func (a *Applier) recoverPreApplyState(preApplyHead string, env map[string]string) error {
-	recoverCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	recoverCtx, cancel := context.WithTimeout(context.Background(), recoverPreApplyTimeout)
 	defer cancel()
 
 	if err := a.gitResetHard(recoverCtx, preApplyHead, env); err != nil {
@@ -242,28 +238,17 @@ func (a *Applier) loadCheckpoints() (*CheckpointsFile, error) {
 	return LoadCheckpointsFile(a.fsys, cpPath)
 }
 
-// emitCheckpointApplied emits a checkpoint_applied event.
-func (a *Applier) emitCheckpointApplied(checkpointID int, snapshotCommit string) error {
-	_, err := a.eventWriter.Append(
-		a.eventsPath,
-		a.invocationID,
-		string(eventKindCheckpointApplied),
-		checkpointAppliedData(checkpointID, snapshotCommit),
-		eventlog.AppendOptions{},
-	)
+func (a *Applier) emit(kind eventKind, data map[string]any) error {
+	_, err := a.eventWriter.Append(a.eventsPath, a.invocationID, string(kind), data, eventlog.AppendOptions{})
 	return err
 }
 
-// emitCheckpointApplyStarted emits a checkpoint_apply_started event.
+func (a *Applier) emitCheckpointApplied(checkpointID int, snapshotCommit string) error {
+	return a.emit(eventKindCheckpointApplied, checkpointAppliedData(checkpointID, snapshotCommit))
+}
+
 func (a *Applier) emitCheckpointApplyStarted(checkpointID int, snapshotCommit string, rewindHead bool) error {
-	_, err := a.eventWriter.Append(
-		a.eventsPath,
-		a.invocationID,
-		string(eventKindCheckpointApplyStarted),
-		checkpointApplyStartedData(checkpointID, snapshotCommit, rewindHead),
-		eventlog.AppendOptions{},
-	)
-	return err
+	return a.emit(eventKindCheckpointApplyStarted, checkpointApplyStartedData(checkpointID, snapshotCommit, rewindHead))
 }
 
 // LoadCheckpointsFile loads checkpoints.json from its exact file path.

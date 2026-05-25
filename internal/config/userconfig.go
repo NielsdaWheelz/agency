@@ -70,7 +70,7 @@ func LoadUserConfig(filesystem fs.FS, configDir string) (UserConfig, error) {
 	// First, unmarshal into raw map for type checking
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return UserConfig{}, errors.New(errors.EInvalidUserConfig, "invalid json: "+err.Error())
+		return UserConfig{}, errors.Wrap(errors.EInvalidUserConfig, "invalid json", err)
 	}
 
 	cfg, err := parseUserConfigStrict(raw)

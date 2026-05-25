@@ -5,6 +5,13 @@ import (
 	"os"
 )
 
+// openAppendLog opens path for append+create with private (0o600) permission,
+// the canonical mode for invocation, hook, terminal, and other daemon-owned
+// log files.
+func openAppendLog(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+}
+
 type invocationLogFiles struct {
 	RawPath    string
 	RawFile    *os.File
@@ -71,16 +78,16 @@ func (s *Server) openInvocationLogFiles(repoID, invocationID string) (*invocatio
 		StreamPath: streamPath,
 	}
 
-	files.RawFile, err = os.OpenFile(rawPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	files.RawFile, err = openAppendLog(rawPath)
 	if err != nil {
 		return nil, fmt.Errorf("open raw log file: %w", err)
 	}
-	files.StderrFile, err = os.OpenFile(stderrPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	files.StderrFile, err = openAppendLog(stderrPath)
 	if err != nil {
 		files.Close()
 		return nil, fmt.Errorf("open stderr log file: %w", err)
 	}
-	files.StreamFile, err = os.OpenFile(streamPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	files.StreamFile, err = openAppendLog(streamPath)
 	if err != nil {
 		files.Close()
 		return nil, fmt.Errorf("open stream log file: %w", err)

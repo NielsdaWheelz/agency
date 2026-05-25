@@ -60,9 +60,10 @@ func (s *Server) runWorktreeMerge(
 		return nil, err
 	}
 
-	mergeLogPath := filepath.Join(s.store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "merge.log")
-	plannedVerifyLogPath := filepath.Join(s.store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "verify.log")
-	archiveLogPath := filepath.Join(s.store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID), "archive.log")
+	logsDir := s.store.IntegrationWorktreeLogsDir(record.RepoID, record.WorktreeID)
+	mergeLogPath := filepath.Join(logsDir, "merge.log")
+	plannedVerifyLogPath := filepath.Join(logsDir, "verify.log")
+	archiveLogPath := filepath.Join(logsDir, "archive.log")
 	if err := s.updateWorktreeMergeMeta(record.RepoID, record.WorktreeID, func(m *store.IntegrationWorktreeMergeMeta) {
 		m.Branch = wtMeta.Branch
 		m.PRNumber = pr.Number

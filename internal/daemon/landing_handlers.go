@@ -15,6 +15,10 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
+// discardSigintGrace bounds how long handleDiscard waits after SIGINT before
+// escalating to SIGKILL when discarding a still-running invocation.
+const discardSigintGrace = 5 * time.Second
+
 // handleLand handles POST /invocations/{ref}/land.
 func (s *Server) handleLand(w http.ResponseWriter, r *http.Request, invocationID string) {
 	requestID := prepareRequestID(w, r)
@@ -273,8 +277,7 @@ func (s *Server) stopInvocationForDiscard(ctx context.Context, repoID, invocatio
 			return fmt.Errorf("send SIGINT to runner process group %d: %w", pgid, err)
 		}
 
-		// Wait 5s
-		waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		waitCtx, cancel := context.WithTimeout(ctx, discardSigintGrace)
 		defer cancel()
 
 		if supervised && proc != nil {

@@ -3,7 +3,6 @@ package watch
 import (
 	"bytes"
 	"context"
-	"strconv"
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/daemonclient"
@@ -33,29 +32,14 @@ func loadInvocationTranscript(ctx context.Context, client *daemonclient.Client, 
 }
 
 func (m model) renderTranscript() string {
-	width := m.width
-	if width <= 0 {
-		width = 120
-	}
-
+	width := m.viewWidth()
 	lines := m.renderPageHeader("transcript")
 	if line := m.styledActionLine(width); line != "" {
 		lines = append(lines, line, "")
 	}
 	lines = appendPageError(lines, "transcript", m.transcriptError, width)
 	lines = appendPageLoading(lines, "transcript", m.transcriptLoading)
-
-	transcriptLines := transcriptLines(m.transcriptContent)
-	visible := m.transcriptVisibleLines()
-	start, end := scrollWindow(len(transcriptLines), m.transcriptScroll, visible)
-	for _, line := range transcriptLines[start:end] {
-		lines = append(lines, truncateWithEllipsis(line, width))
-	}
-	if len(transcriptLines) > visible {
-		lines = append(lines, "", warningStyle.Render(
-			"showing "+truncateWithEllipsis(strconv.Itoa(start+1)+"-"+strconv.Itoa(end)+" of "+strconv.Itoa(len(transcriptLines)), width-12),
-		))
-	}
+	lines = append(lines, m.renderScrollViewport(transcriptLines(m.transcriptContent), m.transcriptScroll)...)
 	lines = append(lines, "")
 	lines = append(lines, warningStyle.Render("j/k move • a attach • d review • x actions • l logs • r refresh • b back • q quit"))
 	return strings.Join(lines, "\n")
@@ -66,22 +50,5 @@ func transcriptLines(content string) []string {
 }
 
 func (m model) maxTranscriptScroll() int {
-	lines := transcriptLines(m.transcriptContent)
-	visible := m.transcriptVisibleLines()
-	if len(lines) <= visible {
-		return 0
-	}
-	return len(lines) - visible
-}
-
-func (m model) transcriptVisibleLines() int {
-	height := m.height
-	if height <= 0 {
-		height = 36
-	}
-	visible := height - 8
-	if visible < 5 {
-		visible = 5
-	}
-	return visible
+	return m.pageMaxScroll(transcriptLines(m.transcriptContent))
 }

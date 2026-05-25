@@ -3,12 +3,12 @@ package lock
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
+
+	"github.com/NielsdaWheelz/agency/internal/exec"
 )
 
 // LockInfo contains the metadata stored in a lock file.
@@ -42,12 +42,12 @@ type RepoLock struct {
 
 // NewRepoLock returns a RepoLock with default settings:
 // - Now: time.Now
-// - IsPIDAlive: platform impl (best-effort)
+// - IsPIDAlive: exec.IsPIDAlive (best-effort)
 func NewRepoLock(dataDir string) RepoLock {
 	return RepoLock{
 		DataDir:    dataDir,
 		Now:        time.Now,
-		IsPIDAlive: isPIDAlive,
+		IsPIDAlive: exec.IsPIDAlive,
 	}
 }
 
@@ -149,26 +149,3 @@ func (l RepoLock) isStale(info *LockInfo) bool {
 	return !l.IsPIDAlive(info.PID)
 }
 
-// isPIDAlive checks if a process with the given pid is alive.
-// Uses the Unix signal 0 trick: sending signal 0 to a process succeeds
-// if the process exists and we have permission to signal it.
-func isPIDAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	// Signal 0 doesn't send anything but checks if process exists
-	err = process.Signal(syscall.Signal(0))
-	if err == nil {
-		return true
-	}
-	// EPERM means process exists but we don't have permission - treat as alive
-	if errors.Is(err, syscall.EPERM) {
-		return true
-	}
-	// ESRCH means no such process
-	return false
-}

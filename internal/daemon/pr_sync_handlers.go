@@ -207,17 +207,20 @@ func prSyncLookupPRAfterCreate(ctx context.Context, runner exec.CommandRunner, w
 	return &prs[0], nil
 }
 
-func prSyncLookupPRAfterCreateWithRetry(ctx context.Context, runner exec.CommandRunner, workDir, owner, branch string, env map[string]string) (*prSyncPR, error) {
-	delays := []time.Duration{
-		0,
-		250 * time.Millisecond,
-		500 * time.Millisecond,
-		1 * time.Second,
-		2 * time.Second,
-	}
+// prSyncLookupRetryDelays bounds how long prSyncLookupPRAfterCreateWithRetry
+// waits between attempts to surface a newly-created PR via gh's REST API,
+// which can lag a push by a few hundred milliseconds. Total bound: ~3.75s.
+var prSyncLookupRetryDelays = []time.Duration{
+	0,
+	250 * time.Millisecond,
+	500 * time.Millisecond,
+	1 * time.Second,
+	2 * time.Second,
+}
 
+func prSyncLookupPRAfterCreateWithRetry(ctx context.Context, runner exec.CommandRunner, workDir, owner, branch string, env map[string]string) (*prSyncPR, error) {
 	var lastErr error
-	for i, delay := range delays {
+	for i, delay := range prSyncLookupRetryDelays {
 		if i > 0 {
 			if err := sleepCtx(ctx, delay); err != nil {
 				return nil, err

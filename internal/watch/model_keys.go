@@ -32,6 +32,20 @@ func (m model) workspaceSelectionMovedCmd() tea.Cmd {
 	return nil
 }
 
+// goBack returns to m.backPage, resuming workspace tick + snapshot reload when
+// the backPage is the workspace.
+func (m model) goBack() (tea.Model, tea.Cmd) {
+	if m.backPage == pageWorkspace {
+		m.page = pageWorkspace
+		if !m.workspaceLoading {
+			m.workspaceLoading = true
+		}
+		return m, tea.Batch(m.loadWorkspaceSnapshotCmd(), tickCmd(m.interval))
+	}
+	m.page = m.backPage
+	return m, nil
+}
+
 func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.workspaceFilterInput {
 		return m.updateWorkspaceFilterKey(msg)
@@ -121,24 +135,13 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.setActionError("history unavailable: no invocation selected")
 			return m, nil
 		}
-		m.page = pageHistory
-		m.backPage = pageWorkspace
-		m.historyLoading = true
-		m.historyError = ""
-		return m, m.loadHistoryCmd()
+		return m.openHistoryPage(pageWorkspace)
 	case msg.Text == "l":
 		if strings.TrimSpace(m.selectedInvocationID) == "" {
 			m.setActionError("logs unavailable: no invocation selected")
 			return m, nil
 		}
-		m.page = pageLogs
-		m.backPage = pageWorkspace
-		m.logsKind = m.currentLogsKind()
-		m.logsContent = ""
-		m.logsLoading = true
-		m.logsError = ""
-		m.logsScroll = 0
-		return m, m.loadLogsCmd()
+		return m.openLogsPage(pageWorkspace)
 	case msg.Text == "d":
 		return m.openReviewPage("", pageWorkspace)
 	case msg.Text == "x":
@@ -241,15 +244,7 @@ func (m model) updateHistoryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case isQuitKey(msg):
 		return m, tea.Quit
 	case isBackKey(msg):
-		if m.backPage == pageWorkspace {
-			m.page = pageWorkspace
-			if !m.workspaceLoading {
-				m.workspaceLoading = true
-			}
-			return m, tea.Batch(m.loadWorkspaceSnapshotCmd(), tickCmd(m.interval))
-		}
-		m.page = m.backPage
-		return m, nil
+		return m.goBack()
 	case isRefreshKey(msg):
 		if m.historyLoading {
 			return m, nil
@@ -283,22 +278,9 @@ func (m model) updateHistoryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case msg.Text == "a":
 		return m.startInvocationAction(actionAttach)
 	case msg.Text == "t":
-		m.page = pageTranscript
-		m.backPage = pageHistory
-		m.transcriptContent = ""
-		m.transcriptLoading = true
-		m.transcriptError = ""
-		m.transcriptScroll = 0
-		return m, m.loadTranscriptCmd()
+		return m.openTranscriptPage(pageHistory)
 	case msg.Text == "l":
-		m.page = pageLogs
-		m.backPage = pageHistory
-		m.logsKind = m.currentLogsKind()
-		m.logsContent = ""
-		m.logsLoading = true
-		m.logsError = ""
-		m.logsScroll = 0
-		return m, m.loadLogsCmd()
+		return m.openLogsPage(pageHistory)
 	case msg.Text == "d":
 		turn, ok := m.selectedTurn()
 		if !ok {
@@ -320,23 +302,7 @@ func (m model) updateReviewKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case isQuitKey(msg):
 		return m, tea.Quit
 	case isBackKey(msg):
-		switch m.backPage {
-		case pageWorkspace:
-			m.page = pageWorkspace
-			if !m.workspaceLoading {
-				m.workspaceLoading = true
-			}
-			return m, tea.Batch(m.loadWorkspaceSnapshotCmd(), tickCmd(m.interval))
-		case pageHistory, pageTranscript, pageLogs:
-			m.page = m.backPage
-			return m, nil
-		default:
-			m.page = pageWorkspace
-			if !m.workspaceLoading {
-				m.workspaceLoading = true
-			}
-			return m, tea.Batch(m.loadWorkspaceSnapshotCmd(), tickCmd(m.interval))
-		}
+		return m.goBack()
 	case isRefreshKey(msg):
 		if m.reviewLoading {
 			return m, nil
@@ -388,8 +354,7 @@ func (m model) updateTranscriptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case isQuitKey(msg):
 		return m, tea.Quit
 	case isBackKey(msg):
-		m.page = pageHistory
-		return m, nil
+		return m.goBack()
 	case isRefreshKey(msg):
 		if m.transcriptLoading {
 			return m, nil
@@ -411,14 +376,7 @@ func (m model) updateTranscriptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case msg.Text == "a":
 		return m.startInvocationAction(actionAttach)
 	case msg.Text == "l":
-		m.page = pageLogs
-		m.backPage = pageTranscript
-		m.logsKind = m.currentLogsKind()
-		m.logsContent = ""
-		m.logsLoading = true
-		m.logsError = ""
-		m.logsScroll = 0
-		return m, m.loadLogsCmd()
+		return m.openLogsPage(pageTranscript)
 	case msg.Text == "d":
 		return m.openReviewPage("", pageTranscript)
 	case msg.Text == "x":
@@ -433,15 +391,7 @@ func (m model) updateLogsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case isQuitKey(msg):
 		return m, tea.Quit
 	case isBackKey(msg):
-		if m.backPage == pageWorkspace {
-			m.page = pageWorkspace
-			if !m.workspaceLoading {
-				m.workspaceLoading = true
-			}
-			return m, tea.Batch(m.loadWorkspaceSnapshotCmd(), tickCmd(m.interval))
-		}
-		m.page = m.backPage
-		return m, nil
+		return m.goBack()
 	case isRefreshKey(msg):
 		if m.logsLoading {
 			return m, nil

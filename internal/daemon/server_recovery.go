@@ -14,6 +14,11 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
 
+// recoveryScanTimeout bounds the per-repo recovery scan that runs at daemon
+// startup before Serve takes traffic; a slow tmux probe must not block startup
+// indefinitely.
+const recoveryScanTimeout = 30 * time.Second
+
 func (s *Server) runRecoveryScan() error {
 	repoIDs, err := s.discoverDurableRepoIDs()
 	if err != nil {
@@ -57,7 +62,7 @@ func (s *Server) recoverRepoInvocations(repoID string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), recoveryScanTimeout)
 	defer cancel()
 
 	nowTime := s.clock()

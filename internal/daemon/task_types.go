@@ -117,10 +117,7 @@ func (r *TaskRetryRequest) UnmarshalJSON(data []byte) error {
 
 // TaskStartResponse is the response body for POST /tasks/start.
 type TaskStartResponse struct {
-	OK           bool   `json:"ok"`
-	RequestID    string `json:"request_id,omitempty"`
-	APIVersion   int    `json:"api_version"`
-	BuildVersion string `json:"build_version,omitempty"`
+	ResponseEnvelope
 
 	ClientRequestID string `json:"client_request_id,omitempty"`
 	Duplicate       bool   `json:"duplicate,omitempty"`
@@ -153,10 +150,6 @@ type TaskStartResponse struct {
 
 	Partial     bool   `json:"partial,omitempty"`
 	FailedPhase string `json:"failed_phase,omitempty"`
-
-	ErrorCode string `json:"error_code,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Hint      string `json:"hint,omitempty"`
 }
 
 // TaskDTO is the read DTO for a task.

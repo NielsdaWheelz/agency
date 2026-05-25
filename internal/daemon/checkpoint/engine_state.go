@@ -59,35 +59,19 @@ func describeTrigger(trigger *TriggerEvent) string {
 	}
 }
 
-func (e *Engine) emitCheckpointCreated(checkpointID int, includesUntracked bool, sandboxHeadSHA string) error {
-	_, err := e.eventWriter.Append(
-		e.eventsPath,
-		e.invocationID,
-		string(eventKindCheckpointCreated),
-		checkpointCreatedData(checkpointID, includesUntracked, sandboxHeadSHA),
-		eventlog.AppendOptions{},
-	)
+func (e *Engine) emit(kind eventKind, data map[string]any) error {
+	_, err := e.eventWriter.Append(e.eventsPath, e.invocationID, string(kind), data, eventlog.AppendOptions{})
 	return err
+}
+
+func (e *Engine) emitCheckpointCreated(checkpointID int, includesUntracked bool, sandboxHeadSHA string) error {
+	return e.emit(eventKindCheckpointCreated, checkpointCreatedData(checkpointID, includesUntracked, sandboxHeadSHA))
 }
 
 func (e *Engine) emitCheckpointFailed(reason string) error {
-	_, err := e.eventWriter.Append(
-		e.eventsPath,
-		e.invocationID,
-		string(eventKindCheckpointFailed),
-		checkpointFailedData(reason),
-		eventlog.AppendOptions{},
-	)
-	return err
+	return e.emit(eventKindCheckpointFailed, checkpointFailedData(reason))
 }
 
 func (e *Engine) emitDenylistTriggered(files []string) error {
-	_, err := e.eventWriter.Append(
-		e.eventsPath,
-		e.invocationID,
-		string(eventKindCheckpointDenylistTriggered),
-		checkpointDenylistTriggeredData(files),
-		eventlog.AppendOptions{},
-	)
-	return err
+	return e.emit(eventKindCheckpointDenylistTriggered, checkpointDenylistTriggeredData(files))
 }

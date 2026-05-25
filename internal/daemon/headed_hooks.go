@@ -75,22 +75,7 @@ func (s *Server) handleHeadedHook(w http.ResponseWriter, r *http.Request, invoca
 		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), err.Error(), "", nil)
 		return
 	}
-	hooksFile, err := os.OpenFile(hooksPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to append headed hook log: "+err.Error(), "", nil)
-		return
-	}
-	if _, err := hooksFile.Write(compact.Bytes()); err != nil {
-		_ = hooksFile.Close()
-		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to append headed hook log: "+err.Error(), "", nil)
-		return
-	}
-	if _, err := hooksFile.Write([]byte("\n")); err != nil {
-		_ = hooksFile.Close()
-		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to append headed hook log: "+err.Error(), "", nil)
-		return
-	}
-	if err := hooksFile.Close(); err != nil {
+	if err := appendHookLogLine(hooksPath, compact.Bytes()); err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, requestID, string(errors.EInternal), "failed to append headed hook log: "+err.Error(), "", nil)
 		return
 	}
@@ -126,6 +111,25 @@ func (s *Server) handleHeadedHook(w http.ResponseWriter, r *http.Request, invoca
 		TranscriptPaths: transcriptPaths,
 		ImportedBytes:   imported,
 	})
+}
+
+// appendHookLogLine appends data plus a trailing newline to path. It returns
+// the first error from open, write, write-newline, or close so the caller maps
+// one consolidated failure.
+func appendHookLogLine(path string, data []byte) error {
+	f, err := openAppendLog(path)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Write([]byte("\n")); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func transcriptPathsFromHookPayload(payload map[string]any) []string {
@@ -262,12 +266,12 @@ func (s *Server) parseHeadedReader(repoID, invocationID, runner string, reader i
 		return 0, err
 	}
 
-	rawFile, err := os.OpenFile(rawPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	rawFile, err := openAppendLog(rawPath)
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = rawFile.Close() }()
-	streamFile, err := os.OpenFile(streamPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	streamFile, err := openAppendLog(streamPath)
 	if err != nil {
 		return 0, err
 	}

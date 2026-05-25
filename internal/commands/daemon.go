@@ -26,6 +26,19 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
+// Daemon-stop timing policy: poll the PID for up to daemonStopGracePeriod after
+// SIGTERM, then SIGKILL and wait daemonStopKillSettleDelay for the kernel to
+// reap the process before cleaning up pid/socket files.
+const (
+	daemonStopGracePeriod     = 5 * time.Second
+	daemonStopPollInterval    = 100 * time.Millisecond
+	daemonStopKillSettleDelay = 500 * time.Millisecond
+)
+
+// daemonForegroundShutdownTimeout bounds the in-process Shutdown context that
+// SIGINT/SIGTERM handlers use when running `agency daemon start --foreground`.
+const daemonForegroundShutdownTimeout = 10 * time.Second
+
 // DaemonStartOpts holds options for the daemon start command.
 type DaemonStartOpts struct {
 	// Foreground runs the daemon in the foreground.
@@ -92,7 +105,7 @@ func daemonStartForeground(ctx context.Context, cr exec.CommandRunner, fsys fs.F
 	// Check for existing daemon
 	existingPid, err := daemon.ReadPidFile(pidPath)
 	if err == nil {
-		if daemon.IsPIDAlive(existingPid) {
+		if exec.IsPIDAlive(existingPid) {
 			_, _ = fmt.Fprintf(stdout, "Daemon is already running (pid %d)\n", existingPid)
 			return nil
 		}
@@ -106,16 +119,16 @@ func daemonStartForeground(ctx context.Context, cr exec.CommandRunner, fsys fs.F
 	// Create socket listener
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
-		return errors.Wrap(errors.EDaemonStartFailed, "failed to create socket: "+err.Error(), err)
+		return errors.Wrap(errors.EDaemonStartFailed, "failed to create socket", err)
 	}
 	defer func() { _ = listener.Close() }()
 
 	if err := os.Chmod(socketPath, 0o600); err != nil {
-		return errors.Wrap(errors.EDaemonStartFailed, "failed to set socket permissions: "+err.Error(), err)
+		return errors.Wrap(errors.EDaemonStartFailed, "failed to set socket permissions", err)
 	}
 
 	if err := daemon.WritePidFile(pidPath); err != nil {
-		return errors.Wrap(errors.EDaemonStartFailed, "failed to write PID file: "+err.Error(), err)
+		return errors.Wrap(errors.EDaemonStartFailed, "failed to write PID file", err)
 	}
 
 	defer func() {
@@ -132,7 +145,7 @@ func daemonStartForeground(ctx context.Context, cr exec.CommandRunner, fsys fs.F
 	go func() {
 		<-sigCh
 		_, _ = fmt.Fprintf(stderr, "\nReceived shutdown signal, stopping daemon...\n")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), daemonForegroundShutdownTimeout)
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
 	}()
@@ -143,7 +156,7 @@ func daemonStartForeground(ctx context.Context, cr exec.CommandRunner, fsys fs.F
 
 	err = server.Serve(listener)
 	if err != nil && !stderrors.Is(err, http.ErrServerClosed) {
-		return errors.Wrap(errors.EInternal, "daemon server error: "+err.Error(), err)
+		return errors.Wrap(errors.EInternal, "daemon server error", err)
 	}
 
 	_, _ = fmt.Fprintf(stdout, "Daemon stopped\n")
@@ -166,7 +179,7 @@ func daemonStartBackground(ctx context.Context, st *store.Store, socketPath, pid
 
 	// Clean stale PID/socket if the process is dead.
 	existingPid, err := daemon.ReadPidFile(pidPath)
-	if err == nil && !daemon.IsPIDAlive(existingPid) {
+	if err == nil && !exec.IsPIDAlive(existingPid) {
 		_ = os.Remove(pidPath)
 		_ = os.Remove(socketPath)
 	}
@@ -281,7 +294,7 @@ func DaemonStop(ctx context.Context, fsys fs.FS, opts DaemonStopOpts, stdout, st
 		return errors.New(errors.EDaemonNotRunning, "daemon is not running (no PID file)")
 	}
 
-	if !daemon.IsPIDAlive(pid) {
+	if !exec.IsPIDAlive(pid) {
 		// Clean up stale files
 		_ = os.Remove(pidPath)
 		_ = os.Remove(socketPath)
@@ -291,27 +304,24 @@ func DaemonStop(ctx context.Context, fsys fs.FS, opts DaemonStopOpts, stdout, st
 
 	// Send SIGTERM
 	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-		return errors.Wrap(errors.EInternal, "failed to send SIGTERM: "+err.Error(), err)
+		return errors.Wrap(errors.EInternal, "failed to send SIGTERM", err)
 	}
 
-	// Wait for process to exit (max 5s)
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(daemonStopGracePeriod)
 	for time.Now().Before(deadline) {
-		if !daemon.IsPIDAlive(pid) {
+		if !exec.IsPIDAlive(pid) {
 			_ = os.Remove(pidPath)
 			_ = os.Remove(socketPath)
 			_, _ = fmt.Fprintf(stdout, "Daemon stopped\n")
 			return nil
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(daemonStopPollInterval)
 	}
 
-	// Still alive - send SIGKILL
 	_, _ = fmt.Fprintf(stderr, "Daemon did not stop gracefully, sending SIGKILL...\n")
 	_ = syscall.Kill(pid, syscall.SIGKILL)
 
-	// Wait a bit more
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(daemonStopKillSettleDelay)
 	_ = os.Remove(pidPath)
 	_ = os.Remove(socketPath)
 	_, _ = fmt.Fprintf(stdout, "Daemon killed\n")

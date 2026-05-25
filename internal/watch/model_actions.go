@@ -30,31 +30,13 @@ func (m model) updateActionMenuKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case msg.Text == "q":
 		return m, tea.Quit
-	case msg.Text == "a":
-		return m.startInvocationAction(actionAttach)
-	case msg.Text == "o":
-		return m.startInvocationAction(actionOpen)
-	case msg.Text == "s":
-		return m.startInvocationAction(actionStop)
-	case msg.Text == "k":
-		return m.startInvocationAction(actionKill)
-	case msg.Text == "n":
-		return m.startInvocationAction(actionLand)
-	case msg.Text == "d":
-		return m.startInvocationAction(actionDiscard)
-	case msg.Text == "f":
-		return m.startInvocationAction(actionFollowup)
-	case msg.Text == "c":
-		return m.startInvocationAction(actionRecreate)
-	case msg.Text == "p":
-		return m.startInvocationAction(actionPRSync)
-	case msg.Text == "m":
-		return m.startInvocationAction(actionPRMerge)
-	case msg.Text == "b":
-		return m.startInvocationAction(actionRebase)
-	default:
-		return m, nil
 	}
+	for _, entry := range actionMenuEntries {
+		if msg.Text == entry.key {
+			return m.startInvocationAction(entry.kind)
+		}
+	}
+	return m, nil
 }
 
 func (m model) updateConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -359,6 +341,35 @@ func (m model) openReviewPage(turnID string, backPage watchPage) (tea.Model, tea
 	m.reviewError = ""
 	m.reviewFilesFocus = true
 	return m, m.loadReviewCmd()
+}
+
+func (m model) openHistoryPage(backPage watchPage) (tea.Model, tea.Cmd) {
+	m.page = pageHistory
+	m.backPage = backPage
+	m.historyLoading = true
+	m.historyError = ""
+	return m, m.loadHistoryCmd()
+}
+
+func (m model) openTranscriptPage(backPage watchPage) (tea.Model, tea.Cmd) {
+	m.page = pageTranscript
+	m.backPage = backPage
+	m.transcriptContent = ""
+	m.transcriptLoading = true
+	m.transcriptError = ""
+	m.transcriptScroll = 0
+	return m, m.loadTranscriptCmd()
+}
+
+func (m model) openLogsPage(backPage watchPage) (tea.Model, tea.Cmd) {
+	m.page = pageLogs
+	m.backPage = backPage
+	m.logsKind = m.currentLogsKind()
+	m.logsContent = ""
+	m.logsLoading = true
+	m.logsError = ""
+	m.logsScroll = 0
+	return m, m.loadLogsCmd()
 }
 
 func (m model) selectedSessionCanRecreate() bool {

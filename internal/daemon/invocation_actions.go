@@ -23,6 +23,25 @@ const (
 	stopSigtermWait = 2 * time.Second // SIGTERM delivered; allow forced cleanup.
 )
 
+// resolveInvocationFromQuery validates the required repo_id query param and
+// resolves an invocation reference for the invocation-mutation handler
+// surfaces. On missing repo_id or resolve failure it writes the appropriate
+// API error and returns ok=false.
+func (s *Server) resolveInvocationFromQuery(w http.ResponseWriter, r *http.Request, invocationRef, requestID string) (*resolvedInvocation, bool) {
+	repoID := r.URL.Query().Get("repo_id")
+	if repoID == "" {
+		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
+		return nil, false
+	}
+	record, resolveErr := s.resolveInvocationRef(invocationRef, repoID)
+	if resolveErr != nil {
+		status, code := invocationResolveStatus(resolveErr)
+		s.writeErrorWithRequestID(w, status, requestID, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
+		return nil, false
+	}
+	return record, true
+}
+
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID string) {
 	ctx := r.Context()
 	requestID := prepareRequestID(w, r)
@@ -33,16 +52,8 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, invocationID
 		return
 	}
 
-	repoID := r.URL.Query().Get("repo_id")
-	if repoID == "" {
-		s.writeErrorWithRequestID(w, http.StatusBadRequest, requestID, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
-		return
-	}
-
-	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
-	if resolveErr != nil {
-		status, code := invocationResolveStatus(resolveErr)
-		s.writeErrorWithRequestID(w, status, requestID, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
+	record, ok := s.resolveInvocationFromQuery(w, r, invocationID, requestID)
+	if !ok {
 		return
 	}
 
@@ -293,16 +304,8 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 		return
 	}
 
-	repoID := r.URL.Query().Get("repo_id")
-	if repoID == "" {
-		writeKillError(http.StatusBadRequest, string(errors.EInvalidRequest), "repo_id query parameter is required", "")
-		return
-	}
-
-	record, resolveErr := s.resolveInvocationRef(invocationID, repoID)
-	if resolveErr != nil {
-		status, code := invocationResolveStatus(resolveErr)
-		writeKillError(status, string(code), resolveErr.Error(), "use 'agency agent ls --repo <repo>' to list invocations")
+	record, ok := s.resolveInvocationFromQuery(w, r, invocationID, requestID)
+	if !ok {
 		return
 	}
 
@@ -367,10 +370,14 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request, invocationID
 	s.writeInvocationActionSuccess(w, requestID, record.InvocationID)
 }
 
+// outputFlushInterval bounds how often runOutputFlushLoop persists the latest
+// observed output timestamp for a supervised invocation.
+const outputFlushInterval = 500 * time.Millisecond
+
 func (s *Server) runOutputFlushLoop(proc *supervisedProcess) {
 	defer s.supervisionWg.Done()
 
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(outputFlushInterval)
 	defer ticker.Stop()
 
 	var lastFlushed int64

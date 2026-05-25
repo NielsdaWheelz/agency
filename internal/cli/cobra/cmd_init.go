@@ -1,15 +1,9 @@
 package cobra
 
 import (
-	"context"
-	"os"
-
 	"github.com/spf13/cobra"
 
 	"github.com/NielsdaWheelz/agency/internal/commands"
-	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/NielsdaWheelz/agency/internal/exec"
-	"github.com/NielsdaWheelz/agency/internal/fs"
 )
 
 func newInitCmd() *cobra.Command {
@@ -38,26 +32,16 @@ initialize.`,
   agency init --path /path/to/repo --repo-config --force`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			stdout := cmd.OutOrStdout()
-			stderr := cmd.ErrOrStderr()
-
-			cwd, err := os.Getwd()
+			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get working directory", err)
+				return err
 			}
-
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
-
-			opts := commands.InitOpts{
+			return commands.Init(ctx, cr, fsys, cwd, commands.InitOpts{
 				Path:        path,
 				NoGitignore: noGitignore,
 				Force:       force,
 				RepoConfig:  repoConfig,
-			}
-
-			return commands.Init(ctx, cr, fsys, cwd, opts, stdout, stderr)
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 

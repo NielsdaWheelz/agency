@@ -268,10 +268,15 @@ func NewClient(socketPath string) *Client {
 	return &Client{
 		httpClient: &http.Client{
 			Transport: transport,
-			Timeout:   30 * time.Second,
+			Timeout:   defaultClientHTTPTimeout,
 		},
 	}
 }
+
+// defaultClientHTTPTimeout bounds individual daemonclient round-trips. Drain
+// loops and streaming reads issue many short calls within this budget rather
+// than holding one long-lived request open.
+const defaultClientHTTPTimeout = 30 * time.Second
 
 // Health checks the daemon health.
 func (c *Client) Health(ctx context.Context) (*daemon.HealthResponse, error) {

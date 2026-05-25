@@ -39,10 +39,7 @@ func loadHistoryTurns(ctx context.Context, client *daemonclient.Client, invocati
 }
 
 func (m model) renderHistory() string {
-	width := m.width
-	if width <= 0 {
-		width = 120
-	}
+	width := m.viewWidth()
 
 	lines := m.renderHistoryHeaderLines(width)
 	lines = append(lines, "")
@@ -185,8 +182,7 @@ func (m model) renderHistoryTurn(builder *strings.Builder, index int, turn daemo
 	if turn.Restorable && turn.CheckpointID > 0 {
 		header += " " + historyCheckpointStyle.Render("cp:"+fmt.Sprintf("%d", turn.CheckpointID))
 	}
-	visibleLen := historyVisibleLen(header)
-	remaining := width - visibleLen - 1
+	remaining := width - lipgloss.Width(header) - 1
 	if remaining > 2 {
 		header += " " + historySeparatorStyle.Render(strings.Repeat("─", remaining))
 	}
@@ -225,25 +221,6 @@ func (m model) renderHistoryTurn(builder *strings.Builder, index int, turn daemo
 	if index < len(m.historyTurns)-1 {
 		builder.WriteString("\n")
 	}
-}
-
-func historyVisibleLen(value string) int {
-	visibleLen := 0
-	inEscape := false
-	for _, r := range value {
-		if r == '\033' {
-			inEscape = true
-			continue
-		}
-		if inEscape {
-			if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
-				inEscape = false
-			}
-			continue
-		}
-		visibleLen++
-	}
-	return visibleLen
 }
 
 func historyTruncate(value string, maxWidth int) string {

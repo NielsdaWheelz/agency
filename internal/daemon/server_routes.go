@@ -80,8 +80,12 @@ func (s *Server) handleShutdown(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, ShutdownResponse{OK: true})
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownDrainTimeout)
 		defer cancel()
 		_ = s.Shutdown(ctx)
 	}()
 }
+
+// shutdownDrainTimeout bounds the background context used to drain supervised
+// invocations after /shutdown returns 200 to the caller.
+const shutdownDrainTimeout = 30 * time.Second

@@ -26,10 +26,7 @@ var (
 )
 
 func (m model) renderReview() string {
-	width := m.width
-	if width <= 0 {
-		width = 120
-	}
+	width := m.viewWidth()
 
 	lines := m.renderPageHeader("review")
 	lines = append(lines, m.renderReviewSummary(width)...)
@@ -176,9 +173,6 @@ func (m model) renderReviewSummary(width int) []string {
 		}
 	}
 
-	if width <= 0 {
-		return lines
-	}
 	for idx := range lines {
 		lines[idx] = truncateWithEllipsis(lines[idx], width)
 	}
@@ -449,14 +443,8 @@ func reviewSectionLabel(section string) string {
 }
 
 func (m model) reviewPanelHeights() (int, int) {
-	width := m.width
-	if width <= 0 {
-		width = 120
-	}
-	height := m.height
-	if height <= 0 {
-		height = 36
-	}
+	width := m.viewWidth()
+	height := m.viewHeight()
 
 	lineCount := len(m.renderPageHeader("review"))
 	lineCount += len(m.renderReviewSummary(width))

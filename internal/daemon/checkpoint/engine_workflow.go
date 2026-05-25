@@ -11,6 +11,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/NielsdaWheelz/agency/internal/exec"
+	"github.com/NielsdaWheelz/agency/internal/git"
 )
 
 type checkpointPlan struct {
@@ -245,17 +246,8 @@ func (e *Engine) resolveCheckpointIncludeUntracked(ctx context.Context) (bool, e
 	return false, nil
 }
 
-// runGit runs `git -C <dir> <args...>` and maps non-zero exit / process error to a single labelled failure.
 func (e *Engine) runGit(ctx context.Context, dir string, env map[string]string, label string, args ...string) (exec.CmdResult, error) {
-	fullArgs := append([]string{"-C", dir}, args...)
-	result, err := e.runner.Run(ctx, "git", fullArgs, exec.RunOpts{Env: env})
-	if err != nil {
-		return result, err
-	}
-	if result.ExitCode != 0 {
-		return result, fmt.Errorf("%s failed: %s", label, result.Stderr)
-	}
-	return result, nil
+	return git.RunIn(ctx, e.runner, dir, env, label, args...)
 }
 
 func (e *Engine) getCurrentSandboxHead(ctx context.Context) (string, error) {

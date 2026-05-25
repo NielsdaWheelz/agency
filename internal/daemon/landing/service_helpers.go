@@ -8,19 +8,11 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/daemon/eventlog"
 	"github.com/NielsdaWheelz/agency/internal/errors"
 	"github.com/NielsdaWheelz/agency/internal/exec"
+	"github.com/NielsdaWheelz/agency/internal/git"
 )
 
-// runGit runs `git -C <dir> <args...>` and maps non-zero exit / process error to a single labelled failure.
 func (s *Service) runGit(ctx context.Context, dir string, env map[string]string, label string, args ...string) (exec.CmdResult, error) {
-	fullArgs := append([]string{"-C", dir}, args...)
-	result, err := s.runner.Run(ctx, "git", fullArgs, exec.RunOpts{Env: env})
-	if err != nil {
-		return result, err
-	}
-	if result.ExitCode != 0 {
-		return result, fmt.Errorf("%s failed: %s", label, result.Stderr)
-	}
-	return result, nil
+	return git.RunIn(ctx, s.runner, dir, env, label, args...)
 }
 
 func (s *Service) getHeadCommit(ctx context.Context, treePath string, env map[string]string) (string, error) {

@@ -1,12 +1,32 @@
 package watch
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/mattn/go-runewidth"
 
 	"github.com/NielsdaWheelz/agency/internal/daemon"
 )
+
+const (
+	defaultViewWidth  = 120
+	defaultViewHeight = 36
+)
+
+func (m model) viewWidth() int {
+	if m.width > 0 {
+		return m.width
+	}
+	return defaultViewWidth
+}
+
+func (m model) viewHeight() int {
+	if m.height > 0 {
+		return m.height
+	}
+	return defaultViewHeight
+}
 
 func (m model) selectedInvocation() (daemon.InvocationDTO, bool) {
 	invocations := m.visibleInvocations()
@@ -294,25 +314,35 @@ func (m *model) reconcileReviewSelection() {
 	m.reviewSelectedKey = m.reviewFiles[m.reviewSelectedIndex].key
 }
 
-func (m model) maxLogsScroll() int {
-	lines := logLines(m.logsContent)
-	visible := m.logVisibleLines()
-	if len(lines) <= visible {
-		return 0
-	}
-	return len(lines) - visible
+func (m model) pageVisibleLines() int {
+	return max(5, m.viewHeight()-8)
 }
 
-func (m model) logVisibleLines() int {
-	height := m.height
-	if height <= 0 {
-		height = 36
+func (m model) pageMaxScroll(content []string) int {
+	visible := m.pageVisibleLines()
+	if len(content) <= visible {
+		return 0
 	}
-	visible := height - 8
-	if visible < 5 {
-		visible = 5
+	return len(content) - visible
+}
+
+// renderScrollViewport returns at most pageVisibleLines truncated lines from
+// content starting at scroll, plus a "showing X-Y of N" footer when content
+// overflows the viewport.
+func (m model) renderScrollViewport(content []string, scroll int) []string {
+	width := m.viewWidth()
+	visible := m.pageVisibleLines()
+	start, end := scrollWindow(len(content), scroll, visible)
+	out := make([]string, 0, end-start+2)
+	for _, line := range content[start:end] {
+		out = append(out, truncateWithEllipsis(line, width))
 	}
-	return visible
+	if len(content) > visible {
+		out = append(out, "", warningStyle.Render(
+			"showing "+truncateWithEllipsis(strconv.Itoa(start+1)+"-"+strconv.Itoa(end)+" of "+strconv.Itoa(len(content)), width-12),
+		))
+	}
+	return out
 }
 
 // scrollWindow returns the (start, end) slice indices for a scrollable list of

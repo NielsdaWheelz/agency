@@ -1,15 +1,9 @@
 package cobra
 
 import (
-	"context"
-	"os"
-
 	"github.com/spf13/cobra"
 
 	"github.com/NielsdaWheelz/agency/internal/commands"
-	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/NielsdaWheelz/agency/internal/exec"
-	"github.com/NielsdaWheelz/agency/internal/fs"
 )
 
 func newDoctorCmd() *cobra.Command {
@@ -35,24 +29,14 @@ is relative, it is resolved from the current directory before loading.`,
   agency doctor --path /path/to/repo --agency-config ./agency.local.json`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			stdout := cmd.OutOrStdout()
-			stderr := cmd.ErrOrStderr()
-
-			cwd, err := os.Getwd()
+			ctx, cr, fsys, cwd, err := realCommandDepsFromCmd(cmd)
 			if err != nil {
-				return errors.Wrap(errors.EInternal, "failed to get working directory", err)
+				return err
 			}
-
-			cr := exec.NewRealRunner()
-			fsys := fs.NewRealFS()
-			ctx := context.Background()
-
-			opts := commands.DoctorOpts{
+			return commands.Doctor(ctx, cr, fsys, cwd, commands.DoctorOpts{
 				Path:             path,
 				AgencyConfigPath: agencyConfigPath,
-			}
-
-			return commands.Doctor(ctx, cr, fsys, cwd, opts, stdout, stderr)
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
