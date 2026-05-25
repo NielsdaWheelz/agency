@@ -194,68 +194,16 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		return nil, err
 	}
 
-	// Create git worktree + branch
-	args := []string{
-		"-C", opts.RepoRoot,
-		"worktree", "add",
-		"-b", branch,
-		treePath,
-		opts.BaseBranch,
-	}
-
-	result, err := s.runner.Run(ctx, "git", args, exec.RunOpts{Env: opts.Env})
-	if err != nil {
+	if err := s.runWorktreeAdd(ctx, opts.RepoRoot, branch, treePath, opts.BaseBranch, opts.Env); err != nil {
 		cleanup()
-		return nil, errors.WrapWithDetails(
-			errors.EWorktreeCreateFailed,
-			"failed to execute git worktree add",
-			err,
-			map[string]string{"command": "git " + strings.Join(args, " ")},
-		)
+		return nil, err
 	}
-
-	if result.ExitCode != 0 {
-		cleanup()
-		details := map[string]string{
-			"command":   "git " + strings.Join(args, " "),
-			"exit_code": fmt.Sprintf("%d", result.ExitCode),
-		}
-		if result.Stderr != "" {
-			details["stderr"] = strings.TrimSpace(result.Stderr)
-		}
-		return nil, errors.NewWithDetails(
-			errors.EWorktreeCreateFailed,
-			"git worktree add failed: "+strings.TrimSpace(result.Stderr),
-			details,
-		)
-	}
-
 	gitWorktreeCreated = true
 	branchCreated = true
 
-	// Create .agency/ directory
-	agencyDir := filepath.Join(treePath, ".agency")
-	if err := s.fsys.MkdirAll(agencyDir, 0o755); err != nil {
+	if err := s.writeIntegrationMarker(treePath); err != nil {
 		cleanup()
-		return nil, errors.WrapWithDetails(
-			errors.EWorktreeCreateFailed,
-			"failed to create .agency directory",
-			err,
-			map[string]string{"path": agencyDir},
-		)
-	}
-
-	// Write INTEGRATION_MARKER.
-	markerPath := filepath.Join(agencyDir, IntegrationMarkerFileName)
-	markerContent := "# This directory is an integration worktree.\n# Runners must not execute here.\n"
-	if err := s.fsys.WriteFile(markerPath, []byte(markerContent), 0o644); err != nil {
-		cleanup()
-		return nil, errors.WrapWithDetails(
-			errors.EWorktreeCreateFailed,
-			"failed to write INTEGRATION_MARKER",
-			err,
-			map[string]string{"path": markerPath},
-		)
+		return nil, err
 	}
 
 	return &CreateResult{
@@ -263,6 +211,62 @@ func (s *Service) Create(ctx context.Context, opts CreateOpts) (*CreateResult, e
 		Branch:     branch,
 		TreePath:   treePath,
 	}, nil
+}
+
+// runWorktreeAdd runs git worktree add to create a worktree at treePath on a
+// new branch from baseBranch. All failures wrap EWorktreeCreateFailed.
+func (s *Service) runWorktreeAdd(ctx context.Context, repoRoot, branch, treePath, baseBranch string, env map[string]string) error {
+	args := []string{"-C", repoRoot, "worktree", "add", "-b", branch, treePath, baseBranch}
+	result, err := s.runner.Run(ctx, "git", args, exec.RunOpts{Env: env})
+	command := "git " + strings.Join(args, " ")
+	if err != nil {
+		return errors.WrapWithDetails(
+			errors.EWorktreeCreateFailed,
+			"failed to execute git worktree add",
+			err,
+			map[string]string{"command": command},
+		)
+	}
+	if result.ExitCode != 0 {
+		details := map[string]string{
+			"command":   command,
+			"exit_code": fmt.Sprintf("%d", result.ExitCode),
+		}
+		if result.Stderr != "" {
+			details["stderr"] = strings.TrimSpace(result.Stderr)
+		}
+		return errors.NewWithDetails(
+			errors.EWorktreeCreateFailed,
+			"git worktree add failed: "+strings.TrimSpace(result.Stderr),
+			details,
+		)
+	}
+	return nil
+}
+
+// writeIntegrationMarker creates .agency/INTEGRATION_MARKER in treePath so the
+// worktree advertises itself as an integration tree.
+func (s *Service) writeIntegrationMarker(treePath string) error {
+	agencyDir := filepath.Join(treePath, ".agency")
+	if err := s.fsys.MkdirAll(agencyDir, 0o755); err != nil {
+		return errors.WrapWithDetails(
+			errors.EWorktreeCreateFailed,
+			"failed to create .agency directory",
+			err,
+			map[string]string{"path": agencyDir},
+		)
+	}
+	markerPath := filepath.Join(agencyDir, IntegrationMarkerFileName)
+	markerContent := "# This directory is an integration worktree.\n# Runners must not execute here.\n"
+	if err := s.fsys.WriteFile(markerPath, []byte(markerContent), 0o644); err != nil {
+		return errors.WrapWithDetails(
+			errors.EWorktreeCreateFailed,
+			"failed to write INTEGRATION_MARKER",
+			err,
+			map[string]string{"path": markerPath},
+		)
+	}
+	return nil
 }
 
 // Resolve resolves a worktree identifier (name, id, or prefix) to a record.
