@@ -308,7 +308,11 @@ func (s *Server) checkInvocationNameUniqueness(repoID, name string) error {
 	return nil
 }
 
-func (s *Server) acquireControlPlaneRepoLock(repoID, op string) (func() error, error) {
+// acquireControlPlaneRepoLockRaw is the retry loop the control-plane uses to
+// soak short bursts of contention before reporting ERepoLocked. Returns the
+// underlying *agencylock.ErrLocked on contention or the underlying error on
+// other failures; prefer acquireControlPlaneRepoLock for typed mapping.
+func (s *Server) acquireControlPlaneRepoLockRaw(repoID, op string) (func() error, error) {
 	deadline := s.clock().Add(controlPlaneRepoLockAcquireTimeout)
 	for {
 		unlock, err := s.repoLock.Lock(repoID, op)
@@ -324,6 +328,36 @@ func (s *Server) acquireControlPlaneRepoLock(repoID, op string) (func() error, e
 		}
 		time.Sleep(controlPlaneRepoLockPollInterval)
 	}
+}
+
+// acquireControlPlaneRepoLock acquires the repo lock with the control-plane
+// retry policy and maps failure to a typed startFailure.
+func (s *Server) acquireControlPlaneRepoLock(repoID, op string) (func() error, *startFailure) {
+	unlock, err := s.acquireControlPlaneRepoLockRaw(repoID, op)
+	return unlock, lockFailureFromError(err)
+}
+
+// lockRepoOrFailure acquires the repo lock once (no retry) and maps any
+// acquisition error to a typed startFailure.
+func (s *Server) lockRepoOrFailure(repoID, op string) (func() error, *startFailure) {
+	unlock, err := s.repoLock.Lock(repoID, op)
+	return unlock, lockFailureFromError(err)
+}
+
+// lockFailureFromError translates a repo-lock error to a typed startFailure:
+// ERepoLocked → 409 for *agencylock.ErrLocked, EInternal → 500 otherwise.
+// Returns nil when err is nil.
+func lockFailureFromError(err error) *startFailure {
+	if err == nil {
+		return nil
+	}
+	var lockedErr *agencylock.ErrLocked
+	if stderrors.As(err, &lockedErr) {
+		f := newStartFailure(http.StatusConflict, errors.ERepoLocked, "repository is locked by another operation", "wait for the other operation to complete")
+		return &f
+	}
+	f := newStartFailure(http.StatusInternalServerError, errors.EInternal, "failed to acquire repo lock: "+err.Error(), "")
+	return &f
 }
 
 func (s *Server) resolveControlPlaneRepoRoot(ctx context.Context, repoRoot string, writeErr controlPlaneStartErrorWriter) (string, identity.RepoIdentity, bool) {
@@ -380,14 +414,9 @@ func (s *Server) prepareControlPlaneStart(ctx context.Context, repoRoot, worktre
 		return nil, false
 	}
 
-	unlockRepo, err := s.acquireControlPlaneRepoLock(repoIdentity.RepoID, lockOp)
-	if err != nil {
-		var lockedErr *agencylock.ErrLocked
-		if !stderrors.As(err, &lockedErr) {
-			writeErr(http.StatusInternalServerError, string(errors.EInternal), "failed to acquire repository lock: "+err.Error(), "")
-			return nil, false
-		}
-		writeErr(http.StatusConflict, string(errors.ERepoLocked), "repository is locked by another operation", "wait for the other operation to complete")
+	unlockRepo, fail := s.acquireControlPlaneRepoLock(repoIdentity.RepoID, lockOp)
+	if fail != nil {
+		writeErr(fail.status, string(fail.code), fail.msg, fail.hint)
 		return nil, false
 	}
 

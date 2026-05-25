@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	stderrors "errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -21,7 +20,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
 	"github.com/NielsdaWheelz/agency/internal/invocation"
-	agencylock "github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
@@ -67,14 +65,9 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	unlock, err := s.acquireControlPlaneRepoLock(repoIdentity.RepoID, "task start")
-	if err != nil {
-		var lockedErr *agencylock.ErrLocked
-		if !stderrors.As(err, &lockedErr) {
-			writeErr(http.StatusInternalServerError, errors.EInternal, "failed to acquire repository lock: "+err.Error(), "", req.ClientRequestID)
-			return
-		}
-		writeErr(http.StatusConflict, errors.ERepoLocked, "repository is locked by another operation", "wait for the other operation to complete", req.ClientRequestID)
+	unlock, fail := s.acquireControlPlaneRepoLock(repoIdentity.RepoID, "task start")
+	if fail != nil {
+		writeErr(fail.status, fail.code, fail.msg, fail.hint, req.ClientRequestID)
 		return
 	}
 	defer func() { _ = unlock() }()

@@ -35,9 +35,9 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 		return
 	}
 
-	unlock, err := s.repoLock.Lock(record.RepoID, "recreate_headed")
-	if err != nil {
-		s.writeHeadedError(w, http.StatusConflict, string(errors.ERepoLocked), "repository is locked by another operation", "wait for the other operation to complete", "", requestID)
+	unlock, fail := s.lockRepoOrFailure(record.RepoID, "recreate_headed")
+	if fail != nil {
+		s.writeHeadedError(w, fail.status, string(fail.code), fail.msg, fail.hint, "", requestID)
 		return
 	}
 	defer func() { _ = unlock() }()

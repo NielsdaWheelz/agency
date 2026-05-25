@@ -149,9 +149,9 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 		return
 	}
 
-	unlock, err := s.acquireControlPlaneRepoLock(repoID, "task retry")
-	if err != nil {
-		s.writeTaskStartError(w, http.StatusConflict, requestID, errors.ERepoLocked, "repository is locked by another operation", "wait for the other operation to complete", req.ClientRequestID, meta)
+	unlock, fail := s.acquireControlPlaneRepoLock(repoID, "task retry")
+	if fail != nil {
+		s.writeTaskStartError(w, fail.status, requestID, fail.code, fail.msg, fail.hint, req.ClientRequestID, meta)
 		return
 	}
 	defer func() { _ = unlock() }()

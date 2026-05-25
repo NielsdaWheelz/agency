@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	stderrors "errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,7 +10,6 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/git"
 	"github.com/NielsdaWheelz/agency/internal/identity"
 	"github.com/NielsdaWheelz/agency/internal/integrationworktree"
-	"github.com/NielsdaWheelz/agency/internal/lock"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
@@ -72,17 +70,9 @@ func (s *Server) handleWorktreeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Acquire repo lock before mutation.
-	unlock, err := s.repoLock.Lock(repoIdentity.RepoID, "worktree create")
-	if err != nil {
-		var lockErr *lock.ErrLocked
-		if stderrors.As(err, &lockErr) {
-			s.writeErrorWithRequestID(w, http.StatusConflict, requestID, string(errors.ERepoLocked),
-				"repository is locked by another operation", "wait for the other operation to complete")
-			return
-		}
-		s.writeErrorWithRequestID(w, http.StatusInternalServerError, requestID, string(errors.EInternal),
-			"failed to acquire repo lock: "+err.Error(), "")
+	unlock, fail := s.lockRepoOrFailure(repoIdentity.RepoID, "worktree create")
+	if fail != nil {
+		s.writeErrorWithRequestID(w, fail.status, requestID, string(fail.code), fail.msg, fail.hint)
 		return
 	}
 	defer func() { _ = unlock() }()
@@ -271,17 +261,9 @@ func (s *Server) handleWorktreeRm(w http.ResponseWriter, r *http.Request, worktr
 		return
 	}
 
-	// Acquire repo lock
-	unlock, err := s.repoLock.Lock(repoID, "worktree rm")
-	if err != nil {
-		var lockErr *lock.ErrLocked
-		if stderrors.As(err, &lockErr) {
-			s.writeErrorWithRequestID(w, http.StatusConflict, requestID, string(errors.ERepoLocked),
-				"repository is locked by another operation", "wait for the other operation to complete")
-			return
-		}
-		s.writeErrorWithRequestID(w, http.StatusInternalServerError, requestID, string(errors.EInternal),
-			"failed to acquire repo lock: "+err.Error(), "")
+	unlock, fail := s.lockRepoOrFailure(repoID, "worktree rm")
+	if fail != nil {
+		s.writeErrorWithRequestID(w, fail.status, requestID, string(fail.code), fail.msg, fail.hint)
 		return
 	}
 	defer func() { _ = unlock() }()
