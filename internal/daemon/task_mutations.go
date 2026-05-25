@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/NielsdaWheelz/agency/internal/errors"
-	"github.com/NielsdaWheelz/agency/internal/runners"
 	"github.com/NielsdaWheelz/agency/internal/store"
 )
 
@@ -116,12 +115,8 @@ func (s *Server) handleTaskRetry(w http.ResponseWriter, r *http.Request, taskRef
 	}
 	canonicalRunner, err := validateControlPlaneStartRunner(runner, req.RunnerArgs, headless)
 	if err != nil {
-		code := errors.CodeOr(err, errors.ERunnerArgConflict)
-		hint := "remove reserved flags from runner_args"
-		if code == errors.ERunnerNotFound {
-			hint = "valid runners: " + strings.Join(runners.CanonicalIDs(), ", ")
-		}
-		s.writeTaskStartError(w, http.StatusBadRequest, requestID, code, err.Error(), hint, req.ClientRequestID, meta)
+		fail := runnerValidationFailure(err)
+		s.writeTaskStartError(w, fail.status, requestID, fail.code, fail.msg, fail.hint, req.ClientRequestID, meta)
 		return
 	}
 	runner = canonicalRunner
