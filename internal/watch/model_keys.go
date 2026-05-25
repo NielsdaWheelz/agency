@@ -6,6 +6,32 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+var workspacePaneOrder = []workspacePane{workspacePaneRepos, workspacePaneWorktrees, workspacePaneAgents}
+
+// cyclePane returns the next/previous workspace pane in repos→worktrees→agents
+// rotation, defaulting empty focus to agents.
+func cyclePane(current workspacePane, dir int) workspacePane {
+	if current == "" {
+		return workspacePaneAgents
+	}
+	for i, pane := range workspacePaneOrder {
+		if pane == current {
+			return workspacePaneOrder[(i+dir+len(workspacePaneOrder))%len(workspacePaneOrder)]
+		}
+	}
+	return workspacePaneAgents
+}
+
+// workspaceSelectionMovedCmd returns the load command to run after the
+// workspace selection has moved: a session refresh when the agents pane is
+// focused, otherwise nil.
+func (m model) workspaceSelectionMovedCmd() tea.Cmd {
+	if m.workspaceFocus == workspacePaneAgents {
+		return m.loadSelectedSessionForSelectionCmd()
+	}
+	return nil
+}
+
 func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.workspaceFilterInput {
 		return m.updateWorkspaceFilterKey(msg)
@@ -15,28 +41,10 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case isQuitKey(msg):
 		return m, tea.Quit
 	case msg.Code == tea.KeyTab && msg.Mod.Contains(tea.ModShift):
-		switch m.workspaceFocus {
-		case workspacePaneRepos:
-			m.workspaceFocus = workspacePaneAgents
-		case workspacePaneWorktrees:
-			m.workspaceFocus = workspacePaneRepos
-		case workspacePaneAgents:
-			m.workspaceFocus = workspacePaneWorktrees
-		case "":
-			m.workspaceFocus = workspacePaneAgents
-		}
+		m.workspaceFocus = cyclePane(m.workspaceFocus, -1)
 		return m, nil
 	case msg.Code == tea.KeyTab:
-		switch m.workspaceFocus {
-		case workspacePaneRepos:
-			m.workspaceFocus = workspacePaneWorktrees
-		case workspacePaneWorktrees:
-			m.workspaceFocus = workspacePaneAgents
-		case workspacePaneAgents:
-			m.workspaceFocus = workspacePaneRepos
-		case "":
-			m.workspaceFocus = workspacePaneAgents
-		}
+		m.workspaceFocus = cyclePane(m.workspaceFocus, 1)
 		return m, nil
 	case isRefreshKey(msg):
 		if m.workspaceLoading {
@@ -83,28 +91,16 @@ func (m model) updateWorkspaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case isUpKey(msg):
 		m.moveWorkspaceSelection(-1)
-		if m.workspaceFocus == workspacePaneAgents {
-			return m, m.loadSelectedSessionForSelectionCmd()
-		}
-		return m, nil
+		return m, m.workspaceSelectionMovedCmd()
 	case isDownKey(msg):
 		m.moveWorkspaceSelection(1)
-		if m.workspaceFocus == workspacePaneAgents {
-			return m, m.loadSelectedSessionForSelectionCmd()
-		}
-		return m, nil
+		return m, m.workspaceSelectionMovedCmd()
 	case isTopKey(msg):
 		m.moveWorkspaceSelectionToTop()
-		if m.workspaceFocus == workspacePaneAgents {
-			return m, m.loadSelectedSessionForSelectionCmd()
-		}
-		return m, nil
+		return m, m.workspaceSelectionMovedCmd()
 	case isBottomKey(msg):
 		m.moveWorkspaceSelectionToBottom()
-		if m.workspaceFocus == workspacePaneAgents {
-			return m, m.loadSelectedSessionForSelectionCmd()
-		}
-		return m, nil
+		return m, m.workspaceSelectionMovedCmd()
 	case msg.Code == tea.KeyEsc || msg.Text == "b":
 		if strings.TrimSpace(m.activeWorktreeID) != "" {
 			m.activeWorktreeID = ""
