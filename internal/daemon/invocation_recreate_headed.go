@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"slices"
@@ -11,6 +13,47 @@ import (
 	"github.com/NielsdaWheelz/agency/internal/store"
 	"github.com/NielsdaWheelz/agency/internal/tmux"
 )
+
+// startHeadedTmuxSession creates the tmux session, replays any captured
+// scrollback into the terminal log, and starts piping the pane. On any
+// failure the partially-created session is killed.
+func (s *Server) startHeadedTmuxSession(ctx context.Context, repoID, invocationID, sessionName, sandboxPath, runnerCmd string, runnerArgs []string, launchEnv map[string]string, terminalLogPath string) error {
+	if err := s.tmuxClient.NewSession(ctx, sessionName, sandboxPath, append([]string{runnerCmd}, runnerArgs...), launchEnv); err != nil {
+		return fmt.Errorf("failed to create tmux session: %w", err)
+	}
+	target := sessionName + ":0.0"
+	if scrollback, err := s.tmuxClient.CaptureScrollback(ctx, target); err != nil {
+		s.recordInvocationWarning(repoID, invocationID, "recreate_headed_tmux_capture_failed", err.Error(), map[string]any{
+			"target": target,
+		})
+	} else if scrollback != "" {
+		if err := appendTerminalLog(terminalLogPath, scrollback); err != nil {
+			_ = s.tmuxClient.KillSession(ctx, sessionName)
+			return err
+		}
+	}
+	if err := s.tmuxClient.PipePane(ctx, target, terminalLogPath); err != nil {
+		_ = s.tmuxClient.KillSession(ctx, sessionName)
+		return fmt.Errorf("failed to pipe tmux pane output: %w", err)
+	}
+	return nil
+}
+
+func appendTerminalLog(path, content string) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("failed to append initial terminal capture: %w", err)
+	}
+	_, writeErr := f.WriteString(content)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return fmt.Errorf("failed to append initial terminal capture: %w", writeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("failed to close terminal log: %w", closeErr)
+	}
+	return nil
+}
 
 func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, invocationRef string) {
 	ctx := r.Context()
@@ -173,37 +216,8 @@ func (s *Server) handleRecreateHeaded(w http.ResponseWriter, r *http.Request, in
 	}
 	_ = terminalFile.Close()
 
-	if err := s.tmuxClient.NewSession(ctx, sessionName, meta.SandboxPath, append([]string{runnerCmd}, headedRunnerArgs...), launchEnv); err != nil {
-		respondErr(http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to create tmux session: "+err.Error(), "ensure tmux is installed and working")
-		return
-	}
-	target := sessionName + ":0.0"
-	if scrollback, err := s.tmuxClient.CaptureScrollback(ctx, target); err != nil {
-		s.recordInvocationWarning(record.RepoID, record.InvocationID, "recreate_headed_tmux_capture_failed", err.Error(), map[string]any{
-			"target": target,
-		})
-	} else if scrollback != "" {
-		f, err := os.OpenFile(terminalLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-		if err != nil {
-			_ = s.tmuxClient.KillSession(ctx, sessionName)
-			respondErr(http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to append initial terminal capture: "+err.Error(), "")
-			return
-		}
-		_, writeErr := f.WriteString(scrollback)
-		closeErr := f.Close()
-		if writeErr != nil || closeErr != nil {
-			_ = s.tmuxClient.KillSession(ctx, sessionName)
-			if writeErr != nil {
-				respondErr(http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to append initial terminal capture: "+writeErr.Error(), "")
-				return
-			}
-			respondErr(http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to close terminal log: "+closeErr.Error(), "")
-			return
-		}
-	}
-	if err := s.tmuxClient.PipePane(ctx, target, terminalLogPath); err != nil {
-		_ = s.tmuxClient.KillSession(ctx, sessionName)
-		respondErr(http.StatusInternalServerError, string(errors.EInvocationStartFailed), "failed to pipe tmux pane output: "+err.Error(), "ensure tmux pipe-pane is available")
+	if err := s.startHeadedTmuxSession(ctx, record.RepoID, record.InvocationID, sessionName, meta.SandboxPath, runnerCmd, headedRunnerArgs, launchEnv, terminalLogPath); err != nil {
+		respondErr(http.StatusInternalServerError, string(errors.EInvocationStartFailed), err.Error(), "")
 		return
 	}
 
